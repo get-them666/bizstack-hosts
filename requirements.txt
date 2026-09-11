@@ -6,3 +6,4 @@ signalwire-sdk>=3.4.1
 psycopg[binary]>=3.1.18
 openai==1.14.1
 aiosmtplib==3.0.1
+stripe>=8.0.0

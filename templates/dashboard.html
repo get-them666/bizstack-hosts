@@ -61,18 +61,25 @@
                     <h4 class="text-sm font-bold text-slate-900 mt-8 mb-4 uppercase tracking-wider">Upcoming Operations</h4>
                     <div id="upcoming-events" class="space-y-3">
                         {% if events %}
-                            {% for e in events %}
+{% for e in events %}
                             <div class="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-between gap-3">
                                 <div class="flex items-center gap-3 min-w-0">
                                     <div class="w-9 h-9 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-indigo-600 text-xs font-bold shrink-0">
                                         {% set d = e['start_time'].strftime('%d') %}{{ d }}
                                     </div>
                                     <div class="min-w-0">
-                                        <p class="text-sm font-bold text-slate-800 truncate">{{ e.customer_name }}</p>
+                                        <p class="text-sm font-bold text-slate-800 truncate">{{ e['customer_name'] }}</p>
                                         <p class="text-xs text-slate-500">{{ e['start_time'].strftime('%b %d at %I:%M %p') }} · {{ e['service_type'] }}</p>
                                     </div>
                                 </div>
-                                <span class="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-semibold rounded-full shrink-0">Scheduled</span>
+                                <div class="flex items-center gap-2 shrink-0">
+                                    {% if e['payment_status'] == 'paid' %}
+                                    <span class="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-semibold rounded-full">Paid ✓</span>
+                                    {% else %}
+                                    <span class="px-2 py-1 bg-amber-50 text-amber-700 text-[10px] font-semibold rounded-full">Unpaid</span>
+                                    <a href="#" data-event-id="{{ e['id'] }}" class="payment-link-btn px-2 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-semibold rounded-full hover:bg-indigo-100">Payment Link</a>
+                                    {% endif %}
+                                </div>
                             </div>
                             {% endfor %}
                         {% else %}
@@ -95,7 +102,7 @@
                         <div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 font-bold">🧼</div>
                         <div>
                             <h3 class="font-bold text-slate-900">Schedule a Turnover</h3>
-                            <p class="text-xs text-slate-500">Quick booking for cleaning ops</p>
+                            <p class="text-xs text-slate-500">Guest-funded via Stripe Checkout</p>
                         </div>
                     </div>
                     <form action="/api/calendar/book" method="post" class="space-y-4">
@@ -121,7 +128,7 @@
                             </select>
                         </div>
                         <button type="submit" class="w-full py-3.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all shadow-md shadow-indigo-100 uppercase tracking-wider">
-                            Book Operation
+                            Book & Send Payment Link
                         </button>
                     </form>
                 </div>
@@ -185,6 +192,29 @@ document.addEventListener('DOMContentLoaded', function() {
         el.textContent = day;
         grid.appendChild(el);
     }
+
+    // Payment link buttons: fetch checkout URL and open in new tab
+    document.querySelectorAll('.payment-link-btn').forEach(btn => {
+        btn.addEventListener('click', async function(e) {
+            e.preventDefault();
+            const eventId = this.dataset.eventId;
+            this.textContent = 'Creating…';
+            try {
+                const res = await fetch('/api/payments/create-link/' + eventId);
+                const data = await res.json();
+                if (data.url) {
+                    window.open(data.url, '_blank');
+                    this.textContent = 'Payment Link';
+                } else {
+                    alert(data.error || 'Could not create payment link');
+                    this.textContent = 'Payment Link';
+                }
+            } catch (err) {
+                alert('Could not create payment link');
+                this.textContent = 'Payment Link';
+            }
+        });
+    });
 });
 </script>
 {% endblock %}

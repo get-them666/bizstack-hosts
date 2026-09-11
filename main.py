@@ -9,10 +9,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from ai_agent import BusinessAIAgent
+from stripe_service import StripeService
 
 db_url = os.getenv("DATABASE_URL", "postgresql://shaun:secret@localhost:5432/bizstack")
 templates = Jinja2Templates(directory="templates")
 ai_agent = BusinessAIAgent()
+stripe_svc = StripeService()
 
 @asynccontextmanager
 async def lifecycle(app: FastAPI):
@@ -28,6 +30,24 @@ async def lifecycle(app: FastAPI):
                     start_time TIMESTAMP WITH TIME ZONE NOT NULL,
                     end_time TIMESTAMP WITH TIME ZONE NOT NULL,
                     service_type VARCHAR(100) NOT NULL,
+                    payment_status VARCHAR(50) DEFAULT 'unpaid',
+                    stripe_session_id VARCHAR(255),
+                    amount_cents INTEGER,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'unpaid';")
+                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS stripe_session_id VARCHAR(255);")
+                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS amount_cents INTEGER;")
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS payments (
+                    id SERIAL PRIMARY KEY,
+                    booking_id INTEGER NOT NULL UNIQUE REFERENCES calendar_events(id),
+                    stripe_session_id VARCHAR(255),
+                    stripe_payment_intent_id VARCHAR(255),
+                    amount_cents INTEGER NOT NULL,
+                    currency VARCHAR(10) DEFAULT 'usd',
+                    status VARCHAR(50) NOT NULL DEFAULT 'paid',
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
@@ -179,7 +199,7 @@ async def read_dashboard(request: Request, db=Depends(get_db)):
         cur.execute("SELECT COUNT(*) FROM leads")
         leads_count = cur.fetchone()['count']
 
-        cur.execute("SELECT id, customer_name, phone, start_time, end_time, service_type FROM calendar_events WHERE start_time >= NOW() - INTERVAL '7 days' ORDER BY start_time DESC LIMIT 10")
+        cur.execute("SELECT id, customer_name, phone, start_time, end_time, service_type, payment_status, amount_cents FROM calendar_events WHERE start_time >= NOW() - INTERVAL '7 days' ORDER BY start_time DESC LIMIT 10")
         events = cur.fetchall()
 
     return templates.TemplateResponse(
@@ -245,7 +265,7 @@ async def settings_page(request: Request):
     is_authed, user_email = require_auth(request)
     if not is_authed:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    return templates.TemplateResponse(request=request, name="settings.html", context={"user": {"email": user_email}})
+    return templates.TemplateResponse(request=request, name="settings.html", context={"user": {"email": user_email}, "stripe_configured": stripe_svc.is_configured()})
 
 # --- CALENDAR API ---
 
@@ -275,11 +295,114 @@ async def create_manual_booking(
         if cur.fetchone()['count'] > 0:
             raise HTTPException(status_code=400, detail="Requested timeframe collides with an active event.")
         cur.execute(
-            "INSERT INTO calendar_events (customer_name, phone, start_time, end_time, service_type) VALUES (%s, %s, %s, %s, %s);",
+            "INSERT INTO calendar_events (customer_name, phone, start_time, end_time, service_type) VALUES (%s, %s, %s, %s, %s) RETURNING id;",
             (customer_name, phone, parsed_start, parsed_end, service_type)
         )
+        event_id = cur.fetchone()['id']
+        amount_cents = stripe_svc.get_price(service_type)
+        cur.execute(
+            "UPDATE calendar_events SET amount_cents = %s WHERE id = %s;",
+            (amount_cents, event_id)
+        )
         db.commit()
-    return RedirectResponse(url="/dashboard", status_code=303)
+
+    # Create Stripe Checkout session so the guest can pay for this booking
+    try:
+        checkout_url = stripe_svc.create_checkout_session(
+            event_id=event_id,
+            customer_name=customer_name,
+            customer_email="",
+            service_type=service_type,
+            start_time=parsed_start,
+        )
+        session_id = None
+        if "session_id=" in checkout_url:
+            session_id = checkout_url.split("session_id=")[-1].split("&")[0]
+        if session_id:
+            with db.cursor() as cur:
+                cur.execute(
+                    "UPDATE calendar_events SET stripe_session_id = %s WHERE id = %s;",
+                    (session_id, event_id)
+                )
+                db.commit()
+        return RedirectResponse(url=checkout_url, status_code=303)
+    except Exception as e:
+        print(f"⚠️ Stripe checkout creation skipped: {e}")
+        return RedirectResponse(url="/dashboard", status_code=303)
+
+@app.get("/api/payments/create-link/{event_id}")
+async def create_payment_link(event_id: int, db=Depends(get_db)):
+    """Create (or re-create) a Stripe Checkout link for an unpaid booking."""
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM calendar_events WHERE id = %s;", (event_id,))
+        event = cur.fetchone()
+    if not event:
+        return JSONResponse(content={"error": "Booking not found"}, status_code=404)
+    if event["payment_status"] == "paid":
+        return JSONResponse(content={"error": "Booking already paid"}, status_code=400)
+
+    try:
+        checkout_url = stripe_svc.create_checkout_session(
+            event_id=event["id"],
+            customer_name=event["customer_name"],
+            customer_email="",
+            service_type=event["service_type"],
+            start_time=event["start_time"],
+        )
+        return JSONResponse(content={"url": checkout_url})
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+@app.get("/payments/success", response_class=HTMLResponse)
+async def payments_success(request: Request, db=Depends(get_db)):
+    session_id = request.query_params.get("session_id")
+    booking = None
+    if session_id:
+        with db.cursor() as cur:
+            cur.execute("SELECT * FROM calendar_events WHERE stripe_session_id = %s;", (session_id,))
+            booking = cur.fetchone()
+    return templates.TemplateResponse(
+        request=request,
+        name="payment_success.html",
+        context={"booking": booking}
+    )
+
+@app.get("/payments/cancel", response_class=HTMLResponse)
+async def payments_cancel(request: Request):
+    return templates.TemplateResponse(request=request, name="payment_cancel.html", context={})
+
+@app.post("/api/payments/webhook")
+async def payments_webhook(request: Request, db=Depends(get_db)):
+    payload = await request.body()
+    signature = request.headers.get("stripe-signature", "")
+
+    try:
+        event = stripe_svc.construct_webhook_event(payload, signature)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Webhook signature verification failed: {e}")
+
+    if event["type"] == "checkout.session.completed":
+        session = event["data"]["object"]
+        event_id = session.get("metadata", {}).get("event_id")
+        payment_intent = session.get("payment_intent")
+        amount_total = session.get("amount_total", 0)
+        currency = session.get("currency", "usd")
+
+        if event_id:
+            with db.cursor() as cur:
+                cur.execute(
+                    "UPDATE calendar_events SET payment_status = 'paid', stripe_session_id = %s, amount_cents = %s WHERE id = %s;",
+                    (session.get("id"), amount_total, int(event_id))
+                )
+                cur.execute(
+                    """INSERT INTO payments (booking_id, stripe_session_id, stripe_payment_intent_id, amount_cents, currency)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (booking_id) DO NOTHING;""",
+                    (int(event_id), session.get("id"), payment_intent, amount_total, currency)
+                )
+                db.commit()
+
+    return Response(content='{"received": true}', media_type="application/json")
 
 # --- BUSINESS API ---
 

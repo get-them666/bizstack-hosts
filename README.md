@@ -14,6 +14,11 @@ FastAPI + PostgreSQL web app for BizStack Hosts — short-term rental turnover c
   - `POST /comms/sms-webhook` — inbound SMS → AI reply (TwiML)
   - `POST /comms/voice-webhook` — inbound voice → greeting + recording (TwiML)
   - `POST /comms/voice-action` / `POST /comms/voice-transcribe` — call handling callbacks
+- **Stripe per-booking payments** — hosted Checkout, guest-funded turnover fees:
+  - Dashboard booking creates a checkout session and redirects the guest to Stripe
+  - `POST /api/payments/webhook` auto-marks a booking paid on `checkout.session.completed`
+  - `/api/payments/create-link/<event_id>` re-creates a payment link for unpaid bookings
+  - `/payments/success` + `/payments/cancel` confirmation pages
 - **OpenAI AI agent** (`ai_agent.py`) — processes inbound SMS/voice text, falls back gracefully if no API key
 
 ## Railway variables
@@ -31,6 +36,11 @@ Set these variables on the service:
 - `SIGNALWIRE_API_TOKEN` (optional)
 - `SIGNALWIRE_SPACE_URL=yourspace.signalwire.com` (optional)
 - `SIGNALWIRE_PHONE` (optional, your SignalWire number, e.g. `+12025550100`)
+- `STRIPE_SECRET_KEY` (required for payments)
+- `STRIPE_PUBLISHABLE_KEY` (optional)
+- `STRIPE_WEBHOOK_SECRET` (required for payment confirmation)
+- `APP_BASE_URL=https://your-app.up.railway.app` (used for Checkout success/cancel redirects)
+- `STRIPE_PRICE_TURNOVER`, `STRIPE_PRICE_DEEP`, `STRIPE_PRICE_LINEN`, `STRIPE_PRICE_INSPECTION` (per-service USD prices; defaults 120/200/50/75)
 
 The app creates its required tables automatically at startup and exposes `/health` for Railway health checks.
 
@@ -43,6 +53,21 @@ The app creates its required tables automatically at startup and exposes `/healt
    - **Voice → Voice URL** to `https://your-app.up.railway.app/comms/voice-webhook` (method POST)
 4. Set the SignalWire env vars above in Railway.
 5. Outbound SMS is available via `SignalWireService` in `signalwire_service.py` (e.g. sending secure entry links mid-call).
+
+## Stripe setup
+
+1. Create an account / activate at https://dashboard.stripe.com.
+2. Grab a **test key** from **Developers → API keys** (`sk_test_...`).
+3. Set `STRIPE_SECRET_KEY` (+ optionally `STRIPE_PUBLISHABLE_KEY`) in Railway.
+4. Create a webhook endpoint in **Developers → Webhooks**:
+   - URL: `https://your-app.up.railway.app/api/payments/webhook`
+   - Events: `checkout.session.completed`
+   - Copy the signing secret (`whsec_...`) into `STRIPE_WEBHOOK_SECRET`.
+5. Set `APP_BASE_URL` to your public domain.
+6. Prices default to Turnover $120 / Deep $200 / Linen $50 / Inspection $75 — override via `STRIPE_PRICE_*`.
+7. In the dashboard, booking an operation creates a Stripe checkout link to send the guest. Unpaid bookings show a **Payment Link** button. A booking is marked *Paid* automatically when the Stripe webhook confirms the charge.
+
+> Local testing: use a Stripe test key and `stripe listen --forward-to localhost:8000/api/payments/webhook`.
 
 ## Local
 

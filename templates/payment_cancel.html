@@ -1,0 +1,22 @@
+{% extends "base.html" %}{% block title %}Payment Cancelled | BizStack Hosts{% endblock %}
+
+{% block content %}
+<section class="relative py-16 lg:py-24 bg-gradient-to-b from-slate-50 to-white">
+    <div class="max-w-md mx-auto px-4 sm:px-6 relative z-10">
+        <div class="bg-white rounded-3xl p-8 sm:p-10 shadow-xl shadow-slate-200 border border-slate-200 text-center">
+            <div class="w-16 h-16 mx-auto bg-amber-50 rounded-3xl flex items-center justify-center text-amber-600 text-3xl font-bold mb-6">⏳</div>
+            <h1 class="text-3xl font-extrabold tracking-tight text-slate-900">Payment Not Completed</h1>
+            <p class="mt-3 text-slate-600 text-sm leading-relaxed">
+                You cancelled the checkout process. Your booking was saved but is awaiting payment to confirm the operation.
+            </p>
+
+            <div class="mt-8 space-y-3">
+                <a href="/dashboard" class="block w-full py-3.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all shadow-md shadow-indigo-100 uppercase tracking-wider">
+                    Back to Dashboard
+                </a>
+                <p class="text-xs text-slate-400">A new payment link can be created from the dashboard at any time.</p>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}
