@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BizStack Hosts | Automated Short-Term Rental Operations</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght=300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .accordion-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+        .accordion-content.open {
+            max-height: 500px;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 antialiased selection:bg-indigo-500 selection:text-white">
+
+    <!-- Header Navigation -->
+    <header class="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-20">
+                <!-- Logo -->
+                <div class="flex items-center gap-2">
+                    <span class="text-2xl">⚡</span>
+                    <span class="text-xl font-bold tracking-tight text-slate-900">BizStack <span class="text-indigo-600">Hosts</span></span>
+                    <span class="ml-2 px-2 py-0.5 text-xs font-semibold bg-indigo-50 text-indigo-700 rounded-full border border-indigo-100">STR Ops</span>
+                </div>
+                
+                <!-- Desktop Navigation Links -->
+                <nav class="hidden md:flex items-center gap-8">
+                    <a href="#how-it-works" class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">How It Works</a>
+                    <a href="#services" class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Services</a>
+                    <a href="#pricing" class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Pricing</a>
+                    <a href="#faq" class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">FAQ</a>
+                </nav>
+
+                <!-- Action Buttons -->
+                <div class="hidden md:flex items-center gap-4">
+                    <a href="/login" class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Customer Login</a>
+                    <a href="#analysis-form" class="inline-flex items-center justify-center px-4 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-xl transition-all shadow-sm shadow-indigo-200">
+                        Start Checkout
+                    </a>
+                </div>
+
+                <!-- Mobile Menu Button -->
+                <div class="flex md:hidden">
+                    <button id="mobile-menu-btn" type="button" class="text-slate-600 hover:text-slate-900 focus:outline-none" aria-label="Toggle menu">
+                        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path id="menu-icon" stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mobile Dynamic Navigation Draw -->
+        <div id="mobile-menu" class="hidden md:hidden border-t border-slate-200 bg-white px-4 py-6 space-y-4">
+            <a href="#how-it-works" class="block text-base font-medium text-slate-600 hover:text-indigo-600">How It Works</a>
+            <a href="#services" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Services</a>
+            <a href="#pricing" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Pricing</a>
+            <a href="#faq" class="block text-base font-medium text-slate-600 hover:text-indigo-600">FAQ</a>
+            <div class="pt-4 border-t border-slate-100 flex flex-col gap-3">
+                <a href="/login" class="text-center text-base font-medium text-slate-600 hover:text-indigo-600">Customer Login</a>
+                <a href="#analysis-form" class="text-center px-4 py-3 text-base font-semibold text-white bg-indigo-600 rounded-xl shadow-sm">Start Checkout</a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="relative pt-12 pb-20 lg:pt-20 lg:pb-28 overflow-hidden bg-gradient-to-b from-slate-50 to-white">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
+                
+                <!-- Left Text Column -->
+                <div class="lg:col-span-7 text-center lg:text-left">
+                    <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-100 text-emerald-800 text-xs font-semibold mb-6">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                        Zero Upfront Loans Needed for Cleaning Operations
+                    </div>
+                    <h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-slate-900 leading-none">
+                        Maximize Your Vacation Rental Revenue. <br class="hidden sm:inline" />
+                        <span class="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-violet-600">Zero Financial Risk.</span>
+                    </h1>
+                    <p class="mt-6 text-lg sm:text-xl text-slate-600 max-w-2xl mx-auto lg:mx-0 font-normal leading-relaxed">
+                        Professional 5-star short-term rental turnover cleaning and premium co-hosting management built directly into your existing infrastructure. Get flawless field coverage without locking into restrictive debt or financing plans.
+                    </p>
+                    <div class="mt-10 flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-4">
+                        <a href="#analysis-form" class="w-full sm:w-auto text-center px-8 py-4 text-base font-bold text-white bg-slate-900 hover:bg-slate-800 active:bg-slate-950 rounded-xl transition-all shadow-md shadow-slate-300">
+                            Get My Free Rental Analysis
+                        </a>
+                        <a href="#services" class="w-full sm:w-auto text-center px-8 py-4 text-base font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all">
+                            Explore Standalone Cleaning
+                        </a>
+                    </div>
+                    <!-- Software Badge Links Placeholder -->
+                    <div class="mt-12 pt-8 border-t border-slate-200 flex flex-wrap items-center justify-center lg:justify-start gap-6 opacity-60">
+                        <span class="text-xs font-semibold tracking-wider text-slate-400 uppercase">Seamless Automation Integrations</span>
+                        <div class="flex items-center gap-4 text-sm font-bold text-slate-500">
+                            <span>⚡ Airbnb API</span>
+                            <span>★ Vrbo Connect</span>
+                            <span>◆ Hospitable</span>
+                            <span>● Turno Sync</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Visual Framework Column -->
+                <div class="lg:col-span-5 relative">
+                    <div class="bg-white rounded-3xl p-6 shadow-xl shadow-slate-200 border border-slate-200 max-w-md mx-auto relative">
+                        <div class="flex items-center justify-between pb-4 border-b border-slate-100 mb-6">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 font-bold">⚡</div>
+                                <div>
+                                    <h4 class="font-bold text-slate-900 text-sm">BizStack Hosts Portal</h4>
+                                    <p class="text-xs text-emerald-600 font-medium">Active Automated Dashboard</p>
+                                </div>
+                            </div>
+                            <span class="px-2 py-1 bg-slate-100 text-slate-600 font-medium text-xs rounded-md">Live Stream</span>
+                        </div>
+                        
+                        <div class="space-y-4">
+                            <!-- Dashboard Simulated Row 1 -->
+                            <div class="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex items-start gap-3">
+                                <div class="p-2 bg-white rounded-lg border border-slate-200 text-indigo-600 text-xs">💬</div>
+                                <div class="flex-1">
+                                    <div class="flex justify-between items-center mb-1">
+                                        <span class="text-xs font-bold text-slate-800">AI Voice Assistant</span>
+                                        <span class="text-[10px] px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full font-semibold">Closed Live</span>
+                                    </div>
+                                    <p class="text-xs text-slate-500 leading-normal">Answered guest call, clarified checkout rules, and sent digital secure entry link mid-call automatically.</p>
+                                </div>
+                            </div>
+                            <!-- Dashboard Simulated Row 2 -->
+                            <div class="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex items-start gap-3">
+                                <div class="p-2 bg-white rounded-lg border border-slate-200 text-emerald-600 text-xs">🧼</div>
+                                <div class="flex-1">
+                                    <div class="flex justify-between items-center mb-1">
+                                        <span class="text-xs font-bold text-slate-800">Turnover Automation</span>
+                                        <span class="text-[10px] px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-full font-semibold">100% Funded</span>
+                                    </div>
+                                    <p class="text-xs text-slate-500 leading-normal">Guest reservation confirmed via channel manager. Cleaning crew auto-dispatched. Checkout cleaning fee collected.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Growth Badge -->
+                        <div class="mt-6 bg-slate-900 text-white rounded-2xl p-4 flex items-center justify-between">
+                            <div>
+                                <p class="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Your Portfolio Status</p>
+                                <p class="text-lg font-bold">Hands-Free Growth</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-xs font-semibold text-emerald-400">+15-20%</p>
+                                <p class="text-[10px] text-slate-400">Est. Occupancy</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </section>
+
+    <!-- The Problem & Unbundled Solution Section -->
+    <section class="py-20 border-t border-slate-200 bg-slate-50">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <h2 class="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">
+                The Problem With Traditional Property Managers?<br class="hidden sm:inline" />
+                <span class="text-indigo-600">They Take Total Control (And Too Much Cash).</span>
+            </h2>
+            <p class="mt-6 text-lg text-slate-600 max-w-3xl mx-auto leading-relaxed">
+                Most management companies force you into strict all-or-nothing contracts, demanding an aggressive 25% chunk of your gross earnings just to handle basic automated messaging or source an independent cleaning contractor. 
+            </p>
+            <div class="mt-12 bg-white rounded-3xl p-8 shadow-xl shadow-slate-100 border border-slate-200 text-left grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div>
+                    <h4 class="text-lg font-bold text-slate-900 mb-3 flex items-center gap-2">
+                        <span class="text-emerald-500">✓</span> Ground Operations Unbundled
+                    </h4>
+                    <p class="text-sm text-slate-600 leading-relaxed">
+                        We built a smarter, modular operational model. Choose exactly what your vacation rental needs today, and keep more profit inside your bank account. No package locks. No constraints.
+                    </p>
+                </div>
+                <div>
+                    <h4 class="text-lg font-bold text-slate-900 mb-3 flex items-center gap-2">
+                        <span class="text-emerald-500">✓</span> No Debt, No Out-Of-Pocket Expenses
+                    </h4>
+                    <p class="text-sm text-slate-600 leading-relaxed">
+                        Our specialized turnover cleaning services require completely zero out-of-pocket funding from you. The operational fee is natively integrated into your checkout matrix and funded entirely by your incoming guests at booking.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Unbundled Service Tiers Section -->
+    <section id="services" class="py-24 bg-white">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center max-w-3xl mx-auto mb-16">
+                <h2 class="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl">Select Your Independent Operational Tier</h2>
+                <p class="mt-4 text-lg text-slate-600">Keep absolute execution control or hand off full management burdens on your own terms.</p>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                
+                <!-- Service Card 1 -->
+                <div class="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm flex flex-col justify-between transition-all duration-300 hover:-translate-y-1 hover:shadow-xl">
+                    <div>
+                        <div class="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 text-xl font-bold mb-6">🧼</div>
+                        <h3 class="text-xl font-bold text-slate-900">5-Star Standalone Turnovers</h3>
+                        <p class="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md inline-block mt-2">Flat Rate — 100% Paid by Guests</p>
+                        <p class="mt-4 text-sm text-slate-500 leading-relaxed">Perfect for active, self-managing hosts who love control over their digital platform but suffer from ground-level staging burnout.</p>
+                        <ul class="mt-6 space-y-3.5 text-sm text-slate-600">
+                            <li class="flex items-start gap-2.5"><span class="text-indigo-600 font-bold">▪</span> <strong>Automated Calendar Syncing:</strong> Direct connection via integration links to Turno, Hospitable, or custom channel managers.</li>
+                            <li class="flex items-start gap-2.5"><span class="text-indigo-600 font-bold">▪</span> <strong>Photo-Verified Submissions:</strong> Access time-stamped room photos and inventory logs directly inside your secure portal.</li>
+                            <li class="flex items-start gap-2.5"><span class="text-indigo-600 font-bold">▪</span> <strong>Hospitality Staging:</strong> Deep cleaning, linen sets, and comprehensive supply restocking quotas execution.</li>
+                        </ul>
+                    </div>
+                    <div class="mt-8 pt-6 border-t border-slate-100">
+                        <a href="#analysis-form" class="block w-full text-center py-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-xl text-sm transition-all">Book a Property Reset</a>
+                    </div>
+                </div>
+
+                <!-- Service Card 2 -->
+                <div class="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm flex flex-col justify-between transition-all duration-300 hover:-translate-y-1 hover:shadow-xl relative ring-2 ring-indigo-600 ring-offset-2">
+                    <span class="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-indigo-600 text-white font-bold text-[10px] tracking-wider uppercase rounded-full shadow-sm">Most Conversions</span>
+                    <div>
+                        <div class="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center text-white text-xl font-bold mb-6">🎙</div>
+                        <h3 class="text-xl font-bold text-slate-900">Digital Co-Hosting</h3>
+                        <p class="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-md inline-block mt-2">10% – 15% of Gross Nightly Bookings</p>
+                        <p class="mt-4 text-sm text-slate-500 leading-relaxed">Leverages the BizStack Hosts automated tech layer to handle full digital listings, guest response times, and pricing engines.</p>
+                        <ul class="mt-6 space-y-3.5 text-sm text-slate-600">
+                            <li class="flex items-start gap-2.5"><span class="text-indigo-600 font-bold">▪</span> <strong>24/7 AI Voice Assistant Support:</strong> Inbound call assistance to handle guest questions and guide bookings live.</li>
+                            <li class="flex items-start gap-2.5"><span class="text-indigo-600 font-bold">▪</span> <strong>Dynamic Pricing Adjustments:</strong> Daily room rate calculations matching local neighborhood metrics and demand indicators.</li>
+                            <li class="flex items-start gap-2.5"><span class="text-indigo-600 font-bold">▪</span> <strong>Review Escalation:</strong> Automated system follow-ups to protect listing algorithms and secure top Superhost visibility.</li>
+                        </ul>
+                    </div>
+                    <div class="mt-8 pt-6 border-t border-slate-100">
+                        <a href="#analysis-form" class="block w-full text-center py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-sm transition-all shadow-md shadow-indigo-100">Apply for Co-Hosting</a>
+                    </div>
+                </div>
+
+                <!-- Service Card 3 -->
+                <div class="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm flex flex-col justify-between transition-all duration-300 hover:-translate-y-1 hover:shadow-xl">
+                    <div>
+                        <div class="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 text-xl font-bold mb-6">🏢</div>
+                        <h3 class="text-xl font-bold text-slate-900">Full-Service Management</h3>
+                        <p class="text-xs font-semibold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-md inline-block mt-2">20% – 30% of Gross Nightly Bookings</p>
+                        <p class="mt-4 text-sm text-slate-500 leading-relaxed">Complete turn-key asset management designed for passive out-of-state real estate investors or seasonal vacation homeowners.</p>
+                        <ul class="mt-6 space-y-3.5 text-sm text-slate-600">
+                            <li class="flex items-start gap-2.5"><span class="text-indigo-600 font-bold">▪</span> <strong>Complete System Coverage:</strong> Blends both absolute physical ground execution with full platform profile administration.</li>
+                            <li class="flex items-start gap-2.5"><span class="text-indigo-600 font-bold">▪</span> <strong>Maintenance & Vendor Management:</strong> Pre-approved spending rules to dispatch local field contractors immediately for repairs.</li>
+                            <li class="flex items-start gap-2.5"><span class="text-indigo-600 font-bold">▪</span> <strong>Multi-Channel Distribution:</strong> Listing deployment across Airbnb, Vrbo, and your custom Direct Booking portal link.</li>
+                        </ul>
+                    </div>
+                    <div class="mt-8 pt-6 border-t border-slate-100">
+                        <a href="#analysis-form" class="block w-full text-center py-3 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold rounded-xl text-sm transition-all">Schedule a Strategy Call</a>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works Section -->
+    <section id="how-it-works" class="py-20 bg-slate-50 border-t border-b border-slate-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center max-w-2xl mx-auto mb-16">
+                <h2 class="text-3xl font-extrabold tracking-tight text-slate-900">How Operations Integrate Seamlessly</h2>
+                <p class="mt-3 text-lg text-slate-600">The automation power of the BizStack Hosts core framework applied directly to field operations.</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-10 relative">
+                <!-- Step 1 -->
+                <div class="bg-white rounded-2xl p-6 border border-slate-200 relative">
+                    <div class="w-8 h-8 rounded-full bg-indigo-600 text-white font-bold text-sm flex items-center justify-center mb-4">1</div>
+                    <h4 class="text-base font-bold text-slate-900 mb-2">Calendar Syncing & Lead Targeting</h4>
+                    <p class="text-sm text-slate-500 leading-relaxed">We sync with your calendar layout. The core AI discovers expansion loops or automatically monitors platform availability windows instantly.</p>
+                </div>
+                <!-- Step 2 -->
+                <div class="bg-white rounded-2xl p-6 border border-slate-200 relative">
+                    <div class="w-8 h-8 rounded-full bg-indigo-600 text-white font-bold text-sm flex items-center justify-center mb-4">2</div>
+                    <h4 class="text-base font-bold text-slate-900 mb-2">Automated Dispatch & Voice Closing</h4>
+                    <p class="text-sm text-slate-500 leading-relaxed">When a checkout triggers, clean crews deploy via integration software loops. Concurrently, the AI phone assistant tracks guest queries live.</p>
+                </div>
+                <!-- Step 3 -->
+                <div class="bg-white rounded-2xl p-6 border border-slate-200 relative">
+                    <div class="w-8 h-8 rounded-full bg-indigo-600 text-white font-bold text-sm flex items-center justify-center mb-4">3</div>
+                    <h4 class="text-base font-bold text-slate-900 mb-2">Track Via Passwordless Portal</h4>
+                    <p class="text-sm text-slate-500 leading-relaxed">Monitor execution logs, room photo confirmations, payouts, and revenue-split distribution lists in real time using your phone or email login link.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- High-Conversion Interactive Lead Form Section -->
+    <section id="analysis-form" class="py-24 bg-white relative">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+            <div class="bg-gradient-to-br from-slate-900 to-indigo-950 rounded-3xl p-8 sm:p-12 shadow-xl border border-slate-800 text-center sm:text-left grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+                
+                <div class="lg:col-span-5 text-white">
+                    <h3 class="text-2xl sm:text-3xl font-extrabold tracking-tight">See How Much Your Property Can Earn Next Month</h3>
+                    <p class="mt-4 text-sm text-slate-400 leading-relaxed">
+                        Drop your listing information below. We will deploy a localized market matching analysis on your vacation rental zip code and show you exactly how much extra net revenue our unbundled operational framework yields.
+                    </p>
+                </div>
+
+                <div class="lg:col-span-7 bg-white rounded-2xl p-6 sm:p-8 shadow-inner">
+                    <!-- Form Container -->
+                    <form id="rental-lead-form" class="space-y-4">
+                        <div>
+                            <label for="form-name" class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Full Name</label>
+                            <input type="text" id="form-name" required class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all" placeholder="John Doe">
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label for="form-email" class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Email Address</label>
+                                <input type="email" id="form-email" required class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all" placeholder="john@example.com">
+                            </div>
+                            <div>
+                                <label for="form-phone" class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Phone Number</label>
+                                <input type="tel" id="form-phone" required class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all" placeholder="(555) 000-0000">
+                            </div>
+                        </div>
+                        <div>
+                            <label for="form-url" class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Property Address or Listing URL <span class="text-slate-400 font-normal">(Optional)</span></label>
+                            <input type="text" id="form-url" class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all" placeholder="://airbnb.com">
+                        </div>
+                        <button type="submit" id="form-submit-btn" class="w-full py-4 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-xl transition-all shadow-md shadow-indigo-100 uppercase tracking-wider mt-2">
+                            Send Me My Free Analysis Report
+                        </button>
+                    </form>
+                    
+                    <!-- Dynamic Server Response Success Box -->
+                    <div id="form-success-box" class="hidden text-center py-8 space-y-3">
+                        <div class="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-xl font-bold">✓</div>
+                        <h4 class="text-lg font-bold text-slate-900">Analysis Requested Successfully!</h4>
+                        <p class="text-xs text-slate-500 max-w-sm mx-auto">Our local Python server module has tracked your performance overview. Your tracking dashboard activation payload has been dispatched to your email inbox.</p>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </section>
+
+    <!-- FAQ Section -->
+    <section id="faq" class="py-20 bg-slate-50 border-t border-slate-200">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl font-extrabold tracking-tight text-slate-900">Frequently Asked Questions</h2>
+                <p class="mt-3 text-base text-slate-500">Everything you need to understand about our software integrations and ground service matrices.</p>
+            </div>
+
+            <div class="space-y-3">
+                <div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                    <button type="button" class="faq-toggle w-full px-6 py-4 text-left flex items-center justify-between font-semibold text-slate-900 hover:bg-slate-50 focus:outline-none">
+                        <span>Do I need to secure an operational loan or setup line of credit for the cleaning service?</span>
+                        <span class="text-xl text-slate-400 font-light">+</span>
+                    </button>
+                    <div class="accordion-content px-6 bg-white border-t border-slate-50">
+                        <p class="py-4 text-sm text-slate-600 leading-relaxed">
+                            Absolutely not. Unlike traditional corporate managers or staging systems that mandate hefty initial capital or upfront retainers, our turnover cleaning model requires zero out-of-pocket debt. The cleaning fee is directly integrated as a platform line-item, meaning your incoming guests fund the entire operational cost at check-out booking.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                    <button type="button" class="faq-toggle w-full px-6 py-4 text-left flex items-center justify-between font-semibold text-slate-900 hover:bg-slate-50 focus:outline-none">
+                        <span>How does the BizStack Hosts AI Voice Assistant support short-term rentals?</span>
+                        <span class="text-xl text-slate-400 font-light">+</span>
+                    </button>
+                    <div class="accordion-content px-6 bg-white border-t border-slate-50">
+                        <p class="py-4 text-sm text-slate-600 leading-relaxed">
+                            Our native AI phone system handles inbound voice inquiries from platform guests or prospects. It seamlessly interprets natural language to answers questions regarding pricing, features, localized house instructions, or gate access, and can instantly text a secure check-in or reservation link mid-call so you never lose an entry lead.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-slate-900 text-slate-400 py-12 border-t border-slate-800 text-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-6">
+            <div class="flex items-center gap-2">
+                <span>⚡</span>
+                <span class="text-white font-bold">BizStack Hosts</span>
+                <span class="text-slate-500">| Sales Automation & Operational Ground Layers</span>
+            </div>
+            <p class="text-xs text-slate-500">&copy; 2026 BizStack Hosts. Secure Stripe payments integrated. All rights reserved.</p>
+        </div>
+    </footer>
+    
+    <script> 
+    	import { ApolloClient, InMemoryCache, HttpLink } from "@apollo/client";
+ 		const cache = new InMemoryCache();
+ 		const link = new HttpLink({ uri: "http://localhost:4000/" });
+ 		const client = new ApolloClient({
+   		// Provide required constructor fields
+   		cache: cache,
+   		link: link,
+   		// Provide some optional constructor fields
+   		clientAwareness: {
+     	name: "react-web-client",
+     	version: "1.3",
+   		},
+   		queryDeduplication: false,
+ 		});
+	</script>
+   
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Mobile Menu Controls
+            const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+            const mobileMenu = document.getElementById('mobile-menu');
+            mobileMenuBtn.addEventListener('click', function() {
+                mobileMenu.classList.toggle('hidden');
+            });
+
+            // Accordion Toggle Matrix
+            const faqToggles = document.querySelectorAll('.faq-toggle');
+            faqToggles.forEach(toggle => {
+                toggle.addEventListener('click', function() {
+                    const content = this.nextElementSibling;
+                    const indicators = this.querySelector('span:last-child');
+                    content.classList.toggle('open');
+                    if (content.classList.contains('open')) {
+                        content.style.maxHeight = content.scrollHeight + "px";
+                        indicators.textContent = "−";
+                        indicators.classList.add('text-indigo-600');
+                    } else {
+                        content.style.maxHeight = "0";
+                        indicators.textContent = "+";
+                        indicators.classList.remove('text-indigo-600');
+                    }
+                });
+            });
+
+            // AJAX Form POST Submission directly to our Python server backend endpoint
+            const leadForm = document.getElementById('rental-lead-form');
+            const successBox = document.getElementById('form-success-box');
+            
+            leadForm.addEventListener('submit', function(event) {
+                event.preventDefault();
+                const submitBtn = document.getElementById('form-submit-btn');
+                submitBtn.disabled = true;
+                submitBtn.textContent = "Processing Analysis...";
+
+                const urlEncodedData = new URLSearchParams();
+                urlEncodedData.append('name', document.getElementById('form-name').value);
+                urlEncodedData.append('email', document.getElementById('form-email').value);
+                urlEncodedData.append('phone', document.getElementById('form-phone').value);
+                urlEncodedData.append('url', document.getElementById('form-url').value);
+
+                fetch('/submit-lead', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    body: urlEncodedData.toString()
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        leadForm.classList.add('hidden');
+                        successBox.classList.remove('hidden');
+                    } else {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = "Send Me My Free Analysis Report";
+                    }
+                })
+                .catch(error => {
+                    console.error('Submission Error:', error);
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = "Send Me My Free Analysis Report";
+                });
+            });
+        });
+    </script>
+</body>
+</html>
