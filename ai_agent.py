@@ -1,24 +1,42 @@
+from openai import OpenAI
+from datetime import datetime
 import os
-from datetime import datetime, timezone
 
 
 class BusinessAIAgent:
-    """Optional OpenAI helper. The core web app does not depend on OpenAI being configured."""
-
     def __init__(self):
-        self.api_key = os.getenv("OPENAI_API_KEY")
+        self._client = None
+
+    @property
+    def client(self):
+        if self._client is None:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise RuntimeError("OPENAI_API_KEY is not configured.")
+            self._client = OpenAI(api_key=api_key)
+        return self._client
 
     def process_inbound_text(self, context_stream: str) -> str:
-        if not self.api_key:
-            return "Thanks for contacting BizStack Hosts. We received your message and will follow up shortly."
-        from openai import OpenAI
-        client = OpenAI(api_key=self.api_key)
-        response = client.chat.completions.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            messages=[
-                {"role": "system", "content": "You are the concise booking representative for BizStack Hosts. Help with short-term-rental operations and turnover scheduling."},
-                {"role": "user", "content": context_stream},
-            ],
-            max_tokens=180,
-        )
-        return response.choices[0].message.content or "Thanks for contacting BizStack Hosts."
+        """Processes raw text inputs (SMS or Email) to classify user intent and format output."""
+        system_prompt = f"""
+You are the automated booking representative for BizStack Hosts.
+Analyze the incoming message and generate a highly concise, professional reply.
+Current Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.
+If they want to book an STR operation or turnover cleaning, provide instructions or confirm availability.
+"""
+
+        try:
+            response = self.client.chat.completions.create(
+                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": context_stream},
+                ],
+                max_tokens=150,
+            )
+            return response.choices[0].message.content
+        except RuntimeError:
+            return "Message received. Our team will follow up with you shortly."
+        except Exception as e:
+            print(f"⚠️ AI agent fallback triggered: {e}")
+            return "Message received. Our team will follow up with you shortly."

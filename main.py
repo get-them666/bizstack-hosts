@@ -1,266 +1,370 @@
-import html
-import hmac
 import os
 import secrets
+from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-
 import psycopg
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from psycopg.rows import dict_row
+from fastapi import FastAPI, Request, Form, Response, Depends, HTTPException, status
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
-BASE_DIR = Path(__file__).resolve().parent
-TEMPLATES = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
-APP_SECRET = os.getenv("APP_SECRET")
-COOKIE_NAME = "bizstack_session"
+from ai_agent import BusinessAIAgent
 
-if not APP_SECRET:
-    APP_SECRET = secrets.token_urlsafe(32)
-    print("WARNING: APP_SECRET is not set. Set it in Railway variables for persistent sessions.")
+db_url = os.getenv("DATABASE_URL", "postgresql://shaun:secret@localhost:5432/bizstack")
+templates = Jinja2Templates(directory="templates")
+ai_agent = BusinessAIAgent()
 
-
-def sign_session(email: str) -> str:
-    import hashlib
-    payload = email.encode()
-    digest = hmac.new(APP_SECRET.encode(), payload, hashlib.sha256).hexdigest()
-    return f"{email}|{digest}"
-
-
-def valid_session(value: str | None) -> str | None:
-    if not value or "|" not in value:
-        return None
-    email, digest = value.rsplit("|", 1)
-    expected = sign_session(email).rsplit("|", 1)[1]
-    if hmac.compare_digest(digest, expected):
-        return email
-    return None
-
-
-def connect_db():
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL is not configured")
-    return psycopg.connect(DATABASE_URL, connect_timeout=8)
-
-
-def ensure_schema() -> None:
-    if not DATABASE_URL:
-        print("DATABASE_URL not configured; starting without database features.")
-        return
-    with connect_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
+@asynccontextmanager
+async def lifecycle(app: FastAPI):
+    print("📡 Initing cloud-native table migration layer check...")
+    try:
+        with psycopg.connect(db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
                 CREATE TABLE IF NOT EXISTS calendar_events (
-                    id BIGSERIAL PRIMARY KEY,
+                    id SERIAL PRIMARY KEY,
                     customer_name VARCHAR(255) NOT NULL,
                     phone VARCHAR(50) NOT NULL,
-                    start_time TIMESTAMPTZ NOT NULL,
-                    end_time TIMESTAMPTZ NOT NULL,
+                    start_time TIMESTAMP WITH TIME ZONE NOT NULL,
+                    end_time TIMESTAMP WITH TIME ZONE NOT NULL,
                     service_type VARCHAR(100) NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            cur.execute("""
-                CREATE INDEX IF NOT EXISTS idx_calendar_events_time
-                ON calendar_events (start_time, end_time)
-            """)
-            cur.execute("""
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
                 CREATE TABLE IF NOT EXISTS comms_logs (
-                    id BIGSERIAL PRIMARY KEY,
+                    id SERIAL PRIMARY KEY,
                     direction VARCHAR(10) NOT NULL,
-                    channel VARCHAR(20) NOT NULL,
+                    channel VARCHAR(10) NOT NULL,
                     sender VARCHAR(255) NOT NULL,
                     recipient VARCHAR(255) NOT NULL,
                     message_body TEXT,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS leads (
-                    id BIGSERIAL PRIMARY KEY,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    email VARCHAR(255) UNIQUE NOT NULL,
+                    password_hash VARCHAR(255) NOT NULL,
+                    role VARCHAR(50) DEFAULT 'customer',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS hosts (
+                    id SERIAL PRIMARY KEY,
                     name VARCHAR(255) NOT NULL,
-                    email VARCHAR(320) NOT NULL,
-                    phone VARCHAR(50) NOT NULL,
+                    property_name VARCHAR(255),
+                    status VARCHAR(50) DEFAULT 'active',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS customers (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    email VARCHAR(255),
+                    phone VARCHAR(50),
+                    source VARCHAR(100) DEFAULT 'manual',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS bookings (
+                    id SERIAL PRIMARY KEY,
+                    customer_name VARCHAR(255) NOT NULL,
+                    service_type VARCHAR(100) NOT NULL,
+                    status VARCHAR(50) DEFAULT 'pending',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS leads (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    email VARCHAR(255) NOT NULL,
+                    phone VARCHAR(50),
                     listing_url TEXT,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-        conn.commit()
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    try:
-        ensure_schema()
-        print("Database schema check complete.")
-    except Exception as exc:
-        print(f"Database startup check failed: {exc}")
+                    status VARCHAR(50) DEFAULT 'new',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                conn.commit()
+        print("🚀 Database connectivity and tables validated successfully.")
+    except Exception as e:
+        print(f"❌ Structural database connection failure: {e}")
     yield
 
+app = FastAPI(lifespan=lifecycle)
 
-app = FastAPI(title="BizStack Hosts", version="1.0.0", lifespan=lifespan)
+def get_db():
+    conn = psycopg.connect(db_url, row_factory=dict_row)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
+def require_auth(request: Request):
+    token = request.cookies.get("session_token")
+    return bool(token), request.cookies.get("user_email")
 
-def require_user(request: Request) -> str:
-    email = valid_session(request.cookies.get(COOKIE_NAME))
-    if not email:
-        raise HTTPException(status_code=status.HTTP_303_SEE_OTHER, headers={"Location": "/login"})
-    return email
-
-
-@app.get("/health")
-async def health():
-    db_ok = False
-    if DATABASE_URL:
-        try:
-            with connect_db() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT 1")
-                    cur.fetchone()
-            db_ok = True
-        except Exception:
-            db_ok = False
-    return {"status": "ok", "database": "connected" if db_ok else "unavailable"}
-
+# --- PUBLIC LANDING & AUTH ---
 
 @app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    return TEMPLATES.TemplateResponse(request=request, name="index.html", context={})
+async def read_index(request: Request):
+    return templates.TemplateResponse(request=request, name="index.html", context={})
 
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
 
 @app.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request):
-    return TEMPLATES.TemplateResponse(request=request, name="login.html", context={"configured": bool(ADMIN_EMAIL and ADMIN_PASSWORD)})
-
+async def read_login(request: Request):
+    error = request.query_params.get("error")
+    return templates.TemplateResponse(request=request, name="login.html", context={"error": error})
 
 @app.post("/api/auth/login")
-async def login(email: str = Form(...), password: str = Form(...)):
-    if not ADMIN_EMAIL or not ADMIN_PASSWORD:
-        return RedirectResponse("/login?error=Login+is+not+configured", status_code=303)
-    if not hmac.compare_digest(email.strip().lower(), ADMIN_EMAIL.strip().lower()) or not hmac.compare_digest(password, ADMIN_PASSWORD):
-        return RedirectResponse("/login?error=Invalid+credentials", status_code=303)
-    response = RedirectResponse("/dashboard", status_code=303)
-    response.set_cookie(COOKIE_NAME, sign_session(ADMIN_EMAIL), httponly=True, secure=os.getenv("COOKIE_SECURE", "true").lower() == "true", samesite="lax", max_age=60 * 60 * 12)
+async def api_login(email: str = Form(...), password: str = Form(...)):
+    admin_email = os.getenv("ADMIN_EMAIL", "shaun@example.com")
+    admin_password = os.getenv("ADMIN_PASSWORD", "password123")
+    if email == admin_email and password == admin_password:
+        token = secrets.token_urlsafe(32)
+        response = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+        response.set_cookie(key="session_token", value=token, httponly=True, samesite="lax", secure=os.getenv("COOKIE_SECURE", "false").lower() == "true")
+        response.set_cookie(key="user_email", value=email, httponly=True, samesite="lax")
+        return response
+    return RedirectResponse(url="/login?error=Invalid+Credentials", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.get("/api/auth/logout")
+async def api_logout():
+    response = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+    response.delete_cookie("session_token")
+    response.delete_cookie("user_email")
     return response
 
-
-@app.post("/api/auth/logout")
-async def logout():
-    response = RedirectResponse("/", status_code=303)
-    response.delete_cookie(COOKIE_NAME)
-    return response
-
-
-@app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request, email: str = Depends(require_user)):
-    return TEMPLATES.TemplateResponse(request=request, name="dashboard.html", context={"user": {"email": email}})
-
-
-@app.get("/hosts", response_class=HTMLResponse)
-async def hosts(request: Request, email: str = Depends(require_user)):
-    return TEMPLATES.TemplateResponse(request=request, name="hosts.html", context={"user": {"email": email}})
-
-
-@app.get("/settings", response_class=HTMLResponse)
-async def settings(request: Request, email: str = Depends(require_user)):
-    return TEMPLATES.TemplateResponse(request=request, name="settings.html", context={"user": {"email": email}})
-
-
-@app.get("/api/calendar")
-async def calendar_events(_: str = Depends(require_user)):
-    try:
-        with connect_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT id, customer_name, phone, start_time, end_time, service_type
-                    FROM calendar_events ORDER BY start_time ASC
-                """)
-                rows = cur.fetchall()
-        return [
-            {"id": r[0], "customer_name": r[1], "phone": r[2], "start_time": r[3].isoformat(), "end_time": r[4].isoformat(), "service_type": r[5]}
-            for r in rows
-        ]
-    except Exception as exc:
-        raise HTTPException(503, f"Database unavailable: {exc}") from exc
-
-
-@app.post("/api/calendar/book")
-async def create_booking(
-    customer_name: str = Form(...),
-    phone: str = Form(...),
-    start_time: str = Form(...),
-    service_type: str = Form(...),
-    _: str = Depends(require_user),
-):
-    try:
-        parsed = datetime.fromisoformat(start_time)
-    except ValueError as exc:
-        raise HTTPException(400, "Invalid date/time") from exc
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    parsed = parsed.astimezone(timezone.utc)
-    end = parsed + timedelta(hours=1)
-
-    with connect_db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT 1 FROM calendar_events
-                WHERE start_time < %s AND end_time > %s
-                LIMIT 1
-            """, (end, parsed))
-            if cur.fetchone():
-                raise HTTPException(409, "Requested timeframe overlaps an existing booking.")
-            cur.execute("""
-                INSERT INTO calendar_events (customer_name, phone, start_time, end_time, service_type)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (customer_name.strip(), phone.strip(), parsed, end, service_type.strip()))
-        conn.commit()
-    return RedirectResponse("/dashboard?booked=1", status_code=303)
-
+# --- LEAD CAPTURE (LANDING PAGE FORM) ---
 
 @app.post("/submit-lead")
 async def submit_lead(
     name: str = Form(...),
     email: str = Form(...),
     phone: str = Form(...),
-    url: str = Form("")
+    url: str = Form(""),
+    db=Depends(get_db)
 ):
-    name, email, phone, url = name.strip(), email.strip(), phone.strip(), url.strip()
-    if not name or not email or not phone:
-        return JSONResponse({"status": "error", "message": "Name, email, and phone are required."}, status_code=400)
-    if not DATABASE_URL:
-        return JSONResponse({"status": "success", "message": "Lead received."})
-    try:
-        with connect_db() as conn:
-            with conn.cursor() as cur:
-                cur.execute("INSERT INTO leads (name, email, phone, listing_url) VALUES (%s, %s, %s, %s)", (name, email, phone, url or None))
-            conn.commit()
-        return JSONResponse({"status": "success"})
-    except Exception as exc:
-        print(f"Lead save failed: {exc}")
-        return JSONResponse({"status": "error", "message": "We could not save your request right now."}, status_code=503)
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO leads (name, email, phone, listing_url) VALUES (%s, %s, %s, %s) RETURNING id",
+            (name, email, phone, url)
+        )
+        db.commit()
+    return JSONResponse(content={"status": "success"})
 
+# --- DASHBOARD ---
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def read_dashboard(request: Request, db=Depends(get_db)):
+    is_authed, user_email = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
+    with db.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM hosts")
+        hosts_count = cur.fetchone()['count']
+        cur.execute("SELECT COUNT(*) FROM calendar_events")
+        bookings_count = cur.fetchone()['count']
+        cur.execute("SELECT COUNT(*) FROM customers")
+        customers_count = cur.fetchone()['count']
+        cur.execute("SELECT COUNT(*) FROM leads")
+        leads_count = cur.fetchone()['count']
+
+        cur.execute("SELECT id, customer_name, phone, start_time, end_time, service_type FROM calendar_events WHERE start_time >= NOW() - INTERVAL '7 days' ORDER BY start_time DESC LIMIT 10")
+        events = cur.fetchall()
+
+    return templates.TemplateResponse(
+        request=request,
+        name="dashboard.html",
+        context={
+            "user": {"email": user_email},
+            "stats": {"hosts": hosts_count, "bookings": bookings_count, "customers": customers_count, "leads": leads_count},
+            "events": events
+        }
+    )
+
+# --- HOSTS MANAGEMENT ---
+
+@app.get("/hosts", response_class=HTMLResponse)
+async def hosts_page(request: Request, db=Depends(get_db)):
+    is_authed, user_email = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM leads ORDER BY created_at DESC LIMIT 50")
+        leads = cur.fetchall()
+
+    return templates.TemplateResponse(request=request, name="hosts.html", context={"user": {"email": user_email}, "leads": leads})
+
+@app.post("/api/hosts")
+async def create_host(name: str = Form(...), property_name: str = Form(""), db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO hosts (name, property_name) VALUES (%s, %s) RETURNING id", (name, property_name))
+        host_id = cur.fetchone()["id"]
+        db.commit()
+    return RedirectResponse(url="/hosts", status_code=303)
+
+@app.post("/api/customers")
+async def create_customer(name: str = Form(...), email: str = Form(""), phone: str = Form(""), db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO customers (name, email, phone) VALUES (%s, %s, %s) RETURNING id", (name, email, phone))
+        customer_id = cur.fetchone()["id"]
+        db.commit()
+    return RedirectResponse(url="/hosts", status_code=303)
+
+# --- MESSAGING / COMMS CENTER ---
+
+@app.get("/comms", response_class=HTMLResponse)
+async def comms_page(request: Request, db=Depends(get_db)):
+    is_authed, user_email = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
+    with db.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM comms_logs")
+        comms_count = cur.fetchone()['count']
+        cur.execute("SELECT * FROM comms_logs ORDER BY created_at DESC LIMIT 50")
+        comms = cur.fetchall()
+
+    return templates.TemplateResponse(request=request, name="comms.html", context={"user": {"email": user_email}, "comms": comms, "comms_count": comms_count})
+
+# --- SETTINGS ---
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request):
+    is_authed, user_email = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    return templates.TemplateResponse(request=request, name="settings.html", context={"user": {"email": user_email}})
+
+# --- CALENDAR API ---
+
+@app.get("/api/calendar")
+async def fetch_calendar_data(db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("SELECT id, customer_name, phone, start_time, end_time, service_type FROM calendar_events ORDER BY start_time ASC;")
+        rows = cur.fetchall()
+        for row in rows:
+            row['start_time'] = row['start_time'].isoformat()
+            row['end_time'] = row['end_time'].isoformat()
+        return rows
+
+@app.post("/api/calendar/book")
+async def create_manual_booking(
+    customer_name: str = Form(...),
+    phone: str = Form(...),
+    start_time: str = Form(...),
+    service_type: str = Form(...),
+    db=Depends(get_db)
+):
+    parsed_start = datetime.fromisoformat(start_time)
+    parsed_end = parsed_start + timedelta(hours=1)
+
+    with db.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM calendar_events WHERE start_time < %s AND end_time > %s;", (parsed_end, parsed_start))
+        if cur.fetchone()['count'] > 0:
+            raise HTTPException(status_code=400, detail="Requested timeframe collides with an active event.")
+        cur.execute(
+            "INSERT INTO calendar_events (customer_name, phone, start_time, end_time, service_type) VALUES (%s, %s, %s, %s, %s);",
+            (customer_name, phone, parsed_start, parsed_end, service_type)
+        )
+        db.commit()
+    return RedirectResponse(url="/dashboard", status_code=303)
+
+# --- BUSINESS API ---
+
+@app.get("/api/business/summary")
+async def business_summary(db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM hosts"); hosts = cur.fetchone()["count"]
+        cur.execute("SELECT COUNT(*) FROM customers"); customers = cur.fetchone()["count"]
+        cur.execute("SELECT COUNT(*) FROM calendar_events"); bookings = cur.fetchone()["count"]
+        cur.execute("SELECT COUNT(*) FROM leads"); leads = cur.fetchone()["count"]
+    return {"hosts": hosts, "customers": customers, "bookings": bookings, "leads": leads}
+
+# --- SIGNALWIRE SMS WEBHOOK ---
 
 @app.post("/comms/sms-webhook")
-async def inbound_sms_webhook(From: str = Form(...), Body: str = Form(...)):
-    body = Body.strip()
-    if DATABASE_URL:
+async def inbound_sms_webhook(
+    request: Request,
+    db=Depends(get_db)
+):
+    form = await request.form()
+    From = form.get("From", "")
+    Body = form.get("Body", "")
+
+    ai_reply = ai_agent.process_inbound_text(f"Inbound SMS from {From}: {Body}")
+
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO comms_logs (direction, channel, sender, recipient, message_body) VALUES ('inbound', 'sms', %s, 'system', %s);", (From, Body))
+        db.commit()
+
+    sxml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response><Message to="{From}">{ai_reply}</Message></Response>"""
+    return Response(content=sxml_payload, media_type="application/xml")
+
+# --- SIGNALWIRE VOICE WEBHOOK ---
+
+@app.post("/comms/voice-webhook")
+async def voice_webhook(request: Request, db=Depends(get_db)):
+    form = await request.form()
+    CallSid = form.get("CallSid", "unknown")
+    From = form.get("From", "unknown")
+    To = form.get("To", "unknown")
+
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO comms_logs (direction, channel, sender, recipient, message_body) VALUES ('inbound', 'voice', %s, %s, %s);", (From, To, f"Voice call received - SID: {CallSid}"))
+        db.commit()
+
+    greeting = "Thank you for calling BizStack Hosts! Our automated assistant is ready to help with bookings, house rules, or checkout instructions. How can I assist you today?"
+    twiml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">{greeting}</Say>
+    <Record maxLength="30" action="/comms/voice-action" transcribe="true" transcribeCallback="/comms/voice-transcribe"/>
+</Response>"""
+    return Response(content=twiml_payload, media_type="application/xml")
+
+@app.post("/comms/voice-action")
+async def voice_action(request: Request, db=Depends(get_db)):
+    form = await request.form()
+    RecordingUrl = form.get("RecordingUrl", "")
+    RecordingSid = form.get("RecordingSid", "")
+
+    ai_response = "Thank you for your message. Our team will follow up with you shortly via text. Have a great day!"
+
+    twiml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">{ai_response}</Say>
+    <Hangup/>
+</Response>"""
+    return Response(content=twiml_payload, media_type="application/xml")
+
+@app.post("/comms/voice-transcribe")
+async def voice_transcribe(request: Request, db=Depends(get_db)):
+    form = await request.form()
+    TranscriptionText = form.get("TranscriptionText", "")
+    From = form.get("From", "unknown")
+    CallSid = form.get("CallSid", "")
+
+    if TranscriptionText:
         try:
-            with connect_db() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("""
-                        INSERT INTO comms_logs (direction, channel, sender, recipient, message_body)
-                        VALUES ('inbound', 'sms', %s, 'system', %s)
-                    """, (From.strip(), body))
-                conn.commit()
-        except Exception as exc:
-            print(f"SMS log failed: {exc}")
-    safe_from = html.escape(From.strip(), quote=True)
-    safe_body = html.escape(body[:500])
-    reply = f"BizStack Hosts received your message: {safe_body}"
-    xml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message to="{safe_from}">{html.escape(reply)}</Message></Response>'
-    return Response(content=xml, media_type="application/xml")
+            ai_reply = ai_agent.process_inbound_text(f"Voice transcription from {From}: {TranscriptionText}")
+        except Exception:
+            ai_reply = "Thank you for your call. Our team will follow up shortly."
+
+        with db.cursor() as cur:
+            cur.execute("INSERT INTO comms_logs (direction, channel, sender, recipient, message_body) VALUES ('inbound', 'voice-transcription', %s, 'system', %s);", (From, TranscriptionText))
+            cur.execute("INSERT INTO comms_logs (direction, channel, sender, recipient, message_body) VALUES ('outbound', 'sms', 'system', %s, %s);", (From, ai_reply))
+            db.commit()
+
+    return Response(content="", status_code=204)

@@ -1,29 +1,190 @@
-{% extends "base.html" %}
-{% block title %}Dashboard | BizStack Hosts{% endblock %}
+{% extends "base.html" %}{% block title %}Dashboard | BizStack Hosts{% endblock %}
+
 {% block content %}
-<div class="mb-8">
-  <span class="inline-flex items-center rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">Operations Dashboard</span>
-  <h1 class="mt-3 text-3xl sm:text-4xl font-bold tracking-tight text-slate-900">STR Operational Dashboard</h1>
-  <p class="mt-2 text-slate-600">Manage bookings, service schedules, and host operations from one place.</p>
-</div>
-<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-  <section class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-    <div class="mb-5"><h2 class="text-lg font-bold">Schedule a service</h2><p class="text-sm text-slate-500 mt-1">Create a new operational booking.</p></div>
-    <form action="/api/calendar/book" method="POST" class="space-y-4">
-      <div><label class="block text-xs font-semibold text-slate-600 mb-1.5">Customer name</label><input type="text" name="customer_name" required class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></div>
-      <div><label class="block text-xs font-semibold text-slate-600 mb-1.5">Contact phone</label><input type="text" name="phone" required class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></div>
-      <div><label class="block text-xs font-semibold text-slate-600 mb-1.5">Date & time</label><input type="datetime-local" name="start_time" required class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></div>
-      <div><label class="block text-xs font-semibold text-slate-600 mb-1.5">Service type</label><select name="service_type" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"><option value="5-Star Turnover Cleaning">5-Star Turnover Cleaning</option><option value="Digital Co-Hosting Integration">Digital Co-Hosting Integration</option></select></div>
-      <button type="submit" class="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 transition">Schedule service</button>
-    </form>
-  </section>
-  <section class="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-    <div class="flex items-center justify-between mb-5"><div><h2 class="text-lg font-bold">Live Calendar</h2><p class="text-sm text-slate-500 mt-1">Current scheduled operations.</p></div><span class="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">Live</span></div>
-    <div class="overflow-x-auto"><table class="w-full text-left text-sm"><thead><tr class="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500"><th class="p-3">Customer</th><th class="p-3">Phone</th><th class="p-3">Start</th><th class="p-3">Service</th></tr></thead><tbody id="calendarLiveRows" class="divide-y divide-slate-100"></tbody></table></div>
-  </section>
-</div>
+<section class="bg-gradient-to-b from-slate-50 to-white">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <!-- Page Header -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-10">
+            <div>
+                <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900">Operations Dashboard</h1>
+                <p class="mt-2 text-slate-600">Your portfolio status at a glance. <span class="text-emerald-600 font-semibold">Hands-free growth mode active.</span></p>
+            </div>
+            <a href="/hosts" class="inline-flex items-center justify-center px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all shadow-md shadow-indigo-100">
+                + Manage Hosts
+            </a>
+        </div>
+
+        <!-- Stat Cards -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-10">
+            <div class="bg-slate-900 text-white rounded-3xl p-6 shadow-lg shadow-slate-300">
+                <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Active Hosts</p>
+                <p class="text-4xl font-extrabold mt-2">{{ stats.hosts if stats else 0 }}</p>
+                <p class="text-xs text-emerald-400 mt-2 font-medium">Portfolio handoff</p>
+            </div>
+            <div class="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
+                <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Bookings</p>
+                <p class="text-4xl font-extrabold mt-2 text-indigo-600">{{ stats.bookings if stats else 0 }}</p>
+                <p class="text-xs text-slate-400 mt-2 font-medium">Turnovers scheduled</p>
+            </div>
+            <div class="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
+                <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Customers</p>
+                <p class="text-4xl font-extrabold mt-2 text-indigo-600">{{ stats.customers if stats else 0 }}</p>
+                <p class="text-xs text-slate-400 mt-2 font-medium">Tracked leads</p>
+            </div>
+            <div class="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
+                <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Recent Leads</p>
+                <p class="text-4xl font-extrabold mt-2 text-emerald-600">{{ stats.leads if stats else 0 }}</p>
+                <p class="text-xs text-slate-400 mt-2 font-medium">Free analysis requests</p>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+            <!-- Calendar Column -->
+            <div class="lg:col-span-7 bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 overflow-hidden">
+                <div class="p-6 border-b border-slate-100 flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 font-bold">📅</div>
+                        <div>
+                            <h3 class="font-bold text-slate-900">Turnover Calendar</h3>
+                            <p class="text-xs text-slate-500">Scheduled STR operations & cleanings</p>
+                        </div>
+                    </div>
+                    <span id="current-month" class="px-2 py-1 bg-slate-100 text-slate-600 font-medium text-xs rounded-md"></span>
+                </div>
+
+                <div class="p-6">
+                    <!-- Simple Calendar Grid -->
+                    <div id="calendar-grid" class="grid grid-cols-7 gap-1 text-center"></div>
+
+                    <!-- Upcoming Events List -->
+                    <h4 class="text-sm font-bold text-slate-900 mt-8 mb-4 uppercase tracking-wider">Upcoming Operations</h4>
+                    <div id="upcoming-events" class="space-y-3">
+                        {% if events %}
+                            {% for e in events %}
+                            <div class="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-between gap-3">
+                                <div class="flex items-center gap-3 min-w-0">
+                                    <div class="w-9 h-9 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-indigo-600 text-xs font-bold shrink-0">
+                                        {% set d = e['start_time'].strftime('%d') %}{{ d }}
+                                    </div>
+                                    <div class="min-w-0">
+                                        <p class="text-sm font-bold text-slate-800 truncate">{{ e.customer_name }}</p>
+                                        <p class="text-xs text-slate-500">{{ e['start_time'].strftime('%b %d at %I:%M %p') }} · {{ e['service_type'] }}</p>
+                                    </div>
+                                </div>
+                                <span class="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-semibold rounded-full shrink-0">Scheduled</span>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <div class="text-center py-10 text-slate-400">
+                                <p class="text-3xl mb-2">🗓️</p>
+                                <p class="text-sm">No operations scheduled yet.</p>
+                                <p class="text-xs mt-1">Complete a booking below to get started.</p>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Booking Form + Growth -->
+            <div class="lg:col-span-5 space-y-8">
+
+                <!-- Quick Booking Form -->
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-6">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 font-bold">🧼</div>
+                        <div>
+                            <h3 class="font-bold text-slate-900">Schedule a Turnover</h3>
+                            <p class="text-xs text-slate-500">Quick booking for cleaning ops</p>
+                        </div>
+                    </div>
+                    <form action="/api/calendar/book" method="post" class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Customer Name</label>
+                            <input type="text" name="customer_name" required class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all" placeholder="John Doe">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Phone</label>
+                            <input type="tel" name="phone" required class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all" placeholder="(555) 000-0000">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Start Time</label>
+                            <input type="datetime-local" name="start_time" required class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Service Type</label>
+                            <select name="service_type" class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+                                <option value="Turnover Cleaning">Turnover Cleaning</option>
+                                <option value="Deep Cleaning">Deep Cleaning</option>
+                                <option value="Linen Restock">Linen Restock</option>
+                                <option value="Inspection">Inspection</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="w-full py-3.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all shadow-md shadow-indigo-100 uppercase tracking-wider">
+                            Book Operation
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Portfolio Growth Card -->
+                <div class="bg-slate-900 text-white rounded-3xl p-6 shadow-lg shadow-slate-300">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Your Portfolio Status</p>
+                            <p class="text-lg font-bold mt-1">Hands-Free Growth</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-xs font-semibold text-emerald-400">+15-20%</p>
+                            <p class="text-[10px] text-slate-400">Est. Occupancy</p>
+                        </div>
+                    </div>
+                    <div class="mt-4 h-2 bg-slate-700 rounded-full overflow-hidden">
+                        <div class="h-full w-3/4 bg-gradient-to-r from-emerald-400 to-emerald-500 rounded-full"></div>
+                    </div>
+                    <p class="text-xs text-slate-400 mt-3">Turnover automation dispatched and funded entirely by guest checkout fees. Zero out-of-pocket debt.</p>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
 <script>
-async function fetchSystemEvents(){try{const res=await fetch('/api/calendar');if(!res.ok)return;const items=await res.json();const c=document.getElementById('calendarLiveRows');if(!items.length){c.innerHTML='<tr><td colspan="4" class="p-8 text-center text-slate-500">No active bookings yet.</td></tr>';return;}c.innerHTML=items.map(x=>`<tr class="hover:bg-slate-50"><td class="p-3 font-semibold text-slate-900">${x.customer_name}</td><td class="p-3 text-indigo-600">${x.phone}</td><td class="p-3 text-slate-600">${new Date(x.start_time).toLocaleString()}</td><td class="p-3"><span class="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700">${x.service_type}</span></td></tr>`).join('');}catch(e){console.error(e)}}
-fetchSystemEvents();
+document.addEventListener('DOMContentLoaded', function() {
+    const grid = document.getElementById('calendar-grid');
+    const monthLabel = document.getElementById('current-month');
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    monthLabel.textContent = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const startPad = (firstDay.getDay() + 6) % 7;
+
+    const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    dayNames.forEach(name => {
+        const el = document.createElement('div');
+        el.className = 'text-[10px] font-semibold text-slate-400 uppercase tracking-wider py-1';
+        el.textContent = name;
+        grid.appendChild(el);
+    });
+
+    for (let pad = 0; pad < startPad; pad++) {
+        grid.appendChild(document.createElement('div'));
+    }
+
+    const today = now.getDate();
+    for (let day = 1; day <= lastDay.getDate(); day++) {
+        const el = document.createElement('div');
+        const isToday = day === today;
+        el.className = 'h-10 rounded-lg flex items-center justify-center text-sm transition-all ' +
+            (isToday ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-200' : 'text-slate-600 hover:bg-slate-100');
+        el.textContent = day;
+        grid.appendChild(el);
+    }
+});
 </script>
 {% endblock %}
