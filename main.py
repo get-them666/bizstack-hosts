@@ -256,7 +256,7 @@ async def comms_page(request: Request, db=Depends(get_db)):
         cur.execute("SELECT * FROM comms_logs ORDER BY created_at DESC LIMIT 50")
         comms = cur.fetchall()
 
-    return templates.TemplateResponse(request=request, name="comms.html", context={"user": {"email": user_email}, "comms": comms, "comms_count": comms_count})
+    return templates.TemplateResponse(request=request, name="comms.html", context={"user": {"email": user_email}, "comms": comms, "comms_count": comms_count, "signalwire_phone": os.getenv("SIGNALWIRE_PHONE", "")})
 
 # --- SETTINGS ---
 
@@ -265,7 +265,7 @@ async def settings_page(request: Request):
     is_authed, user_email = require_auth(request)
     if not is_authed:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    return templates.TemplateResponse(request=request, name="settings.html", context={"user": {"email": user_email}, "stripe_configured": stripe_svc.is_configured()})
+    return templates.TemplateResponse(request=request, name="settings.html", context={"user": {"email": user_email}, "stripe_configured": stripe_svc.is_configured(), "signalwire_phone": os.getenv("SIGNALWIRE_PHONE", "")})
 
 # --- CALENDAR API ---
 
