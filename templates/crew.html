@@ -1,0 +1,388 @@
+{% extends "base.html" %}{% block title %}Crew & Payroll | BizStack Hosts{% endblock %}
+
+{% block content %}
+<section class="bg-gradient-to-b from-slate-50 to-white">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-10">
+            <div>
+                <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900">Crew & Payroll</h1>
+                <p class="mt-2 text-slate-600">Cleaner accounts, job assignments, and paycheck generation.</p>
+            </div>
+            <a href="/dashboard" class="inline-flex items-center justify-center px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all shadow-md shadow-indigo-100">
+                ← Back to Dashboard
+            </a>
+        </div>
+
+        <!-- Add Worker -->
+        <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8 mb-10">
+            <div class="flex items-center gap-3 mb-6">
+                <div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 font-bold">🧹</div>
+                <div>
+                    <h2 class="text-lg font-bold text-slate-900">Add Cleaner</h2>
+                    <p class="text-xs text-slate-500">Creates a login PIN for the cleaner's portal</p>
+                </div>
+            </div>
+            <form id="worker-form" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Name</label>
+                    <input id="w-name" required placeholder="Maria Lopez"
+                        class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Phone</label>
+                    <input id="w-phone" placeholder="+1 (555) 123-4567"
+                        class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Email</label>
+                    <input id="w-email" type="email" placeholder="maria@example.com"
+                        class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Pay Rate / Job</label>
+                    <input id="w-rate" type="number" step="0.01" min="0" value="50" required
+                        class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+                </div>
+                <div class="sm:col-span-2 lg:col-span-4">
+                    <button type="submit" class="px-8 py-3.5 text-sm font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-all uppercase tracking-wider">
+                        Add Cleaner
+                    </button>
+                    <span id="worker-created" class="hidden ml-4 text-sm font-semibold text-emerald-600"></span>
+                </div>
+            </form>
+        </div>
+
+        <!-- Worker Roster -->
+        <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8 mb-10">
+            <h2 class="text-lg font-bold text-slate-900 mb-1">Roster</h2>
+            <p class="text-xs text-slate-500 mb-6">Earnings shown are from completed jobs.</p>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-left text-xs uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                            <th class="py-3 pr-4">Name</th>
+                            <th class="py-3 pr-4">Phone</th>
+                            <th class="py-3 pr-4">Rate / Job</th>
+                            <th class="py-3 pr-4">Assigned</th>
+                            <th class="py-3 pr-4">Done</th>
+                            <th class="py-3 pr-4">Earned</th>
+                            <th class="py-3 pr-4">Status</th>
+                            <th class="py-3">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for w in workers %}
+                        <tr class="border-b border-slate-50">
+                            <td class="py-3 pr-4 font-semibold text-slate-800">{{ w['name'] }}</td>
+                            <td class="py-3 pr-4 text-slate-500">{{ w['phone'] or '—' }}</td>
+                            <td class="py-3 pr-4">${{ '%.2f'|format(w['pay_rate_cents'] / 100) }}</td>
+                            <td class="py-3 pr-4">{{ w['jobs_assigned'] or 0 }}</td>
+                            <td class="py-3 pr-4">{{ w['jobs_done'] or 0 }}</td>
+                            <td class="py-3 pr-4 font-semibold text-emerald-600">${{ '%.2f'|format((w['earned_cents'] or 0) / 100) }}</td>
+                            <td class="py-3 pr-4">
+                                {% if w['is_active'] %}<span class="px-2 py-1 text-xs font-semibold rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100">Active</span>
+                                {% else %}<span class="px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-500 border border-slate-200">Inactive</span>{% endif %}
+                            </td>
+                            <td class="py-3">
+                                <button class="reset-pin text-xs font-semibold text-indigo-600 hover:text-indigo-700" data-id="{{ w['id'] }}">New PIN</button>
+                                {% if w['is_active'] %}
+                                <form method="post" action="/api/workers/{{ w['id'] }}/deactivate" class="inline">
+                                    <button class="text-xs font-semibold text-slate-400 hover:text-slate-600 ml-2">Disable</button>
+                                </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="8" class="py-6 text-center text-slate-400">No cleaners yet — add your first one above.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Assign Jobs -->
+        <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8 mb-10">
+            <h2 class="text-lg font-bold text-slate-900 mb-1">Assign Jobs</h2>
+            <p class="text-xs text-slate-500 mb-6">Add the job site address so the cleaner can clock in with the 1/16-mile geofence. Pay auto-fills from the cleaner's rate.</p>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-left text-xs uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                            <th class="py-3 pr-4">When</th>
+                            <th class="py-3 pr-4">Customer</th>
+                            <th class="py-3 pr-4">Service</th>
+                            <th class="py-3 pr-4">Job Location</th>
+                            <th class="py-3 pr-4">Cleaning Pay</th>
+                            <th class="py-3">Assign</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for ev in unassigned %}
+                        <tr class="border-b border-slate-50">
+                            <td class="py-3 pr-4 whitespace-nowrap text-slate-600">{{ ev['start_time'].strftime('%b %d, %I:%M %p') }}</td>
+                            <td class="py-3 pr-4 font-semibold text-slate-800">{{ ev['customer_name'] }}</td>
+                            <td class="py-3 pr-4 text-slate-500">{{ ev['service_type'] }}</td>
+                            <td class="py-3 pr-4">
+                                <form method="post" action="/api/workers/{{ workers[0]['id'] if workers else 0 }}/assign" class="assign-form" data-event="{{ ev['id'] }}">
+                                    <input type="hidden" name="event_id" value="{{ ev['id'] }}">
+                                    <input type="hidden" name="worker_id" value="">
+                                    <input name="job_address" type="text" placeholder="Job site address for geofence"
+                                        class="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                    <div class="flex gap-2 mt-2">
+                                        <input name="pay_rate" type="number" step="0.01" min="0" value="50" class="w-24 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                        <button type="submit" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg" {% if not workers %}disabled{% endif %}>Assign</button>
+                                    </div>
+                                </form>
+                            </td>
+                            <td class="py-3 pr-4 text-slate-500">${{ '%.2f'|format((ev['amount_cents'] or 0) / 100) }} paid</td>
+                            <td class="py-3">
+                                <button class="assign-btn px-4 py-2 text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg" data-event="{{ ev['id'] }}" {% if not workers %}disabled{% endif %}>⚡ Auto-Assign</button>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="6" class="py-6 text-center text-slate-400">No unassigned bookings.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Live Time Clocks -->
+        <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8 mb-10">
+            <div class="flex items-center gap-3 mb-2">
+                <div class="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center text-red-500 font-bold">●</div>
+                <div>
+                    <h2 class="text-lg font-bold text-slate-900">Currently On the Clock <span class="ml-1 px-2 py-0.5 text-xs font-bold rounded-full bg-red-50 text-red-500 border border-red-100 animate-pulse inline-block">LIVE</span></h2>
+                    <p class="text-xs text-slate-500">Location is only tracked while a cleaner is clocked in at an assigned job. Off the clock = not trackable.</p>
+                </div>
+            </div>
+
+            {% if on_clock %}
+            <div class="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+                {% for tc in on_clock %}
+                <div class="rounded-2xl bg-slate-50 border border-slate-100 overflow-hidden">
+                    <div class="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+                        <div>
+                            <p class="text-sm font-bold text-slate-800">📍 {{ tc['worker_name'] }} <span class="text-xs font-semibold text-emerald-600 ml-1">ON THE CLOCK</span></p>
+                            <p class="text-xs text-slate-500">{{ tc['customer_name'] }} · since {{ tc['start_time'].strftime('%b %d') }}</p>
+                        </div>
+                        <div class="text-right">
+                            {% if tc['distance_m'] is not none %}
+                            <span class="px-2 py-1 text-xs font-bold rounded-full {% if tc['status'] == 'In zone' %}bg-emerald-50 text-emerald-600 border border-emerald-100{% else %}bg-red-50 text-red-500 border border-red-100{% endif %}">
+                                {{ tc['status'] }} · {{ '%d'|format(tc['distance_m']) }} m
+                            </span>
+                            {% endif %}
+                            {% if tc['last_seen_mins'] is not none %}
+                            <p class="text-xs text-slate-400 mt-1">seen {{ tc['last_seen_mins'] }}m ago</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% if tc['map_url'] %}
+                    <iframe title="Live cleaner location" src="{{ tc['map_url'] }}" loading="lazy"
+                        class="w-full h-44 border-0"></iframe>
+                    {% else %}
+                    <p class="text-sm text-slate-400 p-4">Waiting for location…</p>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="mt-6 px-4 py-6 rounded-2xl bg-slate-50 border border-slate-100 text-center">
+                <p class="text-sm font-semibold text-slate-500">No cleaners are on the clock right now.</p>
+                <p class="text-xs text-slate-400 mt-1">When a cleaner clocks in from the job site, their live location appears here.</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Time Clock Activity -->
+        <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8 mb-10">
+            <div class="flex items-center gap-3 mb-2">
+                <div class="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600 font-bold">📍</div>
+                <div>
+                    <h2 class="text-lg font-bold text-slate-900">Time Clock Activity</h2>
+                    <p class="text-xs text-slate-500">Every clock event shows the cleaner's exact GPS location, so they can't clock in from home.</p>
+                </div>
+            </div>
+            {% if timeclocks %}
+            <div class="mt-6 space-y-4">
+                {% for tc in timeclocks %}
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                    <div>
+                        <p class="text-sm font-bold text-slate-800">{{ tc['worker_name'] }}</p>
+                        <p class="text-xs text-slate-500">{{ tc['customer_name'] }}</p>
+                        <p class="text-xs text-slate-500 mt-1">
+                            <span class="px-2 py-0.5 rounded-full text-xs font-bold
+                                {% if tc['action'] == 'in' %}bg-emerald-50 text-emerald-600 border border-emerald-100{% else %}bg-slate-100 text-slate-600 border border-slate-200{% endif %}">
+                                Clocked {{ tc['action'] }}
+                            </span>
+                            {% if tc['distance_m'] is not none %}<span class="ml-1 text-xs font-semibold
+                                {% if tc['status'] == 'In zone' %}text-emerald-600{% else %}text-red-500{% endif %}">
+                                {{ tc['status'] }} · {{ '%d'|format(tc['distance_m']) }} m from job</span>{% endif %}
+                        </p>
+                        <p class="text-xs text-slate-400 mt-1">{{ tc['created_at'].strftime('%b %d, %I:%M %p') }}</p>
+                        {% if tc['accuracy_m'] is not none %}
+                        <p class="text-xs text-slate-400">GPS accuracy: ±{{ '%d'|format(tc['accuracy_m']) }} m</p>
+                        {% endif %}
+                    </div>
+                    <div class="md:col-span-2">
+                        {% if tc['map_url'] %}
+                        <iframe title="Cleaner location" src="{{ tc['map_url'] }}" loading="lazy"
+                            class="w-full h-40 rounded-xl border border-slate-200"></iframe>
+                        {% else %}
+                        <p class="text-xs text-slate-400">No location captured for this entry.</p>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="mt-6 text-sm text-slate-400">No clock-ins yet — they'll appear here the moment a cleaner clocks in at a job site.</p>
+            {% endif %}
+        </div>
+
+        <!-- Scheduled Jobs + Paycheck Generation -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
+                <h2 class="text-lg font-bold text-slate-900 mb-1">Assigned Jobs</h2>
+                <p class="text-xs text-slate-500 mb-6">Mark jobs complete to accrue cleaner pay.</p>
+                <div class="space-y-3">
+                    {% for ev in scheduled %}
+                    <div class="flex items-center justify-between gap-3 p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                        <div>
+                            <p class="text-sm font-semibold text-slate-800">{{ ev['customer_name'] }}</p>
+                            <p class="text-xs text-slate-500">{{ ev['worker_name'] }} · {{ ev['start_time'].strftime('%b %d, %I:%M %p') }} · {{ ev['service_type'] }}</p>
+                            <p class="text-xs font-semibold text-slate-500 mt-0.5">Pay: ${{ '%.2f'|format((ev['worker_pay_cents'] or 0) / 100) }}</p>
+                        </div>
+                        <div class="flex flex-col items-end gap-2">
+                            <span class="px-2 py-1 text-xs font-semibold rounded-full
+                                {% if ev['worker_status'] == 'completed' %}bg-emerald-50 text-emerald-600 border border-emerald-100
+                                {% else %}bg-amber-50 text-amber-600 border border-amber-100{% endif %}">
+                                {{ ev['worker_status'] }}
+                            </span>
+                            {% if ev['worker_status'] != 'completed' %}
+                            <form method="post" action="/api/events/{{ ev['id'] }}/complete">
+                                <button class="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg">Mark Done</button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% else %}
+                    <p class="text-sm text-slate-400">No assigned jobs yet.</p>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
+                <h2 class="text-lg font-bold text-slate-900 mb-1">Generate Paycheck</h2>
+                <p class="text-xs text-slate-500 mb-6">Pick a cleaner and pay period; completed jobs are totaled into a printable stub.</p>
+                <form method="post" action="/api/workers/{{ workers[0]['id'] if workers else 0 }}/paycheck" id="paycheck-form" class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Cleaner</label>
+                        <select name="worker_select" id="pc-worker" class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white">
+                            {% for w in workers %}
+                            <option value="{{ w['id'] }}">{{ w['name'] }}</option>
+                            {% endfor %}
+                        </select>
+                        <input type="hidden" name="worker_id" id="pc-worker-id">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Period Start</label>
+                            <input type="date" name="period_start" id="pc-start" required class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Period End</label>
+                            <input type="date" name="period_end" id="pc-end" required class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white">
+                        </div>
+                    </div>
+                    <button type="submit" class="w-full py-3.5 text-sm font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-all uppercase tracking-wider">Generate Paycheck</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const workerOptions = {{ worker_choices|tojson }};
+const workerRates = {{ worker_rates|tojson }};
+
+const names = {};
+workerOptions.forEach(w => names[w.id] = w.name);
+
+document.getElementById('worker-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const res = await fetch('/api/workers', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({
+            name: document.getElementById('w-name').value,
+            phone: document.getElementById('w-phone').value,
+            email: document.getElementById('w-email').value,
+            pay_rate: document.getElementById('w-rate').value
+        })
+    });
+    const data = await res.json();
+    const el = document.getElementById('worker-created');
+    el.classList.remove('hidden');
+    el.textContent = data.pin ? `Created! Give them PIN: ${data.pin}` : 'Created!';
+    setTimeout(() => { window.location.reload(); }, 2500);
+});
+
+document.querySelectorAll('.reset-pin').forEach(btn => {
+    btn.addEventListener('click', async function() {
+        const res = await fetch(`/api/workers/${this.dataset.id}/reset-pin`, {method: 'POST'});
+        const data = await res.json();
+        alert(`New PIN for this cleaner: ${data.pin}`);
+    });
+});
+
+const names = {};
+workerOptions.forEach(w => names[w.id] = w.name);
+
+function pickWorker(form, ev) {
+    if (!workerOptions.length) { alert('Add a cleaner first.'); return false; }
+    const choice = prompt('Assign to which cleaner?\n' + workerOptions.map(id => `${id}: ${names[id]}`).join('\n'));
+    if (!choice) return false;
+    const wid = parseInt(choice, 10);
+    if (!names[wid]) { alert('Invalid choice.'); return false; }
+    form.querySelector('input[name="worker_id"]').value = wid;
+    form.action = `/api/workers/${wid}/assign`;
+    return true;
+}
+
+document.querySelectorAll('.assign-form').forEach(form => {
+    const ev = form.dataset.event;
+    form.addEventListener('submit', function(e) {
+        if (!pickWorker(form, ev)) { e.preventDefault(); }
+    });
+});
+
+document.querySelectorAll('.assign-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+        const form = document.querySelector(`.assign-form[data-event="${this.dataset.event}"]`);
+        if (form) form.requestSubmit();
+    });
+});
+
+const pcWorker = document.getElementById('pc-worker') || null;
+const pcWorkerId = document.getElementById('pc-worker-id');
+const pcStart = document.getElementById('pc-start');
+const pcEnd = document.getElementById('pc-end');
+const pcForm = document.getElementById('paycheck-form');
+if (pcWorker && pcWorkerId && pcStart) {
+    const setDates = () => {
+        const end = new Date();
+        const start = new Date(); start.setDate(end.getDate() - 14);
+        pcStart.value = start.toISOString().slice(0,10);
+        pcEnd.value = end.toISOString().slice(0,10);
+    };
+    setDates();
+    pcWorker.addEventListener('change', () => { pcWorkerId.value = pcWorker.value; });
+    pcWorkerId.value = pcWorker.value;
+    if (pcForm) { pcForm.action = `/api/workers/${pcWorker.value}/paycheck`; }
+    pcWorker.addEventListener('change', () => { pcForm.action = `/api/workers/${pcWorker.value}/paycheck`; });
+}
+</script>
+{% endblock %}

@@ -1,7 +1,11 @@
 import os
 import json
+import math
 import secrets
-from datetime import datetime, timedelta
+import hashlib
+import urllib.parse
+import urllib.request
+from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 from contextlib import asynccontextmanager
 import psycopg
@@ -278,6 +282,50 @@ async def lifecycle(app: FastAPI):
                 """)
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS zip VARCHAR(10);")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS analysis_json TEXT;")
+                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS worker_id INTEGER;")
+                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS worker_pay_cents INTEGER;")
+                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS worker_status VARCHAR(50) DEFAULT 'assigned';")
+                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS job_lat DOUBLE PRECISION;")
+                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS job_lng DOUBLE PRECISION;")
+                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS job_address VARCHAR(500);")
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS workers (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    phone VARCHAR(50),
+                    email VARCHAR(255),
+                    pay_rate_cents INTEGER NOT NULL DEFAULT 0,
+                    pin_hash VARCHAR(255),
+                    worker_token VARCHAR(255),
+                    is_active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS worker_paychecks (
+                    id SERIAL PRIMARY KEY,
+                    worker_id INTEGER NOT NULL REFERENCES workers(id),
+                    period_start DATE NOT NULL,
+                    period_end DATE NOT NULL,
+                    job_count INTEGER NOT NULL DEFAULT 0,
+                    gross_cents INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS worker_timeclocks (
+                    id SERIAL PRIMARY KEY,
+                    event_id INTEGER NOT NULL REFERENCES calendar_events(id),
+                    worker_id INTEGER NOT NULL REFERENCES workers(id),
+                    action VARCHAR(10) NOT NULL,
+                    lat DOUBLE PRECISION,
+                    lng DOUBLE PRECISION,
+                    accuracy_m DOUBLE PRECISION,
+                    distance_m DOUBLE PRECISION,
+                    in_fence BOOLEAN,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
                 conn.commit()
         print("🚀 Database connectivity and tables validated successfully.")
     except Exception as e:
@@ -450,6 +498,450 @@ async def create_customer(name: str = Form(...), email: str = Form(""), phone: s
         customer_id = cur.fetchone()["id"]
         db.commit()
     return RedirectResponse(url="/hosts", status_code=303)
+
+# --- CREW ACCOUNTS & PAYCHECKS ---
+
+FENCE_METERS = 100.584  # 1/16 mile
+
+def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    r = 6371000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = math.radians(lat2 - lat1), math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+def _geocode(address: str):
+    """Best-effort geocode via OpenStreetMap Nominatim. Returns (lat, lng) or None."""
+    if not (address or "").strip():
+        return None
+    query = urllib.parse.quote(address.strip())
+    url = f"https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q={query}"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "BizStackHostsOps/1.0 (bizstackperks.com; hello@bizstackperks.com)",
+        "Accept": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            rows = json.loads(resp.read().decode("utf-8"))
+        if rows:
+            return float(rows[0]["lat"]), float(rows[0]["lon"])
+    except Exception as e:
+        print(f"⚠️ Geocode skipped: {e}")
+    return None
+
+def _event_job_location(cur, event_id: int):
+    cur.execute("SELECT job_lat, job_lng, job_address FROM calendar_events WHERE id = %s;", (event_id,))
+    row = cur.fetchone()
+    if not row:
+        return None
+    return {"lat": row["job_lat"], "lng": row["job_lng"], "address": row["job_address"]}
+
+def _map_embed_url(lat: float, lng: float, zoom: int = 16) -> str:
+    return f"https://maps.google.com/maps?q={lat},{lng}&z={zoom}&output=embed"
+
+def _hash_pin(pin: str) -> str:
+    return hashlib.sha256(f"{pin}:{os.getenv('APP_SECRET', 'bizstack')}".encode()).hexdigest()
+
+def _digits(value: str) -> str:
+    return "".join(ch for ch in (value or "") if ch.isdigit())
+
+def _require_worker(request: Request, db):
+    token = request.cookies.get("worker_session")
+    worker_id = request.cookies.get("worker_id")
+    if not token or not worker_id:
+        return None
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM workers WHERE id = %s AND worker_token = %s AND is_active = TRUE;", (worker_id, token))
+        return cur.fetchone()
+
+def _can_view_paycheck(request: Request, worker_id: int) -> bool:
+    is_authed, _ = require_auth(request)
+    if is_authed:
+        return True
+    return request.cookies.get("worker_id") == str(worker_id)
+
+@app.get("/crew", response_class=HTMLResponse)
+async def crew_page(request: Request, db=Depends(get_db)):
+    is_authed, user_email = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
+    with db.cursor() as cur:
+        cur.execute("""
+            SELECT w.*,
+                   COUNT(ce.id) FILTER (WHERE ce.worker_id = w.id AND ce.worker_status = 'completed') AS jobs_done,
+                   COALESCE(SUM(ce.worker_pay_cents) FILTER (WHERE ce.worker_id = w.id AND ce.worker_status = 'completed'), 0) AS earned_cents,
+                   COUNT(ce.id) FILTER (WHERE ce.worker_id = w.id AND ce.worker_status <> 'completed') AS jobs_assigned
+            FROM workers w
+            LEFT JOIN calendar_events ce ON ce.worker_id = w.id
+            GROUP BY w.id
+            ORDER BY w.created_at DESC;
+        """)
+        workers = cur.fetchall()
+        cur.execute("""
+            SELECT id, customer_name, start_time, service_type, amount_cents
+            FROM calendar_events
+            WHERE worker_id IS NULL AND start_time >= NOW() - INTERVAL '60 days'
+            ORDER BY start_time ASC;
+        """)
+        unassigned = cur.fetchall()
+        cur.execute("""
+            SELECT ce.id, ce.customer_name, ce.start_time, ce.service_type, ce.worker_status, ce.worker_pay_cents,
+                   w.id AS worker_id, w.name AS worker_name
+            FROM calendar_events ce
+            LEFT JOIN workers w ON w.id = ce.worker_id
+            WHERE ce.worker_id IS NOT NULL AND ce.start_time >= NOW() - INTERVAL '90 days'
+            ORDER BY ce.start_time DESC LIMIT 60;
+        """)
+        scheduled = cur.fetchall()
+        cur.execute("""
+            SELECT tc.id, tc.action, tc.lat, tc.lng, tc.accuracy_m, tc.distance_m, tc.in_fence, tc.created_at,
+                   w.name AS worker_name, ce.customer_name, ce.job_lat, ce.job_lng
+            FROM worker_timeclocks tc
+            JOIN workers w ON w.id = tc.worker_id
+            JOIN calendar_events ce ON ce.id = tc.event_id
+            ORDER BY tc.created_at DESC LIMIT 30;
+        """)
+        timeclocks = cur.fetchall()
+        cur.execute("""
+            SELECT DISTINCT ON (tc.worker_id, tc.event_id)
+                   tc.worker_id, tc.event_id, tc.action, tc.lat, tc.lng, tc.accuracy_m, tc.distance_m, tc.in_fence,
+                   tc.created_at AS last_seen, w.name AS worker_name, ce.customer_name,
+                   ce.job_lat, ce.job_lng, ce.start_time
+            FROM worker_timeclocks tc
+            JOIN workers w ON w.id = tc.worker_id
+            JOIN calendar_events ce ON ce.id = tc.event_id
+            ORDER BY tc.worker_id, tc.event_id, tc.created_at DESC;
+        """)
+        on_clock_rows = [r for r in cur.fetchall() if r["action"] in ("in", "update")]
+
+    clock_rows = []
+    for tc in timeclocks:
+        clock_rows.append({
+            **tc,
+            "map_url": _map_embed_url(tc["lat"], tc["lng"]) if tc["lat"] is not None and tc["lng"] is not None else None,
+            "status": "In zone" if tc["in_fence"] else ("Off-site" if tc["in_fence"] is False else "No fence"),
+        })
+
+    live_rows = []
+    for tc in on_clock_rows:
+        mins = None
+        try:
+            mins = int((datetime.now() - tc["last_seen"]).total_seconds() // 60)
+        except TypeError:
+            pass
+        live_rows.append({
+            **tc,
+            "map_url": _map_embed_url(tc["lat"], tc["lng"]) if tc["lat"] is not None and tc["lng"] is not None else None,
+            "status": "In zone" if tc["in_fence"] else ("Off-site" if tc["in_fence"] is False else "No fence"),
+            "last_seen_mins": mins,
+        })
+
+    return templates.TemplateResponse(
+        request=request,
+        name="crew.html",
+        context={
+            "user": {"email": user_email},
+            "workers": workers,
+            "unassigned": unassigned,
+            "scheduled": scheduled,
+            "timeclocks": clock_rows,
+            "on_clock": live_rows,
+            "worker_choices": [{"id": w["id"], "name": w["name"]} for w in workers],
+            "worker_rates": {w["id"]: w["pay_rate_cents"] for w in workers},
+        },
+    )
+
+@app.post("/api/workers")
+async def create_worker(
+    name: str = Form(...),
+    phone: str = Form(""),
+    email: str = Form(""),
+    pay_rate: float = Form(0),
+    db=Depends(get_db),
+):
+    pin = f"{secrets.randbelow(10000):04d}"
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO workers (name, phone, email, pay_rate_cents, pin_hash) VALUES (%s, %s, %s, %s, %s) RETURNING id;",
+            (name, phone, email, int(round(pay_rate * 100)), _hash_pin(pin)),
+        )
+        worker_id = cur.fetchone()["id"]
+        db.commit()
+    return JSONResponse(content={"status": "success", "worker_id": worker_id, "pin": pin})
+
+@app.post("/api/workers/{worker_id}/reset-pin")
+async def reset_worker_pin(worker_id: int, db=Depends(get_db)):
+    pin = f"{secrets.randbelow(10000):04d}"
+    with db.cursor() as cur:
+        cur.execute("UPDATE workers SET pin_hash = %s WHERE id = %s;", (_hash_pin(pin), worker_id))
+        db.commit()
+    return JSONResponse(content={"status": "success", "pin": pin})
+
+@app.post("/api/workers/{worker_id}/deactivate")
+async def deactivate_worker(worker_id: int, db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("UPDATE workers SET is_active = FALSE, worker_token = NULL WHERE id = %s;", (worker_id,))
+        db.commit()
+    return RedirectResponse(url="/crew", status_code=303)
+
+@app.post("/api/workers/{worker_id}/assign")
+async def assign_worker_job(worker_id: int, event_id: int = Form(...), pay_rate: str = Form(""), job_address: str = Form(""), db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("SELECT pay_rate_cents FROM workers WHERE id = %s;", (worker_id,))
+        worker = cur.fetchone()
+        if not worker:
+            raise HTTPException(status_code=404, detail="Worker not found")
+        if pay_rate and pay_rate.strip():
+            pay_cents = int(round(float(pay_rate.strip()) * 100))
+        else:
+            pay_cents = worker["pay_rate_cents"]
+        job_lat, job_lng = None, None
+        if (job_address or "").strip():
+            coords = _geocode(job_address)
+            if coords:
+                job_lat, job_lng = coords[0], coords[1]
+        cur.execute(
+            "UPDATE calendar_events SET worker_id = %s, worker_pay_cents = %s, worker_status = 'assigned', job_address = %s, job_lat = %s, job_lng = %s WHERE id = %s;",
+            (worker_id, pay_cents, job_address, job_lat, job_lng, event_id),
+        )
+        db.commit()
+    return RedirectResponse(url="/crew", status_code=303)
+
+@app.post("/api/events/{event_id}/complete")
+async def complete_worker_job(event_id: int, db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("UPDATE calendar_events SET worker_status = 'completed' WHERE id = %s;", (event_id,))
+        db.commit()
+    return RedirectResponse(url="/crew", status_code=303)
+
+@app.post("/api/workers/{worker_id}/paycheck")
+async def generate_paycheck(worker_id: int, period_start: str = Form(...), period_end: str = Form(...), db=Depends(get_db)):
+    period_start_d = date.fromisoformat(period_start)
+    period_end_d = date.fromisoformat(period_end)
+    with db.cursor() as cur:
+        cur.execute("""
+            SELECT COUNT(*) AS job_count, COALESCE(SUM(worker_pay_cents), 0) AS gross_cents
+            FROM calendar_events
+            WHERE worker_id = %s AND worker_status = 'completed'
+              AND start_time::date BETWEEN %s AND %s;
+        """, (worker_id, period_start_d, period_end_d))
+        totals = cur.fetchone()
+        cur.execute(
+            "INSERT INTO worker_paychecks (worker_id, period_start, period_end, job_count, gross_cents) VALUES (%s, %s, %s, %s, %s) RETURNING id;",
+            (worker_id, period_start_d, period_end_d, totals["job_count"], totals["gross_cents"]),
+        )
+        paycheck_id = cur.fetchone()["id"]
+        db.commit()
+    return RedirectResponse(url=f"/crew/paycheck/{paycheck_id}", status_code=303)
+
+@app.get("/crew/paycheck/{paycheck_id}", response_class=HTMLResponse)
+@app.get("/worker/paycheck/{paycheck_id}", response_class=HTMLResponse)
+async def view_paycheck(paycheck_id: int, request: Request, db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("""
+            SELECT p.*, w.name AS worker_name, w.email AS worker_email, w.phone AS worker_phone, w.pay_rate_cents
+            FROM worker_paychecks p JOIN workers w ON w.id = p.worker_id
+            WHERE p.id = %s;
+        """, (paycheck_id,))
+        row = cur.fetchone()
+    if not row or not _can_view_paycheck(request, row["worker_id"]):
+        return RedirectResponse(url="/login", status_code=303)
+    is_authed, user_email = require_auth(request)
+    return templates.TemplateResponse(
+        request=request,
+        name="paycheck.html",
+        context={
+            "user": {"email": user_email} if is_authed else None,
+            "stub": row,
+            "gross": row["gross_cents"] / 100,
+            "per_job": (row["gross_cents"] / row["job_count"] / 100) if row["job_count"] else None,
+        },
+    )
+
+# --- WORKER PORTAL ---
+
+@app.get("/worker-login", response_class=HTMLResponse)
+async def read_worker_login(request: Request):
+    error = request.query_params.get("error")
+    return templates.TemplateResponse(request=request, name="worker_login.html", context={"error": error, "user": None})
+
+@app.post("/api/worker/auth/login")
+async def worker_login(phone: str = Form(...), pin: str = Form(...), db=Depends(get_db)):
+    phone_digits = _digits(phone)
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM workers WHERE is_active = TRUE;")
+        candidates = cur.fetchall()
+    match = None
+    for w in candidates:
+        if (_digits(w.get("phone")) and _digits(w["phone"])[-10:] == phone_digits[-10:] and _digits(w["phone"])
+                and w["pin_hash"] == _hash_pin(pin.strip())):
+            match = w
+            break
+    if not match:
+        return RedirectResponse(url="/worker-login?error=Invalid+phone+or+PIN", status_code=status.HTTP_303_SEE_OTHER)
+
+    token = secrets.token_urlsafe(32)
+    with db.cursor() as cur:
+        cur.execute("UPDATE workers SET worker_token = %s WHERE id = %s;", (token, match["id"]))
+        db.commit()
+
+    redirect = RedirectResponse(url="/worker", status_code=status.HTTP_303_SEE_OTHER)
+    redirect.set_cookie(key="worker_session", value=token, httponly=True, samesite="lax", secure=os.getenv("COOKIE_SECURE", "false").lower() == "true")
+    redirect.set_cookie(key="worker_id", value=str(match["id"]), httponly=True, samesite="lax")
+    return redirect
+
+@app.get("/api/worker/auth/logout")
+async def worker_logout():
+    redirect = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+    redirect.delete_cookie("worker_session")
+    redirect.delete_cookie("worker_id")
+    return redirect
+
+@app.get("/worker", response_class=HTMLResponse)
+async def worker_portal(request: Request, db=Depends(get_db)):
+    worker = _require_worker(request, db)
+    if not worker:
+        return RedirectResponse(url="/worker-login", status_code=status.HTTP_303_SEE_OTHER)
+
+    with db.cursor() as cur:
+        cur.execute("""
+            SELECT id, customer_name, phone, start_time, service_type, worker_status, worker_pay_cents, job_lat, job_lng, job_address
+            FROM calendar_events
+            WHERE worker_id = %s AND start_time >= NOW() - INTERVAL '30 days'
+            ORDER BY start_time DESC;
+        """, (worker["id"],))
+        raw_jobs = cur.fetchall()
+        jobs = []
+        for j in raw_jobs:
+            cur.execute(
+                "SELECT action, created_at FROM worker_timeclocks WHERE event_id = %s AND worker_id = %s ORDER BY created_at ASC;",
+                (j["id"], worker["id"]),
+            )
+            clocks = cur.fetchall()
+            clocked_in = bool(clocks and clocks[-1]["action"] == "in")
+            site_seconds = 0
+            pin_time = None
+            for c in clocks:
+                if c["action"] == "in":
+                    pin_time = c["created_at"]
+                elif c["action"] == "out" and pin_time:
+                    site_seconds += (c["created_at"] - pin_time).total_seconds()
+                    pin_time = None
+            if clocked_in and pin_time:
+                site_seconds += (datetime.now(pin_time.tzinfo) - pin_time).total_seconds()
+            jobs.append({
+                **j,
+                "clocked_in": clocked_in,
+                "site_seconds": int(site_seconds),
+                "job_coords": j["job_lat"] is not None and j["job_lng"] is not None,
+                "job_map_url": _map_embed_url(j["job_lat"], j["job_lng"]) if j["job_lat"] is not None and j["job_lng"] is not None else None,
+            })
+        cur.execute("""
+            SELECT COALESCE(SUM(worker_pay_cents), 0) AS earned_cents, COUNT(*) AS jobs_done
+            FROM calendar_events WHERE worker_id = %s AND worker_status = 'completed';
+        """, (worker["id"],))
+        totals = cur.fetchone()
+        cur.execute("""
+            SELECT id, period_start, period_end, job_count, gross_cents
+            FROM worker_paychecks WHERE worker_id = %s ORDER BY created_at DESC;
+        """, (worker["id"],))
+        paychecks = cur.fetchall()
+
+    return templates.TemplateResponse(
+        request=request,
+        name="worker_portal.html",
+        context={
+            "user": None,
+            "worker": worker,
+            "jobs": jobs,
+            "totals": totals,
+            "paychecks": paychecks,
+            "job_coords_map": {
+                j["id"]: {"lat": j["job_lat"], "lng": j["job_lng"]} for j in jobs if j["job_lat"] is not None and j["job_lng"] is not None
+            },
+        },
+    )
+
+@app.post("/api/worker/jobs/{event_id}/complete")
+async def worker_complete_job(event_id: int, request: Request, db=Depends(get_db)):
+    worker = _require_worker(request, db)
+    if not worker:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    with db.cursor() as cur:
+        cur.execute("UPDATE calendar_events SET worker_status = 'completed' WHERE id = %s AND worker_id = %s;", (event_id, worker["id"]))
+        updated = cur.rowcount
+        db.commit()
+    if updated == 0:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return RedirectResponse(url="/worker", status_code=303)
+
+@app.post("/api/worker/clock")
+async def worker_clock(
+    request: Request,
+    event_id: int = Form(...),
+    action: str = Form(...),
+    lat: float = Form(...),
+    lng: float = Form(...),
+    accuracy: float = Form(None),
+    db=Depends(get_db),
+):
+    worker = _require_worker(request, db)
+    if not worker:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if action not in ("in", "update", "out"):
+        raise HTTPException(status_code=400, detail="Action must be 'in', 'update' or 'out'")
+
+    distance_m = None
+    in_fence = None
+    with db.cursor() as cur:
+        cur.execute("SELECT id, job_lat, job_lng FROM calendar_events WHERE id = %s AND worker_id = %s;", (event_id, worker["id"]))
+        job = cur.fetchone()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found or not assigned to you")
+        cur.execute(
+            "SELECT action FROM worker_timeclocks WHERE event_id = %s AND worker_id = %s ORDER BY created_at DESC LIMIT 1;",
+            (event_id, worker["id"]),
+        )
+        last = cur.fetchone()
+    on_clock = last is not None and last["action"] in ("in", "update")
+
+    if action == "in":
+        if on_clock:
+            raise HTTPException(status_code=400, detail="You're already clocked in for this job.")
+        if job["job_lat"] is not None and job["job_lng"] is not None:
+            distance_m = _haversine_m(lat, lng, job["job_lat"], job["job_lng"])
+            in_fence = distance_m <= FENCE_METERS
+            if not in_fence:
+                return JSONResponse(status_code=400, content={
+                    "status": "error",
+                    "message": f"You're {int(distance_m)} m ({int(distance_m * 3.28084)} ft) from the job — must be within 100 m (1/16 mile) to clock in.",
+                    "distance_m": int(distance_m),
+                })
+    else:
+        if not on_clock:
+            if action == "out":
+                return JSONResponse(status_code=400, content={"status": "error", "message": "You're not clocked in for this job."})
+            raise HTTPException(status_code=400, detail="Not on the clock — location tracking only runs while you're clocked in.")
+
+    if action in ("update", "in") and job["job_lat"] is not None and job["job_lng"] is not None:
+        distance_m = _haversine_m(lat, lng, job["job_lat"], job["job_lng"])
+        in_fence = distance_m <= FENCE_METERS
+
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO worker_timeclocks (event_id, worker_id, action, lat, lng, accuracy_m, distance_m, in_fence) VALUES (%s, %s, %s, %s, %s, %s, %s, %s);",
+            (event_id, worker["id"], action, lat, lng, accuracy, distance_m, in_fence),
+        )
+        db.commit()
+
+    if action == "in":
+        msg = f"Clocked in. Your location is now shared with your manager until you clock out. In zone: {int(distance_m)} m from job." if distance_m is not None else "Clocked in. Your location is now shared with your manager until you clock out."
+    elif action == "update":
+        msg = f"Location updated ({int(distance_m)} m from job)." if distance_m is not None else "Location updated."
+    else:
+        msg = "Clocked out. Location sharing stopped."
+    return JSONResponse(content={"status": "ok", "action": action, "event_id": event_id, "message": msg, "distance_m": distance_m})
 
 # --- MESSAGING / COMMS CENTER ---
 

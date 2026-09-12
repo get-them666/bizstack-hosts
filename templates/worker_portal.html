@@ -1,0 +1,198 @@
+{% extends "base.html" %}{% block title %}My Jobs | BizStack Hosts{% endblock %}
+
+{% block content %}
+<section class="bg-gradient-to-b from-slate-50 to-white">
+    <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-10">
+            <div>
+                <p class="text-xs font-semibold text-indigo-600 uppercase tracking-wider">Cleaner Portal</p>
+                <h1 class="text-3xl font-extrabold tracking-tight text-slate-900">Hi, {{ worker['name'] }}</h1>
+                <p class="mt-2 text-slate-600">Your earned total (completed jobs): <span class="font-bold text-emerald-600">${{ '%.2f'|format(totals['earned_cents'] / 100) }}</span> across {{ totals['jobs_done'] }} jobs.</p>
+            </div>
+            <a href="/api/worker/auth/logout" class="inline-flex items-center justify-center px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-all shadow-md">
+                Log Out
+            </a>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- My Jobs -->
+            <div class="lg:col-span-2 bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
+                <h2 class="text-lg font-bold text-slate-900 mb-1">My Recent Jobs</h2>
+                <p class="text-xs text-slate-500 mb-2">Clock in when you arrive on site, clock out when you're done.</p>
+                <div class="mb-6 px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-100 text-xs text-indigo-700">
+                    🔍 <b>Privacy:</b> while you're <b>on the clock</b>, your live location is shared with your manager and shown on a map. The moment you clock out, tracking stops.
+                </div>
+                <div class="space-y-3">
+                    {% for job in jobs %}
+                    <div class="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                        <div class="flex items-center justify-between gap-3">
+                            <div>
+                                <p class="text-sm font-bold text-slate-800">{{ job['customer_name'] }}</p>
+                                <p class="text-xs text-slate-500">{{ job['start_time'].strftime('%a, %b %d · %I:%M %p') }} · {{ job['service_type'] }}</p>
+                                <p class="text-xs font-semibold text-slate-500 mt-0.5">Pay: ${{ '%.2f'|format((job['worker_pay_cents'] or 0) / 100) }}</p>
+                                {% if job['clocked_in'] %}
+                                <p class="text-xs font-semibold text-red-500 mt-1">● ON THE CLOCK — tracking your location (close only on this job)</p>
+                                {% if job['job_address'] %}<p class="text-xs text-slate-400">Job: {{ job['job_address'] }}</p>{% endif %}
+                                {% endif %}
+                            </div>
+                            {% if job['worker_status'] == 'completed' %}
+                            <span class="px-2 py-1 text-xs font-semibold rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100">Done ✓</span>
+                            {% elif job['clocked_in'] %}
+                            <button class="clock-out px-4 py-2 text-xs font-bold text-white bg-red-500 hover:bg-red-600 rounded-lg" data-event="{{ job['id'] }}">Clock Out</button>
+                            {% else %}
+                            <div class="flex flex-col items-end gap-2">
+                                <button class="clock-in px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg" data-event="{{ job['id'] }}" data-coords="{{ '1' if job['job_coords'] else '0' }}">🕐 Clock In</button>
+                                <form method="post" action="/api/worker/jobs/{{ job['id'] }}/complete">
+                                    <button class="text-xs font-semibold text-slate-400 hover:text-slate-600">Mark job done</button>
+                                </form>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        {% if job['clocked_in'] %}
+                        <div class="mt-3 p-3 rounded-xl bg-white border border-red-100">
+                            <div class="flex items-center justify-between mb-1">
+                                <p class="text-xs font-bold text-red-500 uppercase tracking-wider">📍 Location sharing active</p>
+                                <span class="text-xs font-semibold" id="dist-{{ job['id'] }}">…</span>
+                            </div>
+                            {% if job['job_map_url'] %}
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <iframe title="Your job site" src="{{ job['job_map_url'] }}" loading="lazy" class="w-full h-28 rounded-lg border border-slate-100"></iframe>
+                                <div>
+                                    <p class="text-xs text-slate-500">Your detected position will appear below a moment after you check your location.</p>
+                                    <iframe title="Your location" id="myloc-{{ job['id'] }}" loading="lazy" class="w-full h-28 rounded-lg border border-slate-100" src=""></iframe>
+                                </div>
+                            </div>
+                            {% endif %}
+                            {% if job['site_seconds'] %}
+                            <p class="text-xs text-slate-500 mt-2">On-site time so far: <b class="text-slate-700">{{ (job['site_seconds'] // 3600) }}h {{ ((job['site_seconds'] % 3600) // 60) }}m</b></p>
+                            {% endif %}
+                        </div>
+                        {% elif job['job_coords'] %}
+                        <p class="text-xs text-slate-400 mt-2">💡 Clock in when you're within 100 m (1/16 mile) of the job — location sharing begins only when you clock in.</p>
+                        {% endif %}
+                    </div>
+                    {% else %}
+                    <p class="text-sm text-slate-400">No jobs assigned yet.</p>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Paychecks -->
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8 h-fit">
+                <h2 class="text-lg font-bold text-slate-900 mb-1">My Paychecks</h2>
+                <p class="text-xs text-slate-500 mb-6">Digital stubs from completed pay periods.</p>
+                <div class="space-y-3">
+                    {% for p in paychecks %}
+                    <a href="/worker/paycheck/{{ p['id'] }}" class="block p-4 rounded-2xl bg-slate-50 border border-slate-100 hover:border-indigo-200 transition-all">
+                        <p class="text-sm font-bold text-slate-800">${{ '%.2f'|format(p['gross_cents'] / 100) }}</p>
+                        <p class="text-xs text-slate-500">{{ p['period_start'].strftime('%b %d') }} – {{ p['period_end'].strftime('%b %d, %Y') }} · {{ p['job_count'] }} jobs</p>
+                    </a>
+                    {% else %}
+                    <p class="text-sm text-slate-400">No paychecks yet — your manager will generate them from your completed jobs.</p>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const FENCE_M = 100.584;
+const watchers = {};
+
+function sendClock(eventId, action, coords) {
+    const body = new URLSearchParams({event_id: eventId, action: action, lat: coords.latitude, lng: coords.longitude});
+    if (coords.accuracy) body.append('accuracy', coords.accuracy);
+    return fetch('/api/worker/clock', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body});
+}
+
+function postToJobMap(eventId, coords) {
+    const iframe = document.getElementById(`myloc-${eventId}`);
+    if (iframe) iframe.src = `https://maps.google.com/maps?q=${coords.latitude},${coords.longitude}&z=16&output=embed`;
+}
+
+function updateDistance(eventId, coords) {
+    const el = document.getElementById(`dist-${eventId}`);
+    const job = window.__jobCoords && window.__jobCoords[eventId];
+    if (!el) return;
+    if (!job) { el.textContent = ''; return; }
+    const toRad = d => d * Math.PI / 180;
+    const R = 6371000;
+    const dLat = toRad(coords.latitude - job.lat);
+    const dLng = toRad(coords.longitude - job.lng);
+    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(job.lat)) * Math.cos(toRad(coords.latitude)) * Math.sin(dLng/2)**2;
+    const dist = 2 * R * Math.asin(Math.sqrt(a));
+    const ok = dist <= FENCE_M;
+    el.textContent = `${ok ? '✅' : '⚠️'} ${Math.round(dist)} m from job`;
+    el.classList.toggle('text-emerald-600', ok);
+    el.classList.toggle('text-red-500', !ok);
+}
+
+function startWatch(jobId) {
+    if (watchers[jobId]) return;
+    if (!navigator.geolocation) { alert('Your phone doesn't support location.'); return; }
+    watchers[jobId] = navigator.geolocation.watchPosition(
+        pos => {
+            const c = {latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy};
+            postToJobMap(jobId, c);
+            updateDistance(jobId, c);
+        },
+        err => { console.warn('watch error', err); },
+        {enableHighAccuracy: true, maximumAge: 15000, timeout: 20000}
+    );
+}
+
+function stopWatch(jobId) {
+    if (watchers[jobId]) { navigator.geolocation.clearWatch(watchers[jobId]); delete watchers[jobId]; }
+}
+
+async function clockIn(eventId) {
+    if (!navigator.geolocation) { alert("Your phone doesn't support location — can't verify the job site."); return; }
+    const btn = document.querySelector(`.clock-in[data-event="${eventId}"]`);
+    if (btn) { btn.disabled = true; btn.textContent = 'Checking location…'; }
+    navigator.geolocation.getCurrentPosition(async pos => {
+        const c = {latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy};
+        try {
+            const res = await sendClock(eventId, 'in', c);
+            const data = await res.json();
+            if (!res.ok) { alert(data.message || 'Cannot clock in.'); location.reload(); return; }
+            startWatch(eventId);
+            alert(data.message);
+            location.reload();
+        } catch (e) { alert('Clock-in failed. Check your connection.'); location.reload(); }
+    }, err => {
+        alert('Could not get your location. Enable GPS/location and try again.');
+        location.reload();
+    }, {enableHighAccuracy: true, timeout: 25000, maximumAge: 5000});
+}
+
+async function clockOut(eventId) {
+    stopWatch(eventId);
+    try {
+        const pos = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, {enableHighAccuracy: true, timeout: 15000, maximumAge: 30000}));
+        await sendClock(eventId, 'out', {latitude: pos.coords.latitude, longitude: pos.coords.longitude});
+    } catch (e) {
+        await sendClock(eventId, 'out', {latitude: 0, longitude: 0});
+    }
+    location.reload();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    window.__jobCoords = {{ job_coords_map|tojson }};
+    document.querySelectorAll('.clock-in').forEach(btn => {
+        btn.addEventListener('click', () => clockIn(parseInt(btn.dataset.event, 10)));
+    });
+    document.querySelectorAll('.clock-out').forEach(btn => {
+        btn.addEventListener('click', () => clockOut(parseInt(btn.dataset.event, 10)));
+    });
+    {% for job in jobs %}
+    {% if job['clocked_in'] %}
+    startWatch({{ job['id'] }});
+    {% endif %}
+    {% endfor %}
+});
+</script>
+{% endblock %}
