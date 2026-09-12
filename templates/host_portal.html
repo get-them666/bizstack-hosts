@@ -115,9 +115,9 @@
                                 <span class="px-2 py-1 bg-rose-50 text-rose-600 text-[10px] font-semibold rounded-full">{{ e['channel_label'] }}</span>
                                 {% endif %}
                                 {% if e['property_name'] %}<span class="text-xs text-slate-500">· {{ e['property_name'] }}</span>{% endif %}
-                                {% if e['payment_status'] == 'paid' %}
+                                {% if features.get('payments') and e['payment_status'] == 'paid' %}
                                 <span class="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-semibold rounded-full">Paid ✓</span>
-                                {% else %}
+                                {% elif features.get('payments') %}
                                 <span class="px-2 py-1 bg-amber-50 text-amber-700 text-[10px] font-semibold rounded-full">Pending</span>
                                 {% endif %}
                             </div>
@@ -127,7 +127,7 @@
                             {% endif %}
                             {% if e['worker_name'] %}
                             <div class="flex items-center gap-3 mt-3 flex-wrap">
-                                {% if e['on_clock'] %}
+                                {% if features.get('map') and e['on_clock'] %}
                                 <span class="inline-flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 text-xs font-bold rounded-full border border-red-100">
                                     <span class="relative flex h-2 w-2">
                                         <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
@@ -148,7 +148,7 @@
                             <p class="text-xs text-slate-400 mt-2">No cleaner assigned yet.</p>
                             {% endif %}
                         </div>
-                        {% if e['map_url'] %}
+                        {% if features.get('map') and e['map_url'] %}
                         <div class="w-full lg:w-64 shrink-0">
                             <iframe src="{{ e['map_url'] }}" class="w-full h-28 rounded-xl border border-slate-200" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
                             {% if e['on_clock'] %}<p class="text-[10px] text-slate-400 text-center mt-1">Live cleaner location</p>{% endif %}

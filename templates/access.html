@@ -1,0 +1,82 @@
+{% extends "base.html" %}{% block title %}Access & Permissions | BizStack Hosts{% endblock %}
+
+{% block content %}
+<section class="bg-gradient-to-b from-slate-50 to-white">
+    <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+            <div>
+                <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900">Access &amp; Permissions</h1>
+                <p class="mt-2 text-slate-600">Switch tools on or off for your employees and hosts. Changes apply instantly.</p>
+            </div>
+            <a href="/dashboard" class="inline-flex items-center justify-center px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all shadow-md shadow-indigo-100 shrink-0">
+                ← Dashboard
+            </a>
+        </div>
+
+        {% if saved %}
+        <div class="mb-6 p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-medium">✓ Permissions saved.</div>
+        {% endif %}
+
+        <form method="POST" action="/api/access">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <!-- Employees -->
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 overflow-hidden">
+                    <div class="px-8 py-6 bg-slate-900 flex items-center gap-4">
+                        <div class="w-11 h-11 rounded-2xl bg-white/10 flex items-center justify-center text-white text-lg font-bold">🧑‍🔧</div>
+                        <div>
+                            <h2 class="text-lg font-bold text-white">Employees</h2>
+                            <p class="text-xs text-slate-300">Worker/employee portal tools</p>
+                        </div>
+                        <span class="ml-auto px-2.5 py-1 bg-indigo-500/30 text-indigo-100 text-[11px] font-bold rounded-full uppercase tracking-wide">Mobile + Portal</span>
+                    </div>
+                    <div class="p-6 space-y-1">
+                        {% for key, label in worker_catalog.items() %}
+                        {% set enabled = worker_features.get(key) %}
+                        <label class="flex items-center justify-between gap-4 p-3.5 rounded-2xl hover:bg-slate-50 transition-colors cursor-pointer">
+                            <span class="text-sm font-semibold text-slate-800">{{ label }}</span>
+                            <span class="relative inline-flex shrink-0">
+                                <input type="checkbox" name="feature_worker_{{ key }}" value="on" {% if enabled %}checked{% endif %}
+                                    class="peer sr-only">
+                                <span class="w-11 h-6 rounded-full bg-slate-200 peer-checked:bg-indigo-600 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-white after:shadow after:transition-transform peer-checked:after:translate-x-5"></span>
+                            </span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Hosts -->
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 overflow-hidden">
+                    <div class="px-8 py-6 bg-emerald-900 flex items-center gap-4">
+                        <div class="w-11 h-11 rounded-2xl bg-white/10 flex items-center justify-center text-white text-lg font-bold">🏠</div>
+                        <div>
+                            <h2 class="text-lg font-bold text-white">Hosts</h2>
+                            <p class="text-xs text-emerald-200">Host portal tools</p>
+                        </div>
+                        <span class="ml-auto px-2.5 py-1 bg-emerald-400/30 text-emerald-50 text-[11px] font-bold rounded-full uppercase tracking-wide">Read-only</span>
+                    </div>
+                    <div class="p-6 space-y-1">
+                        {% for key, label in host_catalog.items() %}
+                        {% set enabled = host_features.get(key) %}
+                        <label class="flex items-center justify-between gap-4 p-3.5 rounded-2xl hover:bg-slate-50 transition-colors cursor-pointer">
+                            <span class="text-sm font-semibold text-slate-800">{{ label }}</span>
+                            <span class="relative inline-flex shrink-0">
+                                <input type="checkbox" name="feature_host_{{ key }}" value="on" {% if enabled %}checked{% endif %}
+                                    class="peer sr-only">
+                                <span class="w-11 h-6 rounded-full bg-slate-200 peer-checked:bg-emerald-600 transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:rounded-full after:bg-white after:shadow after:transition-transform peer-checked:after:translate-x-5"></span>
+                            </span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-8 text-right">
+                <button type="submit"
+                    class="inline-flex items-center justify-center px-8 py-3.5 text-sm font-bold text-white bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 rounded-2xl transition-all shadow-lg shadow-indigo-200 uppercase tracking-wider">
+                    Save Permissions
+                </button>
+            </div>
+        </form>
+    </div>
+</section>
+{% endblock %}

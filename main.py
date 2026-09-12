@@ -9,20 +9,27 @@ import urllib.request
 from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 from contextlib import asynccontextmanager
+from pathlib import Path
 import psycopg
 from psycopg.rows import dict_row
 from fastapi import FastAPI, Request, Form, Response, Depends, HTTPException, status
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ai_agent import BusinessAIAgent
 from analysis_service import RentalAnalysisService
 from stripe_service import StripeService
+from signalwire_service import SignalWireService
 import channel_sync
+import legal_forms
+import documents_service
+import auth_service
 
 db_url = os.getenv("DATABASE_URL", "postgresql://shaun:secret@localhost:5432/bizstack")
 templates = Jinja2Templates(directory="templates")
 stripe_svc = StripeService()
+signalwire = SignalWireService()
 rental_analysis = RentalAnalysisService()
 
 
@@ -375,6 +382,67 @@ async def lifecycle(app: FastAPI):
                 );
                 """)
                 cur.execute("ALTER TABLE hosts ADD COLUMN IF NOT EXISTS property_address VARCHAR(500);")
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS custom_forms (
+                    id SERIAL PRIMARY KEY,
+                    title VARCHAR(255) NOT NULL,
+                    category VARCHAR(50),
+                    doc_def TEXT NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS generated_documents (
+                    id SERIAL PRIMARY KEY,
+                    title VARCHAR(255) NOT NULL,
+                    category VARCHAR(50),
+                    file_name VARCHAR(255) NOT NULL,
+                    file_type VARCHAR(10) NOT NULL,
+                    file_data BYTEA NOT NULL,
+                    values_json TEXT,
+                    sent_email VARCHAR(255),
+                    sent_sms VARCHAR(50),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS ledger_entries (
+                    id SERIAL PRIMARY KEY,
+                    tx_type VARCHAR(20) NOT NULL,
+                    ref_type VARCHAR(50),
+                    ref_id INTEGER,
+                    description TEXT,
+                    amount_cents BIGINT NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_ledger_unique_ref ON ledger_entries (ref_type, ref_id);""")
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS checks (
+                    id SERIAL PRIMARY KEY,
+                    check_number VARCHAR(20) NOT NULL,
+                    paycheck_id INTEGER REFERENCES worker_paychecks(id),
+                    payee VARCHAR(255) NOT NULL,
+                    amount_cents BIGINT NOT NULL,
+                    memo TEXT,
+                    status VARCHAR(20) DEFAULT 'draft',
+                    file_data BYTEA,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS login_otps (
+                    id SERIAL PRIMARY KEY,
+                    role VARCHAR(20) NOT NULL,
+                    actor_id INTEGER,
+                    email VARCHAR(255) NOT NULL,
+                    code_hash VARCHAR(128) NOT NULL,
+                    attempts INTEGER DEFAULT 0,
+                    consumed BOOLEAN DEFAULT FALSE,
+                    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
                 conn.commit()
         print("🚀 Database connectivity and tables validated successfully.")
     except Exception as e:
@@ -382,6 +450,7 @@ async def lifecycle(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifecycle)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 def get_db():
     conn = psycopg.connect(db_url, row_factory=dict_row)
@@ -390,9 +459,50 @@ def get_db():
     finally:
         conn.close()
 
+def current_actor(request: Request):
+    """Return {role, id, email, name} for a signed-in session, or None."""
+    return auth_service.actor_from_token(request.cookies.get(auth_service.SESSION_COOKIE))
+
 def require_auth(request: Request):
-    token = request.cookies.get("session_token")
-    return bool(token), request.cookies.get("user_email")
+    actor = current_actor(request)
+    is_admin = bool(actor and actor.get("role") == "admin")
+    return is_admin, (actor.get("email") if actor else request.cookies.get("user_email"))
+
+def require_admin(request: Request) -> None:
+    if not require_auth(request)[0]:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin login required")
+
+def _features(db, role: str) -> dict:
+    return auth_service.features_for(role, _get_setting(db, f"perms_{role}", ""))
+
+def _feature_enabled(db, role: str, feature: str) -> bool:
+    return bool(_features(db, role).get(feature))
+
+def _require_feature(db, role: str, feature: str):
+    if not _feature_enabled(db, role, feature):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This tool is turned off for your account")
+
+def _template_actor(request: Request):
+    return current_actor(request)
+
+def _template_features(request: Request):
+    actor = current_actor(request)
+    if not actor or actor.get("role") not in ("worker", "host"):
+        return {}
+    try:
+        conn = psycopg.connect(db_url, row_factory=dict_row)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT value FROM app_settings WHERE key = %s;", (f"perms_{actor['role']}",))
+                row = cur.fetchone()
+            return auth_service.features_for(actor["role"], row["value"] if row else "")
+        finally:
+            conn.close()
+    except Exception:
+        return auth_service.permissions_defaults(actor["role"])
+
+templates.env.globals["current_actor"] = _template_actor
+templates.env.globals["current_features"] = _template_features
 
 # --- PUBLIC LANDING & AUTH ---
 
@@ -404,28 +514,237 @@ async def read_index(request: Request):
 async def health_check():
     return {"status": "ok"}
 
+def _site_base(request: Request) -> str:
+    return os.getenv("APP_BASE_URL", "").rstrip("/") or str(request.base_url).rstrip("/")
+
+@app.get("/robots.txt", response_class=Response)
+async def robots_txt(request: Request):
+    base = _site_base(request)
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /dashboard\n"
+        "Disallow: /portfolio\n"
+        "Disallow: /hosts\n"
+        "Disallow: /crew\n"
+        "Disallow: /comms\n"
+        "Disallow: /settings\n"
+        "Disallow: /worker\n"
+        "\n"
+        f"Sitemap: {base}/sitemap.xml\n"
+    )
+    return Response(content=body, media_type="text/plain")
+
+@app.get("/sitemap.xml", response_class=Response)
+async def sitemap_xml(request: Request):
+    base = _site_base(request)
+    today = date.today().isoformat()
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"  <url><loc>{base}/</loc><lastmod>{today}</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>\n"
+        f"  <url><loc>{base}/host-login</loc><lastmod>{today}</lastmod><changefreq>monthly</changefreq><priority>0.3</priority></url>\n"
+        f"  <url><loc>{base}/login</loc><lastmod>{today}</lastmod><changefreq>monthly</changefreq><priority>0.2</priority></url>\n"
+        "</urlset>\n"
+    )
+    return Response(content=body, media_type="application/xml")
+
 @app.get("/login", response_class=HTMLResponse)
 async def read_login(request: Request):
-    error = request.query_params.get("error")
-    return templates.TemplateResponse(request=request, name="login.html", context={"error": error})
+    actor = current_actor(request)
+    if actor:
+        return RedirectResponse(url=_login_redirect(actor.get("role")), status_code=status.HTTP_303_SEE_OTHER)
+    return templates.TemplateResponse(request=request, name="login.html", context={
+        "error": request.query_params.get("error"),
+    })
 
-@app.post("/api/auth/login")
-async def api_login(email: str = Form(...), password: str = Form(...)):
+def _secure_cookies() -> bool:
+    return os.getenv("COOKIE_SECURE", "false").lower() == "true"
+
+def _login_redirect(role: str) -> str:
+    return {"admin": "/dashboard", "worker": "/worker", "host": "/host"}.get(role or "", "/")
+
+def _otp_enabled(db) -> bool:
+    env = os.getenv("OTP_ENABLED", "").strip().lower()
+    if env in ("0", "false", "no", "off"):
+        return False
+    if env in ("1", "true", "yes", "on"):
+        return True
+    return (_get_setting(db, "otp_enabled", "true").strip().lower() not in ("0", "false", "no", "off"))
+
+def _resolve_credentials(db, identifier: str, secret: str):
+    ident = (identifier or "").strip()
+    secret = (secret or "").strip()
     admin_email = os.getenv("ADMIN_EMAIL", "shaun@example.com")
     admin_password = os.getenv("ADMIN_PASSWORD", "password123")
-    if email == admin_email and password == admin_password:
-        token = secrets.token_urlsafe(32)
-        response = RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-        response.set_cookie(key="session_token", value=token, httponly=True, samesite="lax", secure=os.getenv("COOKIE_SECURE", "false").lower() == "true")
-        response.set_cookie(key="user_email", value=email, httponly=True, samesite="lax")
-        return response
-    return RedirectResponse(url="/login?error=Invalid+Credentials", status_code=status.HTTP_303_SEE_OTHER)
+    if ident.lower() == admin_email.lower() and secret == admin_password:
+        return {
+            "role": "admin", "id": 0,
+            "email": (os.getenv("ADMIN_OTP_EMAIL") or admin_email),
+            "name": os.getenv("ADMIN_NAME", "Owner"),
+        }
+    if "@" in ident:
+        with db.cursor() as cur:
+            cur.execute("SELECT * FROM hosts WHERE email ILIKE %s AND status = 'active' AND password_hash IS NOT NULL;", (ident,))
+            host = cur.fetchone()
+        if host and host["password_hash"] == _hash_password(secret):
+            return {"role": "host", "id": host["id"], "email": host["email"], "name": host["name"]}
+    digits = _digits(ident)
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM workers WHERE is_active = TRUE;")
+        candidates = cur.fetchall()
+    for w in candidates:
+        email_match = w.get("email") and w["email"].lower() == ident.lower()
+        phone = _digits(w.get("phone"))
+        phone_match = bool(digits and phone and phone[-10:] == digits[-10:])
+        if (email_match or phone_match) and w["pin_hash"] and w["pin_hash"] == _hash_pin(secret):
+            return {"role": "worker", "id": w["id"], "email": w["email"] or "", "name": w["name"]}
+    return None
+
+def _store_otp(db, role: str, actor_id, email: str, code: str):
+    with db.cursor() as cur:
+        cur.execute("UPDATE login_otps SET consumed = TRUE WHERE role = %s AND actor_id IS NOT DISTINCT FROM %s AND consumed = FALSE;", (role, actor_id))
+        cur.execute(
+            "INSERT INTO login_otps (role, actor_id, email, code_hash, expires_at) VALUES (%s, %s, %s, %s, NOW() + INTERVAL '10 minutes');",
+            (role, actor_id, email, auth_service.hash_otp(code)),
+        )
+        db.commit()
+
+async def _deliver_otp(db, email: str, code: str, actor: dict):
+    cfg = _smtp_cfg(db)
+    if documents_service.smtp_configured(cfg):
+        body = (
+            f"Hi {actor.get('name') or 'there'},\n\n"
+            f"Your BizStack Hosts verification code is:\n\n    {code}\n\n"
+            f"It expires in 10 minutes. If you didn't try to sign in, you can ignore this email.\n\n"
+            f"— BizStack Hosts"
+        )
+        try:
+            await documents_service.send_email(cfg, email, "Your BizStack Hosts login code", body)
+            return True, ""
+        except Exception as e:
+            return False, f"Could not send email: {e}"
+    print(f"[OTP] SMTP not configured — code for {email}: {code}")
+    return False, "Email delivery is not configured yet. Ask the office to set up SMTP on the Documents page."
+
+def _finish_login(actor: dict) -> RedirectResponse:
+    token = auth_service.issue_session(actor["role"], actor.get("id"), actor.get("email"), actor.get("name"))
+    resp = RedirectResponse(url=_login_redirect(actor["role"]), status_code=status.HTTP_303_SEE_OTHER)
+    resp.set_cookie(key=auth_service.SESSION_COOKIE, value=token, httponly=True, samesite="lax", secure=_secure_cookies())
+    resp.set_cookie(key="user_email", value=actor.get("email") or "", httponly=True, samesite="lax")
+    resp.set_cookie(key="user_name", value=actor.get("name") or "", httponly=True, samesite="lax")
+    resp.set_cookie(key="role", value=actor["role"], httponly=True, samesite="lax")
+    resp.set_cookie(key="actor_id", value=str(actor.get("id")), httponly=True, samesite="lax")
+    resp.delete_cookie(auth_service.OTP_COOKIE)
+    return resp
+
+@app.post("/api/auth/login")
+async def api_login(identifier: str = Form(...), secret: str = Form(...), db=Depends(get_db)):
+    actor = _resolve_credentials(db, identifier, secret)
+    if not actor:
+        return RedirectResponse(url="/login?error=Invalid+email%2Fphone+or+password%2FPIN", status_code=status.HTTP_303_SEE_OTHER)
+    email = (actor.get("email") or "").strip()
+    if _otp_enabled(db) and not email:
+        return RedirectResponse(url="/login?error=No+email+on+file+%E2%80%94+ask+the+office+to+add+one", status_code=status.HTTP_303_SEE_OTHER)
+
+    if not _otp_enabled(db):
+        return _finish_login(actor)
+
+    code = auth_service.generate_otp()
+    _store_otp(db, actor["role"], actor.get("id"), email, code)
+    ok, err = await _deliver_otp(db, email, code, actor)
+    if not ok:
+        return RedirectResponse(url=f"/login?error={urllib.parse.quote(err)}", status_code=status.HTTP_303_SEE_OTHER)
+    resp = RedirectResponse(url="/login/otp", status_code=status.HTTP_303_SEE_OTHER)
+    resp.set_cookie(
+        key=auth_service.OTP_COOKIE,
+        value=auth_service.issue_pending(actor["role"], actor.get("id"), email, actor.get("name")),
+        httponly=True, samesite="lax", secure=_secure_cookies(), max_age=auth_service.OTP_TTL_SECONDS,
+    )
+    return resp
+
+@app.get("/login/otp", response_class=HTMLResponse)
+async def read_otp(request: Request):
+    pending = auth_service.pending_from_token(request.cookies.get(auth_service.OTP_COOKIE))
+    if not pending:
+        return RedirectResponse(url="/login?error=Verification+expired+%E2%80%94+please+sign+in+again", status_code=status.HTTP_303_SEE_OTHER)
+    masked = _mask_email(pending.get("email") or "")
+    return templates.TemplateResponse(request=request, name="otp.html", context={
+        "error": request.query_params.get("error"),
+        "resent": request.query_params.get("resent"),
+        "email": pending.get("email"),
+        "masked_email": masked,
+        "name": pending.get("name"),
+    })
+
+@app.post("/api/auth/verify-otp")
+async def api_verify_otp(request: Request, code: str = Form(...), db=Depends(get_db)):
+    pending = auth_service.pending_from_token(request.cookies.get(auth_service.OTP_COOKIE))
+    if not pending:
+        return RedirectResponse(url="/login?error=Verification+expired+%E2%80%94+please+sign+in+again", status_code=status.HTTP_303_SEE_OTHER)
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM login_otps WHERE role = %s AND actor_id IS NOT DISTINCT FROM %s AND consumed = FALSE ORDER BY created_at DESC LIMIT 1;",
+            (pending["role"], pending.get("id")),
+        )
+        row = cur.fetchone()
+    if not row or (row["expires_at"] and row["expires_at"] < datetime.now(APP_TZ)):
+        return RedirectResponse(url="/login/otp?error=Code+expired+%E2%80%94+resend+below", status_code=status.HTTP_303_SEE_OTHER)
+    if row["attempts"] >= auth_service.MAX_OTP_ATTEMPTS:
+        return RedirectResponse(url="/login?error=Too+many+attempts+%E2%80%94+please+sign+in+again", status_code=status.HTTP_303_SEE_OTHER)
+    if not auth_service.verify_otp((code or "").strip(), row["code_hash"]):
+        with db.cursor() as cur:
+            cur.execute("UPDATE login_otps SET attempts = attempts + 1 WHERE id = %s;", (row["id"],))
+            db.commit()
+        return RedirectResponse(url="/login/otp?error=Incorrect+code", status_code=status.HTTP_303_SEE_OTHER)
+    with db.cursor() as cur:
+        cur.execute("UPDATE login_otps SET consumed = TRUE WHERE id = %s;", (row["id"],))
+        db.commit()
+    return _finish_login({
+        "role": pending["role"], "id": pending.get("id"),
+        "email": pending.get("email"), "name": pending.get("name"),
+    })
+
+@app.post("/api/auth/resend-otp")
+async def api_resend_otp(request: Request, db=Depends(get_db)):
+    pending = auth_service.pending_from_token(request.cookies.get(auth_service.OTP_COOKIE))
+    if not pending:
+        return RedirectResponse(url="/login?error=Verification+expired+%E2%80%94+please+sign+in+again", status_code=status.HTTP_303_SEE_OTHER)
+    code = auth_service.generate_otp()
+    _store_otp(db, pending["role"], pending.get("id"), pending.get("email"), code)
+    ok, err = await _deliver_otp(db, pending.get("email"), code, {"name": pending.get("name")})
+    if not ok:
+        return RedirectResponse(url=f"/login?error={urllib.parse.quote(err)}", status_code=status.HTTP_303_SEE_OTHER)
+    resp = RedirectResponse(url="/login/otp?resent=1", status_code=status.HTTP_303_SEE_OTHER)
+    resp.set_cookie(
+        key=auth_service.OTP_COOKIE,
+        value=auth_service.issue_pending(pending["role"], pending.get("id"), pending.get("email"), pending.get("name")),
+        httponly=True, samesite="lax", secure=_secure_cookies(), max_age=auth_service.OTP_TTL_SECONDS,
+    )
+    return resp
+
+def _mask_email(email: str) -> str:
+    if not email or "@" not in email:
+        return email or ""
+    name, domain = email.split("@", 1)
+    if len(name) <= 2:
+        shown = name[:1] + "*"
+    else:
+        shown = name[0] + "*" * (len(name) - 2) + name[-1]
+    return f"{shown}@{domain}"
 
 @app.get("/api/auth/logout")
 async def api_logout():
     response = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
-    response.delete_cookie("session_token")
+    response.delete_cookie(auth_service.SESSION_COOKIE)
     response.delete_cookie("user_email")
+    response.delete_cookie("user_name")
+    response.delete_cookie("role")
+    response.delete_cookie("actor_id")
+    response.delete_cookie("host_session")
+    response.delete_cookie("host_id")
+    response.delete_cookie("worker_session")
+    response.delete_cookie("worker_id")
     return response
 
 # --- LEAD CAPTURE (LANDING PAGE FORM) ---
@@ -654,21 +973,35 @@ async def host_login(email: str = Form(...), password: str = Form(...), db=Depen
     if not host or host["password_hash"] != _hash_password(password):
         return RedirectResponse(url="/host-login?error=Invalid+email+or+password", status_code=status.HTTP_303_SEE_OTHER)
 
-    token = secrets.token_urlsafe(32)
-    with db.cursor() as cur:
-        cur.execute("UPDATE hosts SET login_token = %s WHERE id = %s;", (token, host["id"]))
-        db.commit()
+    actor = {"role": "host", "id": host["id"], "email": host["email"], "name": host["name"]}
+    if _otp_enabled(db) and not (host.get("email") or "").strip():
+        return RedirectResponse(url="/host-login?error=No+email+on+file+%E2%80%94+ask+the+office+to+add+one", status_code=status.HTTP_303_SEE_OTHER)
+    if not _otp_enabled(db):
+        return _finish_login(actor)
 
-    redirect = RedirectResponse(url="/host", status_code=status.HTTP_303_SEE_OTHER)
-    redirect.set_cookie(key="host_session", value=token, httponly=True, samesite="lax", secure=os.getenv("COOKIE_SECURE", "false").lower() == "true")
-    redirect.set_cookie(key="host_id", value=str(host["id"]), httponly=True, samesite="lax")
-    return redirect
+    code = auth_service.generate_otp()
+    _store_otp(db, "host", host["id"], host["email"], code)
+    ok, err = await _deliver_otp(db, host["email"], code, actor)
+    if not ok:
+        return RedirectResponse(url=f"/host-login?error={urllib.parse.quote(err)}", status_code=status.HTTP_303_SEE_OTHER)
+    resp = RedirectResponse(url="/login/otp", status_code=status.HTTP_303_SEE_OTHER)
+    resp.set_cookie(
+        key=auth_service.OTP_COOKIE,
+        value=auth_service.issue_pending("host", host["id"], host["email"], host["name"]),
+        httponly=True, samesite="lax", secure=_secure_cookies(), max_age=auth_service.OTP_TTL_SECONDS,
+    )
+    return resp
 
 @app.get("/api/host/auth/logout")
 async def host_logout():
     redirect = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
     redirect.delete_cookie("host_session")
     redirect.delete_cookie("host_id")
+    redirect.delete_cookie(auth_service.SESSION_COOKIE)
+    redirect.delete_cookie("user_email")
+    redirect.delete_cookie("user_name")
+    redirect.delete_cookie("role")
+    redirect.delete_cookie("actor_id")
     return redirect
 
 @app.get("/portfolio", response_class=HTMLResponse)
@@ -863,6 +1196,7 @@ async def host_portal(request: Request, db=Depends(get_db)):
             "future": future[:15],
             "past": past[:30],
             "next_event": future[0] if future else None,
+            "features": _features(db, "host"),
         },
     )
 
@@ -917,6 +1251,13 @@ def _generate_password(length: int = 8) -> str:
     return "".join(secrets.choice(chars) for _ in range(length))
 
 def _require_host(request: Request, db):
+    actor = current_actor(request)
+    if actor and actor.get("role") == "host":
+        with db.cursor() as cur:
+            cur.execute("SELECT * FROM hosts WHERE id = %s AND status = 'active';", (actor["id"],))
+            row = cur.fetchone()
+            if row:
+                return row
     token = request.cookies.get("host_session")
     host_id = request.cookies.get("host_id")
     if not token or not host_id:
@@ -929,6 +1270,13 @@ def _digits(value: str) -> str:
     return "".join(ch for ch in (value or "") if ch.isdigit())
 
 def _require_worker(request: Request, db):
+    actor = current_actor(request)
+    if actor and actor.get("role") == "worker":
+        with db.cursor() as cur:
+            cur.execute("SELECT * FROM workers WHERE id = %s AND is_active = TRUE;", (actor["id"],))
+            row = cur.fetchone()
+            if row:
+                return row
     token = request.cookies.get("worker_session")
     worker_id = request.cookies.get("worker_id")
     if not token or not worker_id:
@@ -938,8 +1286,10 @@ def _require_worker(request: Request, db):
         return cur.fetchone()
 
 def _can_view_paycheck(request: Request, worker_id: int) -> bool:
-    is_authed, _ = require_auth(request)
-    if is_authed:
+    actor = current_actor(request)
+    if actor and actor.get("role") == "admin":
+        return True
+    if actor and actor.get("role") == "worker" and str(actor.get("id")) == str(worker_id):
         return True
     return request.cookies.get("worker_id") == str(worker_id)
 
@@ -1115,6 +1465,14 @@ async def generate_paycheck(worker_id: int, period_start: str = Form(...), perio
             (worker_id, period_start_d, period_end_d, totals["job_count"], totals["gross_cents"]),
         )
         paycheck_id = cur.fetchone()["id"]
+        cur.execute("SELECT name FROM workers WHERE id = %s;", (worker_id,))
+        w = cur.fetchone()
+        cur.execute(
+            "INSERT INTO ledger_entries (tx_type, ref_type, ref_id, description, amount_cents) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (ref_type, ref_id) DO NOTHING;",
+            ("expense", "paycheck", paycheck_id,
+             f"Worker payroll — {w['name']} ({period_start_d.strftime('%b %d')} – {period_end_d.strftime('%b %d, %Y')})",
+             totals["gross_cents"]),
+        )
         db.commit()
     return RedirectResponse(url=f"/crew/paycheck/{paycheck_id}", status_code=303)
 
@@ -1131,6 +1489,11 @@ async def view_paycheck(paycheck_id: int, request: Request, db=Depends(get_db)):
     if not row or not _can_view_paycheck(request, row["worker_id"]):
         return RedirectResponse(url="/login", status_code=303)
     is_authed, user_email = require_auth(request)
+    actor = current_actor(request)
+    can_stub_pdf = bool(
+        (actor and actor.get("role") == "admin")
+        or ((actor and actor.get("role") == "worker") and _feature_enabled(db, "worker", "paystubs"))
+    )
     return templates.TemplateResponse(
         request=request,
         name="paycheck.html",
@@ -1139,6 +1502,7 @@ async def view_paycheck(paycheck_id: int, request: Request, db=Depends(get_db)):
             "stub": row,
             "gross": row["gross_cents"] / 100,
             "per_job": (row["gross_cents"] / row["job_count"] / 100) if row["job_count"] else None,
+            "can_stub_pdf": can_stub_pdf,
         },
     )
 
@@ -1164,21 +1528,35 @@ async def worker_login(phone: str = Form(...), pin: str = Form(...), db=Depends(
     if not match:
         return RedirectResponse(url="/worker-login?error=Invalid+phone+or+PIN", status_code=status.HTTP_303_SEE_OTHER)
 
-    token = secrets.token_urlsafe(32)
-    with db.cursor() as cur:
-        cur.execute("UPDATE workers SET worker_token = %s WHERE id = %s;", (token, match["id"]))
-        db.commit()
+    actor = {"role": "worker", "id": match["id"], "email": match.get("email") or "", "name": match["name"]}
+    if _otp_enabled(db) and not (match.get("email") or "").strip():
+        return RedirectResponse(url="/worker-login?error=No+email+on+file+%E2%80%94+ask+the+office+to+add+one", status_code=status.HTTP_303_SEE_OTHER)
+    if not _otp_enabled(db):
+        return _finish_login(actor)
 
-    redirect = RedirectResponse(url="/worker", status_code=status.HTTP_303_SEE_OTHER)
-    redirect.set_cookie(key="worker_session", value=token, httponly=True, samesite="lax", secure=os.getenv("COOKIE_SECURE", "false").lower() == "true")
-    redirect.set_cookie(key="worker_id", value=str(match["id"]), httponly=True, samesite="lax")
-    return redirect
+    code = auth_service.generate_otp()
+    _store_otp(db, "worker", match["id"], match["email"], code)
+    ok, err = await _deliver_otp(db, match["email"], code, actor)
+    if not ok:
+        return RedirectResponse(url=f"/worker-login?error={urllib.parse.quote(err)}", status_code=status.HTTP_303_SEE_OTHER)
+    resp = RedirectResponse(url="/login/otp", status_code=status.HTTP_303_SEE_OTHER)
+    resp.set_cookie(
+        key=auth_service.OTP_COOKIE,
+        value=auth_service.issue_pending("worker", match["id"], match["email"], match["name"]),
+        httponly=True, samesite="lax", secure=_secure_cookies(), max_age=auth_service.OTP_TTL_SECONDS,
+    )
+    return resp
 
 @app.get("/api/worker/auth/logout")
 async def worker_logout():
     redirect = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
     redirect.delete_cookie("worker_session")
     redirect.delete_cookie("worker_id")
+    redirect.delete_cookie(auth_service.SESSION_COOKIE)
+    redirect.delete_cookie("user_email")
+    redirect.delete_cookie("user_name")
+    redirect.delete_cookie("role")
+    redirect.delete_cookie("actor_id")
     return redirect
 
 @app.get("/worker", response_class=HTMLResponse)
@@ -1186,6 +1564,8 @@ async def worker_portal(request: Request, db=Depends(get_db)):
     worker = _require_worker(request, db)
     if not worker:
         return RedirectResponse(url="/worker-login", status_code=status.HTTP_303_SEE_OTHER)
+
+    features = _features(db, "worker")
 
     with db.cursor() as cur:
         cur.execute("""
@@ -1197,6 +1577,8 @@ async def worker_portal(request: Request, db=Depends(get_db)):
         raw_jobs = cur.fetchall()
         jobs = []
         for j in raw_jobs:
+            if not features.get("jobs"):
+                continue
             cur.execute(
                 "SELECT action, created_at FROM worker_timeclocks WHERE event_id = %s AND worker_id = %s ORDER BY created_at ASC;",
                 (j["id"], worker["id"]),
@@ -1213,6 +1595,8 @@ async def worker_portal(request: Request, db=Depends(get_db)):
                     pin_time = None
             if clocked_in and pin_time:
                 site_seconds += (datetime.now(pin_time.tzinfo) - pin_time).total_seconds()
+            if not features.get("map"):
+                j = {**j, "job_lat": None, "job_lng": None, "job_address": None}
             jobs.append({
                 **j,
                 "clocked_in": clocked_in,
@@ -1230,6 +1614,8 @@ async def worker_portal(request: Request, db=Depends(get_db)):
             FROM worker_paychecks WHERE worker_id = %s ORDER BY created_at DESC;
         """, (worker["id"],))
         paychecks = cur.fetchall()
+        if not features.get("pay"):
+            paychecks = []
 
     return templates.TemplateResponse(
         request=request,
@@ -1240,14 +1626,48 @@ async def worker_portal(request: Request, db=Depends(get_db)):
             "jobs": jobs,
             "totals": totals,
             "paychecks": paychecks,
+            "features": features,
             "job_coords_map": {
                 j["id"]: {"lat": j["job_lat"], "lng": j["job_lng"]} for j in jobs if j["job_lat"] is not None and j["job_lng"] is not None
             },
         },
     )
 
+@app.get("/worker/stub/{paycheck_id}/pdf", response_class=Response)
+async def worker_stub_pdf(paycheck_id: int, request: Request, db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("SELECT worker_id FROM worker_paychecks WHERE id = %s;", (paycheck_id,))
+        row = cur.fetchone()
+    if not row or not _can_view_paycheck(request, row["worker_id"]):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not allowed")
+    _require_feature(db, "worker", "paystubs")
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT p.*, w.name AS worker_name FROM worker_paychecks p JOIN workers w ON w.id = p.worker_id WHERE p.id = %s;",
+            (paycheck_id,),
+        )
+        row = cur.fetchone()
+    stub = {
+        "id": row["id"],
+        "worker_name": row["worker_name"],
+        "period_start": row["period_start"].strftime("%b %d, %Y"),
+        "period_end": row["period_end"].strftime("%b %d, %Y"),
+        "job_count": row["job_count"],
+        "gross_cents": row["gross_cents"],
+        "pay_date": date.today().strftime("%b %d, %Y"),
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "fed_cents": 0,
+        "state_cents": 0,
+        "fica_cents": 0,
+        "other_cents": 0,
+    }
+    pdf = documents_service.render_pay_stub_pdf(stub)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f"inline; filename=\"stub-{row['id']}.pdf\""})
+
 @app.post("/api/worker/jobs/{event_id}/complete")
 async def worker_complete_job(event_id: int, request: Request, db=Depends(get_db)):
+    _require_feature(db, "worker", "jobs")
     worker = _require_worker(request, db)
     if not worker:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -1272,6 +1692,7 @@ async def worker_clock(
     worker = _require_worker(request, db)
     if not worker:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    _require_feature(db, "worker", "timeclock")
     if action not in ("in", "update", "out"):
         raise HTTPException(status_code=400, detail="Action must be 'in', 'update' or 'out'")
 
@@ -1325,6 +1746,224 @@ async def worker_clock(
     else:
         msg = "Clocked out. Location sharing stopped."
     return JSONResponse(content={"status": "ok", "action": action, "event_id": event_id, "message": msg, "distance_m": distance_m})
+
+# --- WORKER MOBILE APP (PWA) ---
+# The /app installable phone app reuses the exact same worker auth, clock,
+# geofence, location-tracking and paycheck backend as the web portal above.
+
+@app.get("/app", response_class=HTMLResponse)
+async def worker_app_page(request: Request):
+    return templates.TemplateResponse(request=request, name="app.html", context={})
+
+@app.get("/manifest.webmanifest", response_class=Response)
+async def web_manifest():
+    content = Path(__file__).with_name("static") / "manifest.webmanifest"
+    return Response(content=content.read_text(), media_type="application/manifest+json")
+
+@app.get("/sw.js", response_class=Response)
+async def service_worker():
+    content = Path(__file__).with_name("static") / "sw.js"
+    return Response(content=content.read_text(), media_type="application/javascript")
+
+@app.post("/api/worker/app/login")
+async def worker_app_login(phone: str = Form(...), pin: str = Form(...), db=Depends(get_db)):
+    phone_digits = _digits(phone)
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM workers WHERE is_active = TRUE;")
+        candidates = cur.fetchall()
+    match = None
+    for w in candidates:
+        wp = _digits(w.get("phone") or "")
+        if wp and wp[-10:] == phone_digits[-10:] and w["pin_hash"] == _hash_pin(pin.strip()):
+            match = w
+            break
+    if not match:
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid phone or PIN"})
+
+    if _otp_enabled(db):
+        email = (match.get("email") or "").strip()
+        if not email:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "No email on file — ask the office to add one so we can send your login code"})
+        code = auth_service.generate_otp()
+        _store_otp(db, "worker", match["id"], email, code)
+        ok, err = await _deliver_otp(db, email, code, {"name": match["name"]})
+        if not ok:
+            return JSONResponse(status_code=500, content={"status": "error", "message": err})
+        resp = JSONResponse(content={"status": "otp_required", "email": email})
+        resp.set_cookie(
+            key=auth_service.OTP_COOKIE,
+            value=auth_service.issue_pending("worker", match["id"], email, match["name"]),
+            httponly=True, samesite="lax", secure=_secure_cookies(), max_age=auth_service.OTP_TTL_SECONDS,
+        )
+        return resp
+
+    token = secrets.token_urlsafe(32)
+    with db.cursor() as cur:
+        cur.execute("UPDATE workers SET worker_token = %s WHERE id = %s;", (token, match["id"]))
+        db.commit()
+
+    resp = JSONResponse(content={"status": "ok", "worker_id": match["id"], "name": match["name"]})
+    resp.set_cookie(key="worker_session", value=token, httponly=True, samesite="lax", secure=os.getenv("COOKIE_SECURE", "false").lower() == "true")
+    resp.set_cookie(key="worker_id", value=str(match["id"]), httponly=True, samesite="lax")
+    return resp
+
+@app.post("/api/worker/app/verify")
+async def worker_app_verify(request: Request, code: str = Form(...), db=Depends(get_db)):
+    pending = auth_service.pending_from_token(request.cookies.get(auth_service.OTP_COOKIE))
+    if not pending or pending.get("role") != "worker":
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Verification expired - sign in again"})
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM login_otps WHERE role = 'worker' AND actor_id IS NOT DISTINCT FROM %s AND consumed = FALSE ORDER BY created_at DESC LIMIT 1;",
+            (pending.get("id"),),
+        )
+        row = cur.fetchone()
+    if not row or (row["expires_at"] and row["expires_at"] < datetime.now(APP_TZ)):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Code expired - sign in again"})
+    if row["attempts"] >= auth_service.MAX_OTP_ATTEMPTS or not auth_service.verify_otp((code or "").strip(), row["code_hash"]):
+        with db.cursor() as cur:
+            cur.execute("UPDATE login_otps SET attempts = attempts + 1 WHERE id = %s;", (row["id"],))
+            db.commit()
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Incorrect code"})
+    with db.cursor() as cur:
+        cur.execute("UPDATE login_otps SET consumed = TRUE WHERE id = %s;", (row["id"],))
+        db.commit()
+    with db.cursor() as cur:
+        cur.execute("SELECT id, name, phone, email FROM workers WHERE id = %s;", (pending.get("id"),))
+        w = cur.fetchone()
+    resp = JSONResponse(content={"status": "ok", "name": w["name"] if w else ""})
+    actor = {"role": "worker", "id": pending.get("id"), "email": pending.get("email"), "name": pending.get("name")}
+    token = auth_service.issue_session(actor["role"], actor["id"], actor["email"], actor["name"])
+    resp.set_cookie(key=auth_service.SESSION_COOKIE, value=token, httponly=True, samesite="lax", secure=_secure_cookies())
+    resp.set_cookie(key="user_email", value=actor["email"] or "", httponly=True, samesite="lax")
+    resp.set_cookie(key="user_name", value=actor["name"] or "", httponly=True, samesite="lax")
+    resp.set_cookie(key="role", value="worker", httponly=True, samesite="lax")
+    resp.set_cookie(key="actor_id", value=str(actor["id"]), httponly=True, samesite="lax")
+    resp.delete_cookie(auth_service.OTP_COOKIE)
+    return resp
+
+@app.post("/api/worker/app/resend")
+async def worker_app_resend(request: Request, db=Depends(get_db)):
+    pending = auth_service.pending_from_token(request.cookies.get(auth_service.OTP_COOKIE))
+    if not pending or pending.get("role") != "worker":
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Verification expired - sign in again"})
+    code = auth_service.generate_otp()
+    _store_otp(db, "worker", pending.get("id"), pending.get("email"), code)
+    ok, err = await _deliver_otp(db, pending.get("email"), code, {"name": pending.get("name")})
+    if not ok:
+        return JSONResponse(status_code=500, content={"status": "error", "message": err})
+    return JSONResponse(content={"status": "ok"})
+    return resp
+
+@app.post("/api/worker/app/logout")
+async def worker_app_logout():
+    resp = JSONResponse(content={"status": "ok"})
+    resp.delete_cookie("worker_session")
+    resp.delete_cookie("worker_id")
+    resp.delete_cookie(auth_service.SESSION_COOKIE)
+    resp.delete_cookie("user_email")
+    resp.delete_cookie("user_name")
+    resp.delete_cookie("role")
+    resp.delete_cookie("actor_id")
+    return resp
+
+def _worker_app_data(db, worker_id: int):
+    features = _features(db, "worker")
+    with db.cursor() as cur:
+        cur.execute("SELECT id, name, phone, pay_rate_cents, email FROM workers WHERE id = %s;", (worker_id,))
+        worker = cur.fetchone()
+        if not worker:
+            return None
+        cur.execute(
+            """SELECT id, customer_name, phone, start_time, service_type, worker_status,
+                      worker_pay_cents, job_lat, job_lng, job_address
+               FROM calendar_events
+               WHERE worker_id = %s AND start_time >= NOW() - INTERVAL '30 days'
+               ORDER BY start_time DESC;""",
+            (worker_id,),
+        )
+        raw_jobs = cur.fetchall()
+        jobs = []
+        for j in raw_jobs:
+            cur.execute(
+                "SELECT action, created_at FROM worker_timeclocks WHERE event_id = %s AND worker_id = %s ORDER BY created_at ASC;",
+                (j["id"], worker_id),
+            )
+            clocks = cur.fetchall()
+            clocked_in = bool(clocks and clocks[-1]["action"] in ("in", "update"))
+            site_seconds = 0
+            pin_time = None
+            for c in clocks:
+                if c["action"] == "in":
+                    pin_time = c["created_at"]
+                elif c["action"] == "out" and pin_time:
+                    site_seconds += (c["created_at"] - pin_time).total_seconds()
+                    pin_time = None
+            if clocked_in and pin_time:
+                site_seconds += (datetime.now(pin_time.tzinfo) - pin_time).total_seconds()
+            jobs.append({
+                "id": j["id"],
+                "customer_name": j["customer_name"],
+                "service_type": j["service_type"],
+                "worker_status": j["worker_status"],
+                "worker_pay_cents": j["worker_pay_cents"],
+                "start_time": j["start_time"].isoformat(),
+                "job_lat": j["job_lat"],
+                "job_lng": j["job_lng"],
+                "job_address": j["job_address"],
+                "clocked_in": clocked_in,
+                "site_seconds": int(site_seconds),
+                "has_coords": j["job_lat"] is not None and j["job_lng"] is not None,
+            })
+        cur.execute(
+            "SELECT COALESCE(SUM(worker_pay_cents), 0) AS earned_cents, COUNT(*) AS jobs_done FROM calendar_events WHERE worker_id = %s AND worker_status = 'completed';",
+            (worker_id,),
+        )
+        totals = cur.fetchone()
+        cur.execute(
+            "SELECT id, period_start, period_end, job_count, gross_cents FROM worker_paychecks WHERE worker_id = %s ORDER BY created_at DESC;",
+            (worker_id,),
+        )
+        paychecks = []
+        if features.get("pay"):
+            for p in cur.fetchall():
+                paychecks.append({
+                    "id": p["id"],
+                    "job_count": p["job_count"],
+                    "gross_cents": p["gross_cents"],
+                    "period_start": p["period_start"].isoformat(),
+                    "period_end": p["period_end"].isoformat(),
+                })
+    if not features.get("map"):
+        for j in jobs:
+            j["job_lat"] = None
+            j["job_lng"] = None
+            j["has_coords"] = False
+            j["job_address"] = None
+    if not features.get("jobs"):
+        jobs = []
+    return {
+        "worker": {
+            "id": worker["id"],
+            "name": worker["name"],
+            "phone": worker["phone"],
+            "pay_rate_cents": worker["pay_rate_cents"],
+        },
+        "features": features,
+        "totals": {"earned_cents": totals["earned_cents"], "jobs_done": totals["jobs_done"]},
+        "jobs": jobs,
+        "paychecks": paychecks,
+    }
+
+@app.get("/api/worker/app/me")
+async def worker_app_me(request: Request, db=Depends(get_db)):
+    worker = _require_worker(request, db)
+    if not worker:
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Not logged in"})
+    data = _worker_app_data(db, worker["id"])
+    if not data:
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Not logged in"})
+    return JSONResponse(content={"status": "ok", **data})
 
 # --- MESSAGING / COMMS CENTER ---
 
@@ -1480,6 +2119,411 @@ async def hospitable_webhook(request: Request, db=Depends(get_db)):
                 return JSONResponse({"status": "error", "message": str(e)})
     return JSONResponse({"status": "ok", "received": True})
 
+# --- DOCUMENTS, FORMS & DELIVERY (ADMIN ONLY) ---
+
+def _smtp_cfg(db) -> dict:
+    cfg = documents_service.smtp_config_from_env()
+    for key in documents_service.SMTP_KEYS:
+        if not cfg.get(key):
+            stored = _get_setting(db, key)
+            if stored:
+                cfg[key] = stored
+    return cfg
+
+
+@app.get("/docs", response_class=HTMLResponse)
+async def docs_page(request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM generated_documents ORDER BY created_at DESC LIMIT 50;")
+        recent = cur.fetchall()
+        cur.execute("SELECT * FROM custom_forms ORDER BY created_at DESC;")
+        custom_forms_rows = cur.fetchall()
+    return templates.TemplateResponse(
+        request=request,
+        name="docs.html",
+        context={
+            "user": {"email": request.cookies.get("user_email")},
+            "categories": legal_forms.form_categories(),
+            "custom_forms": custom_forms_rows,
+            "recent": recent,
+            "smtp": _smtp_cfg(db),
+            "smtp_configured": documents_service.smtp_configured(_smtp_cfg(db)),
+        },
+    )
+
+
+@app.get("/docs/new", response_class=HTMLResponse)
+async def docs_new(request: Request, db=Depends(get_db)):
+    require_admin(request)
+    custom_id = request.query_params.get("custom")
+    form_key = request.query_params.get("form")
+    if custom_id:
+        with db.cursor() as cur:
+            cur.execute("SELECT * FROM custom_forms WHERE id = %s;", (int(custom_id),))
+            row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Custom form not found")
+        try:
+            doc = json.loads(row["doc_def"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Custom form definition is corrupt")
+        return templates.TemplateResponse(
+            request=request, name="doc_form.html",
+            context={"user": {"email": request.cookies.get("user_email")}, "doc": doc, "custom_id": row["id"]},
+        )
+    doc = legal_forms.FORMS_BY_KEY.get(form_key or "")
+    if not doc:
+        raise HTTPException(status_code=404, detail="Form not found")
+    return templates.TemplateResponse(
+        request=request, name="doc_form.html",
+        context={"user": {"email": request.cookies.get("user_email")}, "doc": doc, "custom_id": None},
+    )
+
+
+@app.post("/docs/generate")
+async def docs_generate(request: Request, db=Depends(get_db)):
+    require_admin(request)
+    data = await request.form()
+    fmt = (data.get("format") or "pdf").lower()
+    if fmt not in ("pdf", "docx"):
+        fmt = "pdf"
+
+    custom_id = data.get("custom_id")
+    form_key = data.get("form_key")
+    if custom_id:
+        with db.cursor() as cur:
+            cur.execute("SELECT * FROM custom_forms WHERE id = %s;", (int(custom_id),))
+            row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Custom form not found")
+        try:
+            doc = json.loads(row["doc_def"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Custom form definition is corrupt")
+        title, category = row["title"], row["category"]
+    else:
+        doc = legal_forms.FORMS_BY_KEY.get(form_key or "")
+        if not doc:
+            raise HTTPException(status_code=404, detail="Form not found")
+        title, category = doc["title"], doc["category"]
+
+    values = {k[2:]: v for k, v in data.items() if k.startswith("f_")}
+    raw = documents_service.render_document(doc, values, fmt)
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60] or "document"
+    file_name = f"{slug}.{fmt}"
+
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO generated_documents (title, category, file_name, file_type, file_data, values_json) VALUES (%s, %s, %s, %s, %s, %s);",
+            (title, category, file_name, fmt, raw, json.dumps(values)),
+        )
+        db.commit()
+    return RedirectResponse(url="/docs?gen=1", status_code=303)
+
+
+@app.get("/docs/view/{doc_id}", response_class=Response)
+async def docs_view(doc_id: int, request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM generated_documents WHERE id = %s;", (doc_id,))
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Document not found")
+    media = "application/pdf" if row["file_type"] == "pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    headers = {"Content-Disposition": f"inline; filename=\"{row['file_name']}\""}
+    return Response(content=bytes(row["file_data"]), media_type=media, headers=headers)
+
+
+@app.get("/docs/download/{doc_id}", response_class=Response)
+async def docs_download(doc_id: int, request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM generated_documents WHERE id = %s;", (doc_id,))
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Document not found")
+    media = "application/pdf" if row["file_type"] == "pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    headers = {"Content-Disposition": f"attachment; filename=\"{row['file_name']}\""}
+    return Response(content=bytes(row["file_data"]), media_type=media, headers=headers)
+
+
+@app.post("/docs/send/{doc_id}")
+async def docs_send(doc_id: int, request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM generated_documents WHERE id = %s;", (doc_id,))
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    data = await request.form()
+    email_to = (data.get("email_to") or "").strip()
+    sms_to = (data.get("sms_to") or "").strip()
+    subject = (data.get("subject") or "").strip() or f"Document: {row['title']}"
+    cfg = _smtp_cfg(db)
+    feedback = []
+
+    if email_to:
+        if not documents_service.smtp_configured(cfg):
+            feedback.append("Email skipped — SMTP not configured.")
+        else:
+            try:
+                await documents_service.send_email(
+                    cfg, email_to, subject, f"Please find the attached document: {row['file_name']}.",
+                    bytes(row["file_data"]), row["file_name"],
+                )
+                with db.cursor() as cur:
+                    cur.execute("UPDATE generated_documents SET sent_email = %s WHERE id = %s;", (email_to, doc_id))
+                    db.commit()
+                feedback.append(f"Emailed to {email_to}")
+            except Exception as e:
+                feedback.append(f"Email failed: {e}")
+
+    if sms_to:
+        if signalwire.is_configured():
+            base = _site_base(request)
+            link = f"{base}/docs/view/{row['id']}"
+            try:
+                ok = signalwire.send_sms(sms_to, f"Your document '{row['title']}' is ready to view/download: {link}")
+                feedback.append("Text sent" if ok else "Text send failed")
+                if ok:
+                    with db.cursor() as cur:
+                        cur.execute("UPDATE generated_documents SET sent_sms = %s WHERE id = %s;", (sms_to, doc_id))
+                        db.commit()
+            except Exception as e:
+                feedback.append(f"Text failed: {e}")
+        else:
+            feedback.append("Text skipped — SignalWire not configured.")
+
+    return RedirectResponse(url=f"/docs?delivered={'; '.join(feedback)}", status_code=303)
+
+
+@app.post("/docs/custom")
+async def docs_custom(request: Request, db=Depends(get_db)):
+    require_admin(request)
+    data = await request.form()
+    title = (data.get("title") or "").strip()
+    category = (data.get("category") or "Legal").strip()
+    raw_def = (data.get("doc_def") or "").strip()
+    if not title or not raw_def:
+        raise HTTPException(status_code=400, detail="Title and form definition are required")
+    try:
+        parsed = json.loads(raw_def)
+        assert isinstance(parsed, dict) and parsed.get("title")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Form definition must be valid JSON with a title")
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO custom_forms (title, category, doc_def) VALUES (%s, %s, %s);",
+            (parsed.get("title", title), category, json.dumps(parsed)),
+        )
+        db.commit()
+    return RedirectResponse(url="/docs?custom_saved=1", status_code=303)
+
+
+@app.post("/api/settings/email")
+async def save_email_settings(request: Request, db=Depends(get_db)):
+    require_admin(request)
+    form = await request.form()
+    for key in documents_service.SMTP_KEYS:
+        val = (form.get(key) or "").strip()
+        _set_setting(db, key, val)
+    return RedirectResponse(url="/docs?saved=1", status_code=303)
+
+
+# --- ACCESS CONTROL (ADMIN) ---
+
+def _save_perms(db, role: str, form):
+    features = auth_service.permissions_defaults(role)
+    for key in features:
+        features[key] = (form.get(f"feature_{role}_{key}") == "on")
+    _set_setting(db, f"perms_{role}", json.dumps(features))
+
+
+@app.get("/access", response_class=HTMLResponse)
+async def access_page(request: Request, db=Depends(get_db)):
+    require_admin(request)
+    is_authed, user_email = require_auth(request)
+    return templates.TemplateResponse(
+        request=request,
+        name="access.html",
+        context={
+            "user": {"email": user_email},
+            "saved": request.query_params.get("saved"),
+            "worker_features": _features(db, "worker"),
+            "host_features": _features(db, "host"),
+            "worker_catalog": auth_service.WORKER_FEATURES,
+            "host_catalog": auth_service.HOST_FEATURES,
+        },
+    )
+
+
+@app.post("/api/access")
+async def save_access(request: Request, db=Depends(get_db)):
+    require_admin(request)
+    form = await request.form()
+    _save_perms(db, "worker", form)
+    _save_perms(db, "host", form)
+    return RedirectResponse(url="/access?saved=1", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# --- ACCOUNTING (ADMIN ONLY — QUICKBOOKS-STYLE) ---
+
+def _bank_cfg() -> dict:
+    return {
+        "holder": os.getenv("CHECK_HOLDER", "BizStack Hosts"),
+        "address": os.getenv("CHECK_HOLDER_ADDRESS", ""),
+        "city_state_zip": os.getenv("CHECK_CITY_STATE_ZIP", ""),
+        "routing": os.getenv("CHECK_ROUTING", "000000000"),
+        "account": os.getenv("CHECK_ACCOUNT", "000000000000"),
+    }
+
+
+def _next_check_number(db) -> int:
+    try:
+        return int(_get_setting(db, "check_counter") or os.getenv("CHECK_START_NUMBER", "1001"))
+    except (TypeError, ValueError):
+        return 1001
+
+
+def _bump_check_counter(db, value: int):
+    _set_setting(db, "check_counter", str(value + 1))
+
+
+@app.get("/accounting", response_class=HTMLResponse)
+async def accounting_page(request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT COALESCE(SUM(amount_cents) FILTER (WHERE tx_type = 'income'), 0) AS income, "
+            "COALESCE(SUM(amount_cents) FILTER (WHERE tx_type = 'expense'), 0) AS expense FROM ledger_entries;"
+        )
+        totals = cur.fetchone()
+        net = (totals["income"] or 0) - (totals["expense"] or 0)
+        cur.execute("SELECT * FROM ledger_entries ORDER BY created_at DESC LIMIT 200;")
+        ledger = cur.fetchall()
+        cur.execute(
+            "SELECT p.*, w.name AS worker_name, w.email AS worker_email, w.phone AS worker_phone "
+            "FROM worker_paychecks p JOIN workers w ON w.id = p.worker_id ORDER BY p.created_at DESC LIMIT 100;"
+        )
+        paychecks = cur.fetchall()
+        cur.execute("SELECT * FROM checks ORDER BY created_at DESC LIMIT 50;")
+        checks = cur.fetchall()
+
+    return templates.TemplateResponse(
+        request=request,
+        name="accounting.html",
+        context={
+            "user": {"email": request.cookies.get("user_email")},
+            "income": totals["income"] or 0,
+            "expense": totals["expense"] or 0,
+            "net": net,
+            "ledger": ledger,
+            "paychecks": paychecks,
+            "checks": checks,
+            "bank": _bank_cfg(),
+        },
+    )
+
+
+@app.get("/accounting/stub/{paycheck_id}/pdf", response_class=Response)
+async def accounting_stub_pdf(paycheck_id: int, request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT p.*, w.name AS worker_name FROM worker_paychecks p JOIN workers w ON w.id = p.worker_id WHERE p.id = %s;",
+            (paycheck_id,),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Paycheck not found")
+    stub = {
+        "id": row["id"],
+        "worker_name": row["worker_name"],
+        "period_start": row["period_start"].strftime("%b %d, %Y"),
+        "period_end": row["period_end"].strftime("%b %d, %Y"),
+        "job_count": row["job_count"],
+        "gross_cents": row["gross_cents"],
+        "pay_date": date.today().strftime("%b %d, %Y"),
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "fed_cents": 0,
+        "state_cents": 0,
+        "fica_cents": 0,
+        "other_cents": 0,
+    }
+    pdf = documents_service.render_pay_stub_pdf(stub)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f"inline; filename=\"stub-{row['id']}.pdf\""})
+
+
+@app.get("/accounting/check/{paycheck_id}/pdf", response_class=Response)
+async def accounting_check_pdf(paycheck_id: int, request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT p.*, w.name AS worker_name FROM worker_paychecks p JOIN workers w ON w.id = p.worker_id WHERE p.id = %s;",
+            (paycheck_id,),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Paycheck not found")
+
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM checks WHERE paycheck_id = %s;", (paycheck_id,))
+        existing = cur.fetchone()
+
+    bank = _bank_cfg()
+    if existing:
+        check_number = existing["check_number"]
+        amount = existing["amount_cents"]
+    else:
+        check_number = f"{_next_check_number(db):05d}"
+        _bump_check_counter(db, _next_check_number(db))
+        amount = row["gross_cents"]
+
+    check = {
+        "check_number": check_number,
+        "payee": row["worker_name"],
+        "amount_cents": amount,
+        "date": date.today().strftime("%m/%d/%Y"),
+        "memo": f"Payroll — {row['period_start'].strftime('%b %d')} to {row['period_end'].strftime('%b %d, %Y')}",
+        "stub": [
+            (f"GROSS — {row['job_count']} jobs", row["gross_cents"]),
+            ("NET PAY", row["gross_cents"]),
+        ],
+        "bank": bank,
+    }
+    pdf = documents_service.render_check_pdf(check)
+
+    if not existing:
+        with db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO checks (check_number, paycheck_id, payee, amount_cents, memo, status, file_data) VALUES (%s, %s, %s, %s, %s, 'printed', %s);",
+                (check_number, paycheck_id, check["payee"], amount, check["memo"], pdf),
+            )
+            db.commit()
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f"inline; filename=\"check-{check_number}.pdf\""})
+
+
+@app.get("/accounting/export")
+async def accounting_export(request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM ledger_entries ORDER BY created_at DESC;")
+        rows = cur.fetchall()
+    import csv as _csv
+    import io as _io
+    buf = _io.StringIO()
+    writer = _csv.writer(buf)
+    writer.writerow(["id", "type", "description", "amount_cents", "date"])
+    for r in rows:
+        writer.writerow([r["id"], r["tx_type"], r["description"], r["amount_cents"], r["created_at"].isoformat()])
+    return Response(content=buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=\"ledger.csv\""})
+
+
 # --- CALENDAR API ---
 
 @app.get("/api/calendar")
@@ -1626,6 +2670,16 @@ async def payments_webhook(request: Request, db=Depends(get_db)):
                     ON CONFLICT (booking_id) DO NOTHING;""",
                     (int(event_id), session.get("id"), payment_intent, amount_total, currency)
                 )
+                cur.execute("SELECT customer_name, service_type FROM calendar_events WHERE id = %s;", (int(event_id),))
+                evt = cur.fetchone()
+                if evt:
+                    host_name = evt["customer_name"] or "Host"
+                    cur.execute(
+                        "INSERT INTO ledger_entries (tx_type, ref_type, ref_id, description, amount_cents) "
+                        "VALUES ('income', 'booking', %s, %s, %s) "
+                        "ON CONFLICT (ref_type, ref_id) DO NOTHING;",
+                        (int(event_id), f"Host payment — {host_name} ({evt['service_type'] or 'service'})", amount_total),
+                    )
                 db.commit()
 
     return Response(content='{"received": true}', media_type="application/json")

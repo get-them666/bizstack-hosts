@@ -59,6 +59,11 @@
 
         <!-- Actions -->
         <div class="mt-6 flex flex-col sm:flex-row items-center gap-3 print:hidden">
+            {% if can_stub_pdf %}
+            <a href="/worker/stub/{{ stub['id'] }}/pdf" target="_blank" class="w-full sm:w-auto px-6 py-3 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-all">
+                ⬇ Download Stub PDF
+            </a>
+            {% endif %}
             <button onclick="window.print()" class="w-full sm:w-auto px-6 py-3 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all">
                 🖨️ Print / Save as PDF
             </button>

@@ -1,40 +1,49 @@
-{% extends "base.html" %}{% block title %}Customer Login | BizStack Hosts{% endblock %}
+{% extends "base.html" %}{% block title %}Sign In | BizStack Hosts{% endblock %}
 
 {% block content %}
-<section class="relative py-16 lg:py-24 bg-white overflow-hidden">
-    <div class="max-w-md mx-auto px-4 sm:px-6 relative z-10">
-        <div class="bg-white rounded-3xl p-8 sm:p-10 shadow-xl shadow-slate-200 border border-slate-200">
+<section class="relative overflow-hidden bg-gradient-to-br from-indigo-50 via-white to-slate-50 py-16 lg:py-24">
+    <div class="absolute -top-24 -right-24 w-96 h-96 bg-indigo-200/40 rounded-full blur-3xl"></div>
+    <div class="absolute -bottom-24 -left-24 w-96 h-96 bg-violet-200/40 rounded-full blur-3xl"></div>
+
+    <div class="relative max-w-md mx-auto px-4 sm:px-6 z-10">
+        <div class="bg-white/90 backdrop-blur rounded-3xl p-8 sm:p-10 shadow-2xl shadow-indigo-100 border border-white">
             <div class="text-center mb-8">
-                <div class="w-14 h-14 mx-auto bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 text-2xl font-bold mb-4">⚡</div>
+                <div class="w-16 h-16 mx-auto bg-gradient-to-br from-indigo-500 to-violet-600 rounded-2xl flex items-center justify-center text-white text-2xl shadow-lg shadow-indigo-200 mb-4">⚡</div>
                 <h1 class="text-3xl font-extrabold tracking-tight text-slate-900">Welcome back</h1>
-                <p class="text-sm text-slate-600 mt-2">Sign in to manage your STR operations dashboard.</p>
+                <p class="text-sm text-slate-500 mt-2">Sign in to the BizStack Hosts operations hub.</p>
             </div>
 
             {% if error %}
-            <div class="mb-4 p-3 rounded-xl bg-red-50 border border-red-100 text-red-700 text-sm font-medium">
-                {{ error }}
+            <div class="mb-5 p-3.5 rounded-2xl bg-red-50 border border-red-100 text-red-700 text-sm font-medium flex items-start gap-2">
+                <span class="shrink-0">⚠️</span><span>{{ error }}</span>
             </div>
             {% endif %}
 
-            <form action="/api/auth/login" method="POST" class="space-y-4">
+            <form action="/api/auth/login" method="POST" class="space-y-5">
                 <div>
-                    <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Email Address</label>
-                    <input type="email" name="email" required placeholder="you@example.com"
-                        class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+                    <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">Email or Phone</label>
+                    <input type="text" name="identifier" required autofocus autocomplete="username"
+                        placeholder="you@example.com or (757) 555-0123"
+                        class="w-full px-4 py-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
                 </div>
                 <div>
-                    <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Password</label>
-                    <input type="password" name="password" required placeholder="••••••••"
-                        class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+                    <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">Password or PIN</label>
+                    <input type="password" name="secret" required autocomplete="current-password"
+                        placeholder="••••••••"
+                        class="w-full px-4 py-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
                 </div>
-                <button type="submit" class="w-full py-4 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-xl transition-all shadow-md shadow-indigo-100 uppercase tracking-wider">
-                    Sign In
+                <button type="submit"
+                    class="w-full py-4 text-sm font-bold text-white bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 rounded-2xl transition-all shadow-lg shadow-indigo-200 uppercase tracking-wider">
+                    Continue
                 </button>
             </form>
 
+            <div class="mt-6 flex items-center justify-center gap-2 text-xs text-slate-400">
+                <span>🔐</span><span>For your security we email a one-time code before you're signed in.</span>
+            </div>
+
             <div class="mt-6 pt-6 border-t border-slate-100 text-center">
-                <p class="text-xs text-slate-500">Need a free rental analysis first?</p>
-                <a href="/#analysis-form" class="text-sm font-semibold text-indigo-600 hover:text-indigo-700 mt-1 inline-block">Get My Free Rental Analysis →</a>
+                <p class="text-xs text-slate-500">Host with a property? <a href="/host-login" class="font-semibold text-indigo-600 hover:text-indigo-700">Host Portal →</a></p>
             </div>
         </div>
     </div>

@@ -180,6 +180,12 @@
                     {% if tc['map_url'] %}
                     <iframe title="Live cleaner location" src="{{ tc['map_url'] }}" loading="lazy"
                         class="w-full h-44 border-0"></iframe>
+                    <div class="px-4 py-2 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+                        <span class="text-xs text-slate-500">Live cleaner location</span>
+                        {% if tc['lat'] is not none and tc['lng'] is not none %}
+                        <a href="https://www.google.com/maps/dir/?api=1&destination={{ tc['lat'] }},{{ tc['lng'] }}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-700">🧭 Directions</a>
+                        {% endif %}
+                    </div>
                     {% else %}
                     <p class="text-sm text-slate-400 p-4">Waiting for location…</p>
                     {% endif %}
@@ -228,6 +234,11 @@
                         {% if tc['map_url'] %}
                         <iframe title="Cleaner location" src="{{ tc['map_url'] }}" loading="lazy"
                             class="w-full h-40 rounded-xl border border-slate-200"></iframe>
+                        <div class="mt-2 flex items-center justify-end">
+                            {% if tc['lat'] is not none and tc['lng'] is not none %}
+                            <a href="https://www.google.com/maps/dir/?api=1&destination={{ tc['lat'] }},{{ tc['lng'] }}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-700">🧭 Directions</a>
+                            {% endif %}
+                        </div>
                         {% else %}
                         <p class="text-xs text-slate-400">No location captured for this entry.</p>
                         {% endif %}

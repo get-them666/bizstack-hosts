@@ -1,0 +1,100 @@
+{% extends "base.html" %}{% block title %}{{ doc.title }} · Generate | BizStack Hosts{% endblock %}
+
+{% block content %}
+<section class="bg-gradient-to-b from-slate-50 to-white">
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+            <div>
+                <p class="text-xs font-semibold text-indigo-600 uppercase tracking-wider">{{ doc.category }}</p>
+                <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900">{{ doc.title }}</h1>
+                <p class="mt-2 text-sm text-slate-600">{{ doc.blurb }}</p>
+            </div>
+            <a href="/docs" class="inline-flex items-center justify-center px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all shadow-md shadow-indigo-100 shrink-0">
+                ← Documents
+            </a>
+        </div>
+
+        <form method="POST" action="/docs/generate">
+            {% if custom_id %}
+            <input type="hidden" name="custom_id" value="{{ custom_id }}">
+            {% else %}
+            <input type="hidden" name="form_key" value="{{ doc.key }}">
+            {% endif %}
+
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8 space-y-8">
+                {% for section in doc.sections %}
+                <div>
+                    <h2 class="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">{{ section.heading }}</h2>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {% for f in section.fields %}
+                        <div class="{% if f.type == 'textarea' %}sm:col-span-2{% endif %}">
+                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
+                                {{ f.label }}{% if f.get('required') %} <span class="text-red-500">*</span>{% endif %}
+                            </label>
+                            {% if f.type == "textarea" %}
+                            <textarea name="f_{{ f.key }}" rows="3" {% if f.get("required") %}required{% endif %}
+                                class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all"></textarea>
+                            {% elif f.type == "date" %}
+                            <input type="date" name="f_{{ f.key }}" {% if f.get("required") %}required{% endif %}
+                                class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+                            {% elif f.type == "number" %}
+                            <input type="number" name="f_{{ f.key }}" step="any"
+                                class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+                            {% else %}
+                            <input type="text" name="f_{{ f.key }}" {% if f.get("required") %}required{% endif %}
+                                class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+
+                {% if doc.agreements %}
+                <div>
+                    <h2 class="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">Terms</h2>
+                    <div class="space-y-2">
+                        {% for clause in doc.agreements %}
+                        <p class="text-sm text-slate-600 leading-relaxed">• {{ clause }}</p>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if doc.signatories %}
+                <div>
+                    <h2 class="text-sm font-bold text-slate-900 uppercase tracking-wider mb-4">Signatures</h2>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        {% for signer in doc.signatories %}
+                        <div>
+                            <div class="border-b-2 border-slate-300 h-10"></div>
+                            <p class="mt-2 text-xs font-semibold text-slate-700 uppercase tracking-wider">{{ signer }} — sign &amp; date</p>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if doc.disclaimer %}
+                <div class="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium leading-relaxed">
+                    ⚠️ {{ doc.disclaimer }}
+                </div>
+                {% endif %}
+
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 pt-4 border-t border-slate-100">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Output Format</label>
+                        <select name="format" class="px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
+                            <option value="pdf">PDF (print / send)</option>
+                            <option value="docx">DOCX (Word)</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="inline-flex items-center justify-center px-8 py-3.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-xl transition-all shadow-md shadow-indigo-100 uppercase tracking-wider">
+                        Generate Document →
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</section>
+{% endblock %}

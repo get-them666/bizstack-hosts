@@ -18,10 +18,14 @@
             <!-- My Jobs -->
             <div class="lg:col-span-2 bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
                 <h2 class="text-lg font-bold text-slate-900 mb-1">My Recent Jobs</h2>
+                {% if features.get('timeclock') %}
                 <p class="text-xs text-slate-500 mb-2">Clock in when you arrive on site, clock out when you're done.</p>
                 <div class="mb-6 px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-100 text-xs text-indigo-700">
                     🔍 <b>Privacy:</b> while you're <b>on the clock</b>, your live location is shared with your manager and shown on a map. The moment you clock out, tracking stops.
                 </div>
+                {% else %}
+                <p class="text-xs text-slate-500 mb-2">Your assigned jobs and their status — clock in/out is managed by the office.</p>
+                {% endif %}
                 <div class="space-y-3">
                     {% for job in jobs %}
                     <div class="p-4 rounded-2xl bg-slate-50 border border-slate-100">
@@ -29,22 +33,28 @@
                             <div>
                                 <p class="text-sm font-bold text-slate-800">{{ job['customer_name'] }}</p>
                                 <p class="text-xs text-slate-500">{{ job['start_time'].strftime('%a, %b %d · %I:%M %p') }} · {{ job['service_type'] }}</p>
+                                {% if features.get('pay') %}
                                 <p class="text-xs font-semibold text-slate-500 mt-0.5">Pay: ${{ '%.2f'|format((job['worker_pay_cents'] or 0) / 100) }}</p>
-                                {% if job['clocked_in'] %}
+                                {% endif %}
+                                {% if features.get('timeclock') and job['clocked_in'] %}
                                 <p class="text-xs font-semibold text-red-500 mt-1">● ON THE CLOCK — tracking your location (close only on this job)</p>
                                 {% if job['job_address'] %}<p class="text-xs text-slate-400">Job: {{ job['job_address'] }}</p>{% endif %}
                                 {% endif %}
                             </div>
                             {% if job['worker_status'] == 'completed' %}
                             <span class="px-2 py-1 text-xs font-semibold rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100">Done ✓</span>
-                            {% elif job['clocked_in'] %}
+                            {% elif features.get('timeclock') and job['clocked_in'] %}
                             <button class="clock-out px-4 py-2 text-xs font-bold text-white bg-red-500 hover:bg-red-600 rounded-lg" data-event="{{ job['id'] }}">Clock Out</button>
                             {% else %}
                             <div class="flex flex-col items-end gap-2">
+                                {% if features.get('timeclock') %}
                                 <button class="clock-in px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg" data-event="{{ job['id'] }}" data-coords="{{ '1' if job['job_coords'] else '0' }}">🕐 Clock In</button>
+                                {% endif %}
+                                {% if features.get('jobs') and job['worker_status'] != 'completed' %}
                                 <form method="post" action="/api/worker/jobs/{{ job['id'] }}/complete">
                                     <button class="text-xs font-semibold text-slate-400 hover:text-slate-600">Mark job done</button>
                                 </form>
+                                {% endif %}
                             </div>
                             {% endif %}
                         </div>
@@ -63,13 +73,18 @@
                                     <iframe title="Your location" id="myloc-{{ job['id'] }}" loading="lazy" class="w-full h-28 rounded-lg border border-slate-100" src=""></iframe>
                                 </div>
                             </div>
+                            {% if job['job_lat'] is not none and job['job_lng'] is not none %}
+                            <div class="mt-2">
+                                <a href="https://www.google.com/maps/dir/?api=1&destination={{ job['job_lat'] }},{{ job['job_lng'] }}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-700">🧭 Get Directions</a>
+                            </div>
+                            {% endif %}
                             {% endif %}
                             {% if job['site_seconds'] %}
                             <p class="text-xs text-slate-500 mt-2">On-site time so far: <b class="text-slate-700">{{ (job['site_seconds'] // 3600) }}h {{ ((job['site_seconds'] % 3600) // 60) }}m</b></p>
                             {% endif %}
                         </div>
                         {% elif job['job_coords'] %}
-                        <p class="text-xs text-slate-400 mt-2">💡 Clock in when you're within 100 m (1/16 mile) of the job — location sharing begins only when you clock in.</p>
+                        <p class="text-xs text-slate-400 mt-2">💡 Clock in when you're within 100 m (1/16 mile) of the job — location sharing begins only when you clock in. <a href="https://www.google.com/maps/dir/?api=1&destination={{ job['job_lat'] }},{{ job['job_lng'] }}" target="_blank" rel="noopener" class="text-indigo-600 font-semibold hover:text-indigo-700">🧭 Get Directions</a></p>
                         {% endif %}
                     </div>
                     {% else %}
@@ -79,6 +94,7 @@
             </div>
 
             <!-- Paychecks -->
+            {% if features.get('pay') %}
             <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8 h-fit">
                 <h2 class="text-lg font-bold text-slate-900 mb-1">My Paychecks</h2>
                 <p class="text-xs text-slate-500 mb-6">Digital stubs from completed pay periods.</p>
@@ -93,6 +109,7 @@
                     {% endfor %}
                 </div>
             </div>
+            {% endif %}
         </div>
     </div>
 </section>

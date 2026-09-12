@@ -1,0 +1,205 @@
+{% extends "base.html" %}{% block title %}Documents & Forms | BizStack Hosts{% endblock %}
+
+{% block content %}
+<section class="bg-gradient-to-b from-slate-50 to-white">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+            <div>
+                <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900">Documents &amp; Forms</h1>
+                <p class="mt-2 text-slate-600">Generate PDF/DOCX documents, custom forms, and deliver by email or SMS.</p>
+            </div>
+            <a href="/dashboard" class="inline-flex items-center justify-center px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all shadow-md shadow-indigo-100">
+                ← Back to Dashboard
+            </a>
+        </div>
+
+        {% if request.query_params.get("gen") %}
+        <div class="mb-6 p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-medium">Document generated successfully.</div>
+        {% elif request.query_params.get("custom_saved") %}
+        <div class="mb-6 p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-medium">Custom form saved.</div>
+        {% elif request.query_params.get("saved") %}
+        <div class="mb-6 p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-medium">SMTP settings saved.</div>
+        {% elif request.query_params.get("delivered") %}
+        <div class="mb-6 p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-medium">{{ request.query_params.get("delivered") }}</div>
+        {% endif %}
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Left: forms library -->
+            <div class="lg:col-span-2 space-y-8">
+                {% for cat, forms in categories.items() %}
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 font-bold">{{ "🏠" if cat == "Realty" else ("💰" if cat == "Finance" else "⚖️") }}</div>
+                        <div>
+                            <h2 class="text-lg font-bold text-slate-900">{{ cat }} Templates</h2>
+                            <p class="text-xs text-slate-500">Starter templates — fill, generate PDF/DOCX, deliver</p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {% for f in forms %}
+                        <a href="/docs/new?form={{ f.key }}" class="group block p-5 rounded-2xl border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-200 hover:shadow-md transition-all">
+                            <h3 class="font-bold text-slate-900 group-hover:text-indigo-700">{{ f.title }}</h3>
+                            <p class="mt-1 text-xs text-slate-600 leading-relaxed">{{ f.blurb }}</p>
+                            <span class="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-indigo-600">Fill &amp; Generate →</span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+
+                {% if custom_forms %}
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
+                    <h2 class="text-lg font-bold text-slate-900 mb-6">Custom Forms</h2>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {% for c in custom_forms %}
+                        <a href="/docs/new?custom={{ c['id'] }}" class="group block p-5 rounded-2xl border border-slate-200 bg-slate-50 hover:bg-violet-50 hover:border-violet-200 transition-all">
+                            <h3 class="font-bold text-slate-900 group-hover:text-violet-700">{{ c['title'] }}</h3>
+                            <span class="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-violet-600">{{ c['category'] }} · Fill &amp; Generate →</span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Custom form builder -->
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="w-10 h-10 rounded-xl bg-violet-50 flex items-center justify-center text-violet-600 font-bold">🧩</div>
+                        <div>
+                            <h2 class="text-lg font-bold text-slate-900">Custom Form Builder</h2>
+                            <p class="text-xs text-slate-500">Define your own form as JSON and render it like a template</p>
+                        </div>
+                    </div>
+                    <form method="POST" action="/docs/custom" class="space-y-4">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Form Title</label>
+                                <input type="text" name="title" required placeholder="e.g. Linen Delivery Manifest"
+                                    class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Category</label>
+                                <input type="text" name="category" placeholder="Realty · Finance · Legal · Other"
+                                    class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Form Definition (JSON)</label>
+                            <textarea name="doc_def" rows="10" required spellcheck="false"
+                                placeholder='{"title": "Linen Delivery Manifest", "sections": [{"heading": "1. Delivery", "fields": [{"key": "property", "label": "Property address", "type": "text", "required": true}]}], "signatories": ["Driver", "Owner"]}'
+                                class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all"></textarea>
+                        </div>
+                        <button type="submit" class="px-6 py-3 text-sm font-bold text-white bg-violet-600 hover:bg-violet-700 active:bg-violet-800 rounded-xl transition-all shadow-md shadow-violet-100 uppercase tracking-wider">
+                            Save Custom Form
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Right: settings + recent -->
+            <div class="space-y-8">
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600 font-bold">✉️</div>
+                        <div>
+                            <h2 class="text-lg font-bold text-slate-900">Email Delivery (SMTP)</h2>
+                            <p class="text-xs text-slate-500">Send generated documents as email attachments</p>
+                        </div>
+                    </div>
+                    {% if smtp_configured %}
+                    <p class="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-700 text-xs font-semibold">✓ SMTP configured</p>
+                    {% else %}
+                    <p class="mb-4 p-3 rounded-xl bg-amber-50 border border-amber-100 text-amber-700 text-xs font-semibold">Set your SMTP details to send documents by email.</p>
+                    {% endif %}
+                    <form method="POST" action="/api/settings/email" class="space-y-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">SMTP Host</label>
+                            <input type="text" name="SMTP_HOST" value="{{ smtp.get('SMTP_HOST', '') }}" placeholder="smtp.gmail.com"
+                                class="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all">
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Port</label>
+                                <input type="text" name="SMTP_PORT" value="{{ smtp.get('SMTP_PORT', '') }}" placeholder="587"
+                                    class="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">TLS</label>
+                                <input type="text" name="SMTP_TLS" value="{{ smtp.get('SMTP_TLS', '') }}" placeholder="true / false / tls"
+                                    class="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Username</label>
+                            <input type="text" name="SMTP_USER" value="{{ smtp.get('SMTP_USER', '') }}" placeholder="you@example.com"
+                                class="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Password</label>
+                            <input type="password" name="SMTP_PASS" value="{{ smtp.get('SMTP_PASS', '') }}" placeholder="••••••••"
+                                class="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all">
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">From Email</label>
+                                <input type="text" name="SMTP_FROM" value="{{ smtp.get('SMTP_FROM', '') }}" placeholder="noreply@bizstackperks.com"
+                                    class="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">From Name</label>
+                                <input type="text" name="SMTP_NAME" value="{{ smtp.get('SMTP_NAME', '') }}" placeholder="BizStack Hosts"
+                                    class="w-full px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all">
+                            </div>
+                        </div>
+                        <button type="submit" class="w-full py-3 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 rounded-xl transition-all shadow-md shadow-emerald-100 uppercase tracking-wider">
+                            Save Email Settings
+                        </button>
+                    </form>
+                </div>
+
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
+                    <h2 class="text-lg font-bold text-slate-900 mb-4">Recent Documents</h2>
+                    {% if recent %}
+                    <div class="space-y-4">
+                        {% for d in recent %}
+                        <div class="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                            <div class="flex items-start justify-between gap-3">
+                                <div>
+                                    <p class="text-sm font-bold text-slate-900">{{ d['title'] }}</p>
+                                    <p class="text-xs text-slate-500">
+                                        {{ "PDF" if d['file_type'] == "pdf" else "DOCX" }} ·
+                                        {{ d['created_at'].strftime("%b %d, %Y") }}
+                                        {% if d['sent_email'] %} · ✉️ {{ d['sent_email'] }}{% endif %}
+                                        {% if d['sent_sms'] %} · 📱 {{ d['sent_sms'] }}{% endif %}
+                                    </p>
+                                </div>
+                                <span class="shrink-0 px-2 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-semibold rounded-full">{{ d['category'] }}</span>
+                            </div>
+                            <div class="mt-3 flex flex-wrap gap-2">
+                                <a href="/docs/view/{{ d['id'] }}" class="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-all" target="_blank">View</a>
+                                <a href="/docs/download/{{ d['id'] }}" class="px-3 py-1.5 text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-all">Download</a>
+                            </div>
+                            <form method="POST" action="/docs/send/{{ d['id'] }}" class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 bg-white p-3 rounded-xl border border-slate-200">
+                                <div class="flex gap-2">
+                                    <input type="email" name="email_to" placeholder="Email to… (Sender)"
+                                        class="flex-1 min-w-0 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                                    <button type="submit" class="shrink-0 px-3 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-all">✉️ Send</button>
+                                </div>
+                                <div class="flex gap-2">
+                                    <input type="tel" name="sms_to" placeholder="Text to… (no dash)"
+                                        class="flex-1 min-w-0 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-sky-500">
+                                    <button type="submit" class="shrink-0 px-3 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-700 rounded-lg transition-all">📱 Send</button>
+                                </div>
+                            </form>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="text-sm text-slate-500">No documents generated yet. Pick a template on the left to get started.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}
