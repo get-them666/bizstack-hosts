@@ -76,6 +76,14 @@ can guide customers step by step.
   form. A customer fills in name, email, phone, and property URL and clicks
   **"Send Me My Free Analysis Report"** to request a rental analysis. A success
   message appears on screen; the lead is saved to the owner's pipeline.
+- **Rental Analysis tool:** when a property address is submitted, the system runs a
+  real, data-backed earnings analysis (public property records + Census/HUD market
+  data) and generates a live report at `/analysis/<id>`. The report shows: a map of the
+  area, the estimated home value, median household income, suggested monthly rent,
+  fair-market rents, an estimated nightly STR rate, and a comparison of annual Airbnb
+  earnings **self-managed** versus **with BizStack co-hosting** (plus the extra
+  earnings our services add). Guests are told their report is ready immediately — you
+  can reassuringly point them to it and to call/text +1 (948) 231-6699.
 - **"Customer Login"** in the header takes hosts/customers to `/login`.
 
 ### Login `/login`

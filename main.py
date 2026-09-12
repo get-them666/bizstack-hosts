@@ -1,4 +1,5 @@
 import os
+import json
 import secrets
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -10,11 +11,23 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from ai_agent import BusinessAIAgent
+from analysis_service import RentalAnalysisService
 from stripe_service import StripeService
 
 db_url = os.getenv("DATABASE_URL", "postgresql://shaun:secret@localhost:5432/bizstack")
 templates = Jinja2Templates(directory="templates")
 stripe_svc = StripeService()
+rental_analysis = RentalAnalysisService()
+
+
+def _money(value):
+    try:
+        return f"${float(value):,.0f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+templates.env.filters["money"] = _money
 
 APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "America/New_York"))
 BOOKING_HOURS = int(os.getenv("BOOKING_HOURS", "1"))
@@ -263,6 +276,8 @@ async def lifecycle(app: FastAPI):
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS zip VARCHAR(10);")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS analysis_json TEXT;")
                 conn.commit()
         print("🚀 Database connectivity and tables validated successfully.")
     except Exception as e:
@@ -326,13 +341,54 @@ async def submit_lead(
     url: str = Form(""),
     db=Depends(get_db)
 ):
+    result = rental_analysis.analyze(url) if url else {"ok": False, "error": "No property address provided."}
+    analysis_json = json.dumps(result)
+    status_value = "analyzed" if result.get("ok") else "new"
+    zip_code = result.get("zip", "")
+
     with db.cursor() as cur:
         cur.execute(
-            "INSERT INTO leads (name, email, phone, listing_url) VALUES (%s, %s, %s, %s) RETURNING id",
-            (name, email, phone, url)
+            "INSERT INTO leads (name, email, phone, listing_url, status, zip, analysis_json) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (name, email, phone, url, status_value, zip_code, analysis_json)
         )
+        lead_id = cur.fetchone()["id"]
         db.commit()
-    return JSONResponse(content={"status": "success"})
+
+    response = {"status": "success", "lead_id": lead_id}
+    if result.get("ok"):
+        response["analysis_ready"] = True
+        response["analysis_url"] = f"/analysis/{lead_id}"
+    else:
+        response["analysis_ready"] = False
+    return JSONResponse(content=response)
+
+@app.get("/analysis/{lead_id}", response_class=HTMLResponse)
+async def view_analysis(lead_id: int, request: Request, db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM leads WHERE id = %s;", (lead_id,))
+        lead = cur.fetchone()
+    if not lead:
+        return templates.TemplateResponse(request=request, name="analysis.html", context={"lead": None, "data": None, "map_url": ""}, status_code=404)
+
+    try:
+        analysis = json.loads(lead["analysis_json"]) if lead.get("analysis_json") else {}
+    except (TypeError, ValueError):
+        analysis = {}
+
+    data = analysis.get("data") if analysis else None
+    map_url = rental_analysis.map_embed_url(lead["listing_url"] or "")
+
+    return templates.TemplateResponse(
+        request=request,
+        name="analysis.html",
+        context={
+            "lead": lead,
+            "data": data,
+            "map_url": map_url,
+            "analysis_ok": bool(analysis.get("ok") and data),
+            "error": analysis.get("error") if not analysis.get("ok") else "",
+        },
+    )
 
 # --- DASHBOARD ---
 

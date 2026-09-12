@@ -21,6 +21,7 @@ FastAPI + PostgreSQL web app for BizStack Hosts — short-term rental turnover c
   - `/payments/success` + `/payments/cancel` confirmation pages
 - **OpenAI AI agent** (`ai_agent.py`) — processes inbound SMS/voice text, falls back gracefully if no API key
 - **AI assistant runs the business** (`bot_knowledge.md`) — the bot knows the company, services, pricing, site navigation, and hospitality/STR industry. Via OpenAI tool calling it can check availability, **create bookings**, generate **Stripe payment links**, look up bookings by phone, register customers, and report business stats. Reply style is tuned to sound like a real human.
+- **Free Rental Revenue Analysis** (`analysis_service.py`) — submitting a property address on the landing page generates a live report at `/analysis/<id>` with a map, home value, income, rents, nightly rate, and a realistic Airbnb earnings comparison (self-managed vs. BizStack co-hosting). Powered by realestateapi.com (set `REALESTATE_API_KEY`; free key at https://www.realestateapi.com).
 
 ## Railway variables
 
@@ -43,6 +44,7 @@ Set these variables on the service:
 - `STRIPE_PUBLISHABLE_KEY` (optional)
 - `STRIPE_WEBHOOK_SECRET` (required for payment confirmation)
 - `APP_BASE_URL=https://your-app.up.railway.app` (used for Checkout success/cancel redirects)
+- `REALESTATE_API_KEY` (free key from https://www.realestateapi.com — powers the rental analysis)
 - `STRIPE_PRICE_TURNOVER`, `STRIPE_PRICE_DEEP`, `STRIPE_PRICE_LINEN`, `STRIPE_PRICE_INSPECTION` (per-service USD prices; defaults 120/200/50/75)
 
 The app creates its required tables automatically at startup and exposes `/health` for Railway health checks.
