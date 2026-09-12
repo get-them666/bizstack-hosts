@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Partners — BizStack Hosts{% endblock %}
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-10">
+    <div>
+        <h1 class="text-3xl font-bold text-slate-900">Bank & Funding Partners</h1>
+        <p class="mt-2 text-slate-600">Connect funding-ready leads (potential hosts looking for capital to furnish/convert their property) with lending partners.</p>
+    </div>
+
+    <div>
+        <h2 class="text-xl font-semibold text-slate-900 mb-4">Add a partner</h2>
+        <form id="partner-form" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm grid sm:grid-cols-2 gap-4">
+            <input name="name" required placeholder="Partner name (e.g. Bank of Example)" class="rounded-xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <select name="kind" class="rounded-xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="bank">Bank</option>
+                <option value="credit_union">Credit union</option>
+                <option value="fintech">Fintech lender</option>
+                <option value="realtor">Realtor/agent</option>
+                <option value="cdfi">CDFI</option>
+            </select>
+            <input name="contact_email" placeholder="Contact email" class="rounded-xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <input name="contact_phone" placeholder="Contact phone" class="rounded-xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <input name="website" placeholder="Website / referral portal URL" class="rounded-xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <input name="notes" placeholder="Notes (products, eligibility, referral steps)" class="rounded-xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <button type="submit" class="sm:col-span-2 inline-flex items-center justify-center px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">Save Partner</button>
+        </form>
+    </div>
+
+    {% if partners %}
+    <div>
+        <h2 class="text-xl font-semibold text-slate-900 mb-3">Active partners</h2>
+        <div class="grid sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {% for p in partners %}
+            <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p class="font-semibold text-slate-900">{{ p.name }}</p>
+                <p class="text-xs text-slate-500 mt-1">{{ p.kind }}{% if p.website %} · <a class="text-indigo-600" href="{{ p.website }}" target="_blank" rel="noopener">site</a>{% endif %}</p>
+                <p class="text-sm text-slate-600 mt-2">{{ p.contact_email or '—' }} {{ p.contact_phone or '' }}</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div>
+        <h2 class="text-xl font-semibold text-slate-900 mb-3">Funding-ready leads</h2>
+        <p class="text-sm text-slate-600 mb-4">Leads who asked about capital. Set their need here so they can be referred to a partner.</p>
+        <div class="rounded-2xl border border-slate-200 bg-white shadow-sm">
+            {% if funding_leads %}
+            <table class="w-full text-sm">
+                <thead class="bg-slate-50 text-slate-500 text-left">
+                    <tr>
+                        <th class="px-4 py-3 font-medium">Lead</th>
+                        <th class="px-4 py-3 font-medium">Contact</th>
+                        <th class="px-4 py-3 font-medium">Status</th>
+                        <th class="px-4 py-3 font-medium">Amount</th>
+                        <th class="px-4 py-3 font-medium">Partner</th>
+                        <th class="px-4 py-3 font-medium"></th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    {% for l in funding_leads %}
+                    <tr>
+                        <td class="px-4 py-3 font-semibold text-slate-800">{{ l.name }}</td>
+                        <td class="px-4 py-3 text-slate-600">{{ l.email }}<br>{{ l.phone or '' }}</td>
+                        <td class="px-4 py-3 text-slate-600">{{ l.status }}</td>
+                        <td class="px-4 py-3 text-slate-800">{% if l.funding_amount_cents %}${{ "%.0f" | format(l.funding_amount_cents / 100) }}{% else %}TBD{% endif %}</td>
+                        <td class="px-4 py-3 text-slate-600">{{ l.partner_name or '—' }}</td>
+                        <td class="px-4 py-3"><a class="text-indigo-600 hover:text-indigo-800 font-semibold" href="/hosts">Manage in pipeline</a></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="p-6 text-sm text-slate-500">No leads flagged for funding yet. Mark a lead "funding needed" from the pipeline or ask Copilot.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+    document.getElementById('partner-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const body = new FormData(e.target);
+        const res = await fetch('/api/partners', { method: 'POST', body });
+        const data = await res.json();
+        if (data.ok) { window.location.reload(); } else { alert(data.error || 'Could not save partner.'); }
+    });
+</script>
+{% endblock %}

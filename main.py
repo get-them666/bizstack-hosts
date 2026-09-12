@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import urllib.parse
 import urllib.request
+from xml.sax.saxutils import escape as xml_escape
 from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 from contextlib import asynccontextmanager
@@ -25,6 +26,7 @@ import channel_sync
 import legal_forms
 import documents_service
 import auth_service
+import training_service
 
 db_url = os.getenv("DATABASE_URL", "postgresql://shaun:secret@localhost:5432/bizstack")
 templates = Jinja2Templates(directory="templates")
@@ -187,12 +189,342 @@ def build_tool_handlers(db, stripe_svc):
             cur.execute("SELECT COUNT(*) FROM leads"); leads = cur.fetchone()["count"]
         return {"ok": True, "hosts": hosts, "customers": customers, "bookings": bookings, "leads": leads}
 
+    def _fmt_dt(value):
+        return value.isoformat() if hasattr(value, "isoformat") else value
+
+    def list_upcoming_schedule(days: int = 7):
+        window = datetime.now(APP_TZ) + timedelta(days=int(days))
+        with db.cursor() as cur:
+            cur.execute("""
+                SELECT e.id, e.customer_name, e.phone, e.service_type, e.start_time, e.end_time,
+                       e.payment_status, e.worker_status, e.amount_cents, w.name AS worker_name
+                FROM calendar_events e LEFT JOIN workers w ON w.id = e.worker_id
+                WHERE e.start_time BETWEEN NOW() AND %s ORDER BY e.start_time ASC LIMIT 100;
+            """, (window,))
+            rows = cur.fetchall()
+        for r in rows:
+            r["start_time"] = _fmt_dt(r["start_time"])
+            r["end_time"] = _fmt_dt(r["end_time"])
+        return {"ok": True, "events": rows}
+
+    def list_customers(search: str = ""):
+        with db.cursor() as cur:
+            if search:
+                cur.execute(
+                    "SELECT * FROM customers WHERE name ILIKE %s OR phone ILIKE %s OR email ILIKE %s ORDER BY created_at DESC LIMIT 50;",
+                    (f"%{search}%", f"%{search}%", f"%{search}%"),
+                )
+            else:
+                cur.execute("SELECT * FROM customers ORDER BY created_at DESC LIMIT 50;")
+            rows = cur.fetchall()
+        return {"ok": True, "customers": rows}
+
+    def list_leads(status: str = ""):
+        with db.cursor() as cur:
+            if status:
+                cur.execute("SELECT * FROM leads WHERE status = %s ORDER BY created_at DESC LIMIT 100;", (status,))
+            else:
+                cur.execute("SELECT * FROM leads ORDER BY created_at DESC LIMIT 100;")
+            rows = cur.fetchall()
+        return {"ok": True, "leads": rows}
+
+    def update_lead_status(lead_id: int, status: str):
+        with db.cursor() as cur:
+            cur.execute("UPDATE leads SET status = %s WHERE id = %s RETURNING id;", (status, lead_id))
+            updated = cur.fetchone()
+            db.commit()
+        if not updated:
+            return {"ok": False, "error": "Lead not found."}
+        return {"ok": True, "lead_id": lead_id, "status": status}
+
+    def add_host(name: str, email: str = "", phone: str = "", property_name: str = ""):
+        try:
+            with db.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO hosts (name, property_name, email, phone) VALUES (%s, %s, NULLIF(%s,''), NULLIF(%s,'')) RETURNING id;",
+                    (name, property_name, email, phone),
+                )
+                host_id = cur.fetchone()["id"]
+                db.commit()
+        except psycopg.errors.UniqueViolation as e:
+            db.rollback()
+            return {"ok": False, "error": f"A host already exists with email '{email}'.", "unique_violation": True}
+        return {"ok": True, "host_id": host_id, "name": name}
+
+    def list_hosts():
+        with db.cursor() as cur:
+            cur.execute("SELECT * FROM hosts ORDER BY created_at DESC LIMIT 100;")
+            rows = cur.fetchall()
+        return {"ok": True, "hosts": rows}
+
+    def add_worker(name: str, phone: str = "", email: str = "", pay_rate_dollars: float = 0.0):
+        pay_cents = int(round(float(pay_rate_dollars or 0) * 100))
+        with db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO workers (name, phone, email, pay_rate_cents) VALUES (%s, NULLIF(%s,''), NULLIF(%s,''), %s) RETURNING id;",
+                (name, phone, email, pay_cents),
+            )
+            worker_id = cur.fetchone()["id"]
+            db.commit()
+        return {"ok": True, "worker_id": worker_id, "name": name, "pay_rate_dollars": pay_rate_dollars}
+
+    def list_workers(active_only: bool = True):
+        with db.cursor() as cur:
+            if active_only:
+                cur.execute("SELECT * FROM workers WHERE is_active = TRUE ORDER BY created_at DESC;")
+            else:
+                cur.execute("SELECT * FROM workers ORDER BY created_at DESC;")
+            rows = cur.fetchall()
+        for r in rows:
+            r["pay_rate_dollars"] = round((r.get("pay_rate_cents") or 0) / 100, 2)
+        return {"ok": True, "workers": rows}
+
+    def update_worker(worker_id: int, name: str = "", phone: str = "", email: str = "", pay_rate_dollars: float = 0.0, is_active: bool = True):
+        fields, values = [], []
+        if name:
+            fields.append("name = %s"); values.append(name)
+        if phone:
+            fields.append("phone = %s"); values.append(phone)
+        if email:
+            fields.append("email = %s"); values.append(email)
+        if pay_rate_dollars:
+            fields.append("pay_rate_cents = %s"); values.append(int(round(float(pay_rate_dollars) * 100)))
+        if not fields:
+            return {"ok": False, "error": "Nothing to update."}
+        fields.append("is_active = %s"); values.append(bool(is_active))
+        values.append(worker_id)
+        with db.cursor() as cur:
+            cur.execute(f"UPDATE workers SET {', '.join(fields)} WHERE id = %s RETURNING id;", values)
+            updated = cur.fetchone()
+            db.commit()
+        if not updated:
+            return {"ok": False, "error": "Worker not found."}
+        return {"ok": True, "worker_id": worker_id}
+
+    def assign_worker_to_job(event_id: int, worker_id: int):
+        with db.cursor() as cur:
+            cur.execute("SELECT pay_rate_cents FROM workers WHERE id = %s;", (worker_id,))
+            w = cur.fetchone()
+            if not w:
+                return {"ok": False, "error": "Worker not found."}
+            cur.execute(
+                "UPDATE calendar_events SET worker_id = %s, worker_pay_cents = %s, worker_status = 'assigned' WHERE id = %s RETURNING id;",
+                (worker_id, w["pay_rate_cents"], event_id),
+            )
+            ev = cur.fetchone()
+            db.commit()
+        if not ev:
+            return {"ok": False, "error": "Job/booking not found."}
+        return {"ok": True, "event_id": event_id, "worker_id": worker_id}
+
+    def list_worker_jobs(worker_id: int, days: int = 7):
+        window = datetime.now(APP_TZ) + timedelta(days=int(days))
+        with db.cursor() as cur:
+            cur.execute("SELECT name FROM workers WHERE id = %s;", (worker_id,))
+            w = cur.fetchone()
+            if not w:
+                return {"ok": False, "error": "Worker not found."}
+            cur.execute("""
+                SELECT id, customer_name, service_type, start_time, end_time, worker_status, job_address
+                FROM calendar_events WHERE worker_id = %s AND start_time BETWEEN NOW() AND %s
+                ORDER BY start_time ASC;
+            """, (worker_id, window))
+            rows = cur.fetchall()
+        for r in rows:
+            r["start_time"] = _fmt_dt(r["start_time"])
+            r["end_time"] = _fmt_dt(r["end_time"])
+        return {"ok": True, "worker": w["name"], "jobs": rows}
+
+    def generate_paycheck(worker_id: int, period_start: str, period_end: str):
+        try:
+            period_start_d = date.fromisoformat(period_start)
+            period_end_d = date.fromisoformat(period_end)
+        except ValueError:
+            return {"ok": False, "error": "Dates must be YYYY-MM-DD."}
+        with db.cursor() as cur:
+            cur.execute("SELECT name FROM workers WHERE id = %s;", (worker_id,))
+            w = cur.fetchone()
+            if not w:
+                return {"ok": False, "error": "Worker not found."}
+            cur.execute("""
+                SELECT COUNT(*) AS job_count, COALESCE(SUM(worker_pay_cents), 0) AS gross_cents
+                FROM calendar_events
+                WHERE worker_id = %s AND worker_status = 'completed'
+                  AND start_time::date BETWEEN %s AND %s;
+            """, (worker_id, period_start_d, period_end_d))
+            totals = cur.fetchone()
+            cur.execute(
+                "INSERT INTO worker_paychecks (worker_id, period_start, period_end, job_count, gross_cents) VALUES (%s, %s, %s, %s, %s) RETURNING id;",
+                (worker_id, period_start_d, period_end_d, totals["job_count"], totals["gross_cents"]),
+            )
+            paycheck_id = cur.fetchone()["id"]
+            cur.execute(
+                "INSERT INTO ledger_entries (tx_type, ref_type, ref_id, description, amount_cents) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (ref_type, ref_id) DO NOTHING;",
+                ("expense", "paycheck", paycheck_id,
+                 f"Worker payroll — {w['name']} ({period_start_d.strftime('%b %d')} – {period_end_d.strftime('%b %d, %Y')})",
+                 totals["gross_cents"]),
+            )
+            db.commit()
+        return {"ok": True, "paycheck_id": paycheck_id, "worker": w["name"],
+                "job_count": totals["job_count"],
+                "gross_dollars": round(totals["gross_cents"] / 100, 2)}
+
+    def list_paychecks(worker_id: int = 0):
+        with db.cursor() as cur:
+            if worker_id:
+                cur.execute("SELECT * FROM worker_paychecks WHERE worker_id = %s ORDER BY created_at DESC;", (worker_id,))
+            else:
+                cur.execute("SELECT * FROM worker_paychecks ORDER BY created_at DESC LIMIT 100;")
+            rows = cur.fetchall()
+        for r in rows:
+            r["gross_dollars"] = round((r.get("gross_cents") or 0) / 100, 2)
+        return {"ok": True, "paychecks": rows}
+
+    def get_accounting_summary(period_days: int = 30):
+        since = datetime.now(APP_TZ) - timedelta(days=int(period_days))
+        with db.cursor() as cur:
+            cur.execute("SELECT COALESCE(SUM(amount_cents) FILTER (WHERE tx_type = 'revenue'), 0) AS revenue, COALESCE(SUM(amount_cents) FILTER (WHERE tx_type = 'expense'), 0) AS expense FROM ledger_entries;")
+            totals = cur.fetchone()
+            cur.execute("SELECT * FROM ledger_entries WHERE created_at >= %s ORDER BY created_at DESC LIMIT 50;", (since,))
+            ledger = cur.fetchall()
+        revenue = float(totals["revenue"] or 0) / 100
+        expense = float(totals["expense"] or 0) / 100
+        return {"ok": True, "revenue_dollars": round(revenue, 2), "expense_dollars": round(expense, 2),
+                "balance_dollars": round(revenue - expense, 2), "recent_ledger": ledger}
+
+    def add_ledger_entry(tx_type: str, description: str, amount_dollars: float):
+        tx = (tx_type or "").strip().lower()
+        if tx not in ("revenue", "expense"):
+            return {"ok": False, "error": "tx_type must be 'revenue' or 'expense'."}
+        amount_cents = int(round(float(amount_dollars) * 100))
+        if amount_cents <= 0:
+            return {"ok": False, "error": "Amount must be positive."}
+        with db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO ledger_entries (tx_type, description, amount_cents) VALUES (%s, %s, %s) RETURNING id;",
+                (tx, description, amount_cents),
+            )
+            entry_id = cur.fetchone()["id"]
+            db.commit()
+        return {"ok": True, "entry_id": entry_id, "tx_type": tx, "amount_dollars": amount_dollars}
+
+    def send_sms_message(to: str, body: str):
+        if not signalwire.is_configured():
+            return {"ok": False, "error": "SignalWire SMS is not configured."}
+        ok = signalwire.send_sms(to, str(body)[:1600])
+        return {"ok": ok, "to": to, "body": body}
+
+    def send_email_message(to: str, subject: str, body: str):
+        cfg = documents_service.smtp_config_from_env()
+        if not documents_service.smtp_configured(cfg):
+            return {"ok": False, "error": "SMTP email is not configured."}
+        try:
+            import asyncio
+            asyncio.run(documents_service.send_email(cfg, to, subject, body))
+            return {"ok": True, "to": to, "subject": subject}
+        except Exception as e:
+            return {"ok": False, "error": f"Email send failed: {e}"}
+
+    def run_site_health_check():
+        results = {}
+        try:
+            with db.cursor() as cur:
+                cur.execute("SELECT 1;")
+                results["database"] = {"ok": True, "checked": _fmt_dt(datetime.now(APP_TZ))}
+        except Exception as e:
+            results["database"] = {"ok": False, "error": str(e)}
+        for key in ("OPENAI_API_KEY", "STRIPE_SECRET_KEY", "SIGNALWIRE_PROJECT_ID", "SIGNALWIRE_API_TOKEN"):
+            results[key] = {"ok": bool(os.getenv(key))}
+        smtp = documents_service.smtp_config_from_env()
+        results["SMTP_EMAIL"] = {"ok": documents_service.smtp_configured(smtp), "hint": "Check SMTP_HOST/SMTP_PORT/SMTP_PASS if this fails."}
+        ok_count = sum(1 for v in results.values() if isinstance(v, bool) and v or isinstance(v, dict) and v.get("ok"))
+        return {"ok": True, "healthy": ok_count == len(results), "checks": results}
+
+    def generate_training_deck(kind: str):
+        try:
+            data = training_service.build_deck(kind)
+        except ImportError:
+            return {"ok": False, "error": "python-pptx not installed. Add it to requirements and redeploy."}
+        label = "Worker Orientation" if kind == "worker" else "Host & Lead Onboarding"
+        with db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO generated_documents (title, category, file_name, file_type, file_data) VALUES (%s, %s, %s, %s, %s) RETURNING id;",
+                (label, "training", f"{kind}-orientation.pptx", "pptx", data),
+            )
+            doc_id = cur.fetchone()["id"]
+            db.commit()
+        return {"ok": True, "doc_id": doc_id, "title": label, "download_url": f"/docs/download/{doc_id}"}
+
+    def get_rental_analysis(address: str):
+        if not rental_analysis.is_configured():
+            return {"ok": False, "error": "Rental analysis API not configured."}
+        try:
+            result = rental_analysis.analyze(address)
+            if "error" in result:
+                return {"ok": False, "error": result["error"]}
+            summary = {
+                "address": address,
+                "home_value": result.get("home_value"),
+                "suggested_monthly_rent": result.get("suggested_rent"),
+                "fair_market_rent": result.get("fmr"),
+                "airbnb_estimate": result.get("airbnb_estimate"),
+                "analysis_link": result.get("analysis_link") or "",
+            }
+            return {"ok": True, "analysis": summary}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def list_documents(category: str = ""):
+        with db.cursor() as cur:
+            if category:
+                cur.execute("SELECT id, title, category, file_name, file_type, created_at FROM generated_documents WHERE category = %s ORDER BY created_at DESC LIMIT 100;", (category,))
+            else:
+                cur.execute("SELECT id, title, category, file_name, file_type, created_at FROM generated_documents ORDER BY created_at DESC LIMIT 100;")
+            rows = cur.fetchall()
+        for r in rows:
+            r["created_at"] = _fmt_dt(r["created_at"])
+        return {"ok": True, "documents": rows}
+
+    def list_funding_ready_leads():
+        with db.cursor() as cur:
+            cur.execute("""
+                SELECT l.*, p.name AS partner_name FROM leads l
+                LEFT JOIN partners p ON p.id = l.partner_id
+                WHERE l.funding_needed = TRUE ORDER BY l.created_at DESC;
+            """)
+            rows = cur.fetchall()
+        for r in rows:
+            r["funding_amount_dollars"] = round((r.get("funding_amount_cents") or 0) / 100, 2)
+        return {"ok": True, "leads": rows}
+
     return {
         "check_booking_availability": check_booking_availability,
         "create_booking": create_booking,
         "lookup_bookings": lookup_bookings,
         "register_customer": register_customer,
         "get_business_summary": get_business_summary,
+        "list_upcoming_schedule": list_upcoming_schedule,
+        "list_customers": list_customers,
+        "list_leads": list_leads,
+        "update_lead_status": update_lead_status,
+        "add_host": add_host,
+        "list_hosts": list_hosts,
+        "add_worker": add_worker,
+        "list_workers": list_workers,
+        "update_worker": update_worker,
+        "assign_worker_to_job": assign_worker_to_job,
+        "list_worker_jobs": list_worker_jobs,
+        "generate_paycheck": generate_paycheck,
+        "list_paychecks": list_paychecks,
+        "get_accounting_summary": get_accounting_summary,
+        "add_ledger_entry": add_ledger_entry,
+        "send_sms_message": send_sms_message,
+        "send_email_message": send_email_message,
+        "run_site_health_check": run_site_health_check,
+        "generate_training_deck": generate_training_deck,
+        "get_rental_analysis": get_rental_analysis,
+        "list_documents": list_documents,
+        "list_funding_ready_leads": list_funding_ready_leads,
     }
 
 @asynccontextmanager
@@ -443,6 +775,36 @@ async def lifecycle(app: FastAPI):
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS funding_needed BOOLEAN DEFAULT FALSE;")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS funding_amount_cents BIGINT;")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS funding_use VARCHAR(500);")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS partner_id INTEGER;")
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS partners (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    kind VARCHAR(50) DEFAULT 'bank',
+                    contact_email VARCHAR(255),
+                    contact_phone VARCHAR(50),
+                    website VARCHAR(500),
+                    notes TEXT,
+                    active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS worker_quiz_results (
+                    id SERIAL PRIMARY KEY,
+                    worker_id INTEGER,
+                    worker_name VARCHAR(255) NOT NULL,
+                    email VARCHAR(255),
+                    score INTEGER NOT NULL,
+                    total INTEGER NOT NULL,
+                    passed BOOLEAN NOT NULL,
+                    answers_json TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
                 conn.commit()
         print("🚀 Database connectivity and tables validated successfully.")
     except Exception as e:
@@ -529,6 +891,10 @@ async def robots_txt(request: Request):
         "Disallow: /crew\n"
         "Disallow: /comms\n"
         "Disallow: /settings\n"
+        "Disallow: /copilot\n"
+        "Disallow: /training\n"
+        "Disallow: /partners\n"
+        "Disallow: /accounting\n"
         "Disallow: /worker\n"
         "\n"
         f"Sitemap: {base}/sitemap.xml\n"
@@ -755,17 +1121,20 @@ async def submit_lead(
     email: str = Form(...),
     phone: str = Form(...),
     url: str = Form(""),
+    funding_needed: str = Form("off"),
+    funding_use: str = Form(""),
     db=Depends(get_db)
 ):
     result = rental_analysis.analyze(url) if url else {"ok": False, "error": "No property address provided."}
     analysis_json = json.dumps(result)
     status_value = "analyzed" if result.get("ok") else "new"
     zip_code = result.get("zip", "")
+    needed = funding_needed.lower() in ("on", "true", "1", "yes")
 
     with db.cursor() as cur:
         cur.execute(
-            "INSERT INTO leads (name, email, phone, listing_url, status, zip, analysis_json) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
-            (name, email, phone, url, status_value, zip_code, analysis_json)
+            "INSERT INTO leads (name, email, phone, listing_url, status, zip, analysis_json, funding_needed, funding_use) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NULLIF(%s,'')) RETURNING id",
+            (name, email, phone, url, status_value, zip_code, analysis_json, needed, funding_use)
         )
         lead_id = cur.fetchone()["id"]
         db.commit()
@@ -2714,7 +3083,7 @@ async def inbound_sms_webhook(
         db.commit()
 
     sxml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
-<Response><Message to="{From}">{ai_reply}</Message></Response>"""
+<Response><Message to="{From}">{xml_escape(ai_reply)}</Message></Response>"""
     return Response(content=sxml_payload, media_type="application/xml")
 
 # --- SIGNALWIRE VOICE WEBHOOK ---
@@ -2773,3 +3142,153 @@ async def voice_transcribe(request: Request, db=Depends(get_db)):
             db.commit()
 
     return Response(content="", status_code=204)
+
+# --- Copilot (owner AI operator) ---
+
+@app.get("/copilot", response_class=HTMLResponse)
+async def copilot_page(request: Request, db=Depends(get_db)):
+    is_authed, user_email = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    has_key = bool(os.getenv("OPENAI_API_KEY"))
+    return templates.TemplateResponse(request=request, name="copilot.html", context={
+        "user": {"email": user_email},
+        "has_key": has_key,
+    })
+
+@app.post("/api/copilot")
+async def copilot_chat(request: Request, message: str = Form(...), db=Depends(get_db)):
+    require_admin(request)
+    msg = (message or "").strip()
+    if not msg:
+        return JSONResponse({"reply": "Send me a message."})
+    if not os.getenv("OPENAI_API_KEY"):
+        return JSONResponse({"reply": "OPENAI_API_KEY is not configured yet, so I can't respond."})
+    try:
+        agent = BusinessAIAgent(tool_handlers=build_tool_handlers(db, stripe_svc), subset="copilot")
+        reply = agent.process_inbound_text(msg)
+    except Exception as e:
+        print(f"⚠️ Copilot error: {e}")
+        reply = "Sorry — something tripped me up on that one. Try again, or use the dashboard directly."
+    return JSONResponse({"reply": reply or "No reply."})
+
+# --- Training & onboarding ---
+
+@app.get("/training", response_class=HTMLResponse)
+async def training_page(request: Request, db=Depends(get_db)):
+    is_authed, user_email = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    with db.cursor() as cur:
+        cur.execute("SELECT id, title, category, file_name, file_type, created_at FROM generated_documents WHERE category = 'training' ORDER BY created_at DESC LIMIT 10;")
+        decks = cur.fetchall()
+        cur.execute("SELECT * FROM worker_quiz_results ORDER BY created_at DESC LIMIT 50;")
+        results = cur.fetchall()
+    return templates.TemplateResponse(request=request, name="training.html", context={
+        "user": {"email": user_email},
+        "decks": decks,
+        "results": results,
+        "questions": training_service.QUIZ,
+    })
+
+@app.post("/api/training/deck")
+async def training_deck_build(request: Request, kind: str = Form("worker"), db=Depends(get_db)):
+    require_admin(request)
+    try:
+        data = training_service.build_deck(kind)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"Could not build deck: {e}"})
+    label = "Worker Orientation" if kind == "worker" else "Host & Lead Onboarding"
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO generated_documents (title, category, file_name, file_type, file_data) VALUES (%s, %s, %s, %s, %s) RETURNING id;",
+            (label, "training", f"{kind}-orientation.pptx", "pptx", data),
+        )
+        doc_id = cur.fetchone()["id"]
+        db.commit()
+    return JSONResponse({"ok": True, "doc_id": doc_id, "download_url": f"/docs/download/{doc_id}"})
+
+@app.post("/api/training/quiz")
+async def training_quiz_submit(request: Request, worker_name: str = Form(...), email: str = Form(""), answers: str = Form(...), db=Depends(get_db)):
+    try:
+        parsed = json.loads(answers)
+        if not isinstance(parsed, list) or len(parsed) != len(training_service.QUIZ):
+            raise ValueError("expected a list of answers")
+        parsed = [int(a) for a in parsed]
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Answers came through malformed."})
+    grade = training_service.grade_quiz(parsed)
+    actor = current_actor(request)
+    worker_id = actor.get("id") if actor and actor.get("role") == "worker" else None
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO worker_quiz_results (worker_id, worker_name, email, score, total, passed, answers_json) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id;",
+            (worker_id, worker_name, email, grade["correct"], grade["total"], grade["passed"], answers),
+        )
+        result_id = cur.fetchone()["id"]
+        db.commit()
+    return JSONResponse({"ok": True, **grade, "result_id": result_id})
+
+# --- Bank / funding partners ---
+
+@app.get("/partners", response_class=HTMLResponse)
+async def partners_page(request: Request, db=Depends(get_db)):
+    is_authed, user_email = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM partners ORDER BY created_at DESC;")
+        partners = cur.fetchall()
+        cur.execute("""
+            SELECT l.*, p.name AS partner_name FROM leads l
+            LEFT JOIN partners p ON p.id = l.partner_id
+            WHERE l.funding_needed = TRUE ORDER BY l.created_at DESC;
+        """)
+        funding_leads = cur.fetchall()
+    return templates.TemplateResponse(request=request, name="partners.html", context={
+        "user": {"email": user_email},
+        "partners": partners,
+        "funding_leads": funding_leads,
+    })
+
+@app.post("/api/partners")
+async def add_partner(request: Request, name: str = Form(...), kind: str = Form("bank"), contact_email: str = Form(""), contact_phone: str = Form(""), website: str = Form(""), notes: str = Form(""), db=Depends(get_db)):
+    require_admin(request)
+    if not name.strip():
+        return JSONResponse({"ok": False, "error": "Partner name required."})
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO partners (name, kind, contact_email, contact_phone, website, notes) VALUES (%s, %s, NULLIF(%s,''), NULLIF(%s,''), NULLIF(%s,''), NULLIF(%s,'')) RETURNING id;",
+                    (name, kind, contact_email, contact_phone, website, notes))
+        partner_id = cur.fetchone()["id"]
+        db.commit()
+    return JSONResponse({"ok": True, "partner_id": partner_id})
+
+@app.post("/api/leads/{lead_id}/funding")
+async def set_lead_funding(lead_id: int, request: Request, funding_needed: str = Form("on"), funding_amount: str = Form(""), funding_use: str = Form(""), partner_id: str = Form(""), db=Depends(get_db)):
+    require_admin(request)
+    needed = funding_needed.lower() in ("on", "true", "1", "yes")
+    amt_cents = int(round(float(funding_amount or 0) * 100)) if (funding_amount or "").strip() else None
+    pid = int(partner_id) if (partner_id or "").strip().isdigit() else None
+    with db.cursor() as cur:
+        cur.execute(
+            "UPDATE leads SET funding_needed = %s, funding_amount_cents = %s, funding_use = NULLIF(%s,''), partner_id = %s WHERE id = %s RETURNING id;",
+            (needed, amt_cents, funding_use, pid, lead_id),
+        )
+        updated = cur.fetchone()
+        db.commit()
+    if not updated:
+        return JSONResponse({"ok": False, "error": "Lead not found."})
+    return JSONResponse({"ok": True, "lead_id": lead_id, "funding_needed": needed})
+
+# --- Legal ---
+
+@app.get("/legal", response_class=HTMLResponse)
+async def legal_page(request: Request):
+    site = os.getenv("APP_BASE_URL", "").rstrip("/") or str(request.base_url).rstrip("/")
+    return templates.TemplateResponse(request=request, name="legal.html", context={
+        "site": site,
+        "site_name": "BizStack Hosts",
+        "phone": "+1 (757) 846-9275",
+        "email": "hello@bizstackperks.com",
+        "bot_email": "hello@bizstackperks.com",
+    })

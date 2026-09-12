@@ -393,6 +393,16 @@
                             <label for="form-url" class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Property Address or Listing URL <span class="text-slate-400 font-normal">(Optional)</span></label>
                             <input type="text" id="form-url" class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all" placeholder="://airbnb.com">
                         </div>
+                        <div class="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+                            <label class="flex items-start gap-3 text-sm text-slate-800 cursor-pointer">
+                                <input type="checkbox" id="form-funding" class="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+                                <span>
+                                    <span class="font-semibold">I may need financing</span>
+                                    <span class="block text-xs text-slate-500 mt-0.5">Capital to furnish, stage, or convert my property into an STR. We can connect you with bank/financing partners.</span>
+                                </span>
+                            </label>
+                            <input type="text" id="form-funding-use" placeholder="What's the capital for? (furnish, staging, renovation…)" class="hidden mt-3 w-full px-4 py-3 rounded-xl bg-white border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        </div>
                         <button type="submit" id="form-submit-btn" class="w-full py-4 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-xl transition-all shadow-md shadow-indigo-100 uppercase tracking-wider mt-2">
                             Send Me My Free Analysis Report
                         </button>
@@ -458,7 +468,7 @@
                 <span class="text-white font-bold">BizStack Hosts</span>
                 <span class="text-slate-500">| Sales Automation & Operational Ground Layers</span>
             </div>
-            <p class="text-xs text-slate-500">&copy; 2026 BizStack Hosts. Secure Stripe payments integrated. All rights reserved.</p>
+            <p class="text-xs text-slate-500">&copy; 2026 BizStack Hosts. Secure Stripe payments integrated. All rights reserved. <a href="/legal" class="text-slate-400 hover:text-slate-200">Terms · Disclaimer · Privacy</a></p>
             <a href="tel:+17578469275" class="text-sm font-semibold text-slate-300 hover:text-white transition-colors">☎ Call or Text the AI Assistant: +1 (757) 846-9275</a>
         </div>
     </footer>
@@ -473,6 +483,15 @@
             mobileMenuBtn.addEventListener('click', function() {
                 mobileMenu.classList.toggle('hidden');
             });
+
+            // Funding checkbox toggles the "what's the capital for" field
+            const fundingCheck = document.getElementById('form-funding');
+            const fundingUse = document.getElementById('form-funding-use');
+            if (fundingCheck) {
+                fundingCheck.addEventListener('change', function() {
+                    fundingUse.classList.toggle('hidden', !fundingCheck.checked);
+                });
+            }
 
             // Accordion Toggle Matrix
             const faqToggles = document.querySelectorAll('.faq-toggle');
@@ -508,6 +527,9 @@
                 urlEncodedData.append('email', document.getElementById('form-email').value);
                 urlEncodedData.append('phone', document.getElementById('form-phone').value);
                 urlEncodedData.append('url', document.getElementById('form-url').value);
+                const fundingCheck = document.getElementById('form-funding');
+                urlEncodedData.append('funding_needed', fundingCheck && fundingCheck.checked ? 'on' : 'off');
+                urlEncodedData.append('funding_use', (document.getElementById('form-funding-use').value || ''));
 
                 fetch('/submit-lead', {
                     method: 'POST',

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block meta %}
+<meta name="description" content="Terms of service, disclaimer and privacy notice for BizStack Hosts.">
+<meta name="robots" content="index, follow">
+{% endblock %}
+{% block title %}Terms, Disclaimer & Privacy — BizStack Hosts{% endblock %}
+{% block content %}
+<div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <h1 class="text-3xl font-bold text-slate-900">Terms, Disclaimer & Privacy</h1>
+    <p class="mt-2 text-sm text-slate-500">Last updated: September 12, 2026 · Effective for the {{ site }} website and all BizStack Hosts services.</p>
+
+    <section class="mt-10 space-y-6 text-sm leading-relaxed text-slate-700">
+        <div>
+            <h2 class="text-lg font-semibold text-slate-900">1. Disclaimer of liability</h2>
+            <p class="mt-2">The information, reports, earnings projections, rental analyses, and educational materials provided on this website and by BizStack Hosts ("the Company") are provided "as is" for general informational purposes only and do not constitute financial, investment, legal, real estate, tax, or other professional advice.</p>
+            <p class="mt-2">Rental earnings projections and market estimates are estimates based on third-party public data and historical patterns. Actual results vary significantly by market, season, property condition, platform policies, and operations. Neither the Company nor its owners, agents, workers, or contractors make any warranty, express or implied, as to accuracy, completeness, or fitness for a particular purpose, and are not liable for any loss or damage arising from reliance on them.</p>
+            <p class="mt-2">Cleaning and co-hosting services are performed by trained independent contractors. Reports, photographs, and verification logs are provided as a best-effort record and are not a guarantee of any specific outcome. Guests and hosts assume all risk in their stays and listings.</p>
+        </div>
+
+        <div>
+            <h2 class="text-lg font-semibold text-slate-900">2. Services & payment</h2>
+            <p class="mt-2">Cleaning and co-hosting services are booked through this website, by phone, or by text. Guests are charged for scheduled services at booking through a secure third-party payment processor (Stripe). Hosts are not charged out of pocket for standard cleaning services. Unpaid or cancelled bookings may be re-queued or refunded at the Company's discretion.</p>
+        </div>
+
+        <div>
+            <h2 class="text-lg font-semibold text-slate-900">3. Acceptable use</h2>
+            <p class="mt-2">You agree not to misuse the website, attempt unauthorized access, interfere with its operation, submit false information, or use any automated means to extract data. We may suspend access for violations. Guests must respect host house rules and the properties they visit; behavior that damages property or violates rules is the guest's responsibility.</p>
+        </div>
+
+        <div>
+            <h2 class="text-lg font-semibold text-slate-900">4. Privacy & data</h2>
+            <p class="mt-2">We collect only the information you provide (name, email, phone, property details) and transaction records needed to deliver services. Data is stored securely, used to operate your account and improve service, and shared only with parties strictly necessary to fulfill bookings (for example, payment processing and SMS/voice delivery), service providers we use to run the platform, or as required by law. We do not sell your personal information.</p>
+            <p class="mt-2">Messages sent to our assistant number may be transcribed for quality and service purposes. Contact {{ bot_email }} to access, correct, or request deletion of your data.</p>
+        </div>
+
+        <div>
+            <h2 class="text-lg font-semibold text-slate-900">5. No fiduciary or financial-advice relationship</h2>
+            <p class="mt-2">Financing and partnership options presented on this site are informational introductions only. Any loan, lease, or financing product is between you and the lender. We are not a bank, broker, or lender, do not arrange credit, and receive no assurance of approval. You should review all loan terms directly with the financial institution and a qualified professional.</p>
+        </div>
+
+        <div>
+            <h2 class="text-lg font-semibold text-slate-900">6. Intellectual property</h2>
+            <p class="mt-2">All branding, content, documents, decks, and software on this site are owned by BizStack Hosts and may not be reproduced, resold, or used to compete with the Company without written permission.</p>
+        </div>
+
+        <div>
+            <h2 class="text-lg font-semibold text-slate-900">7. Changes & contact</h2>
+            <p class="mt-2">We may update this notice at any time; the "last updated" date above reflects the current version. Questions about these terms can be sent to {{ email }} or by calling {{ phone }}.</p>
+        </div>
+    </section>
+
+    <p class="mt-10 text-xs text-slate-400">This page is provided to reduce business risk. For full protection of a specific business, have this reviewed by an attorney licensed in your jurisdiction.</p>
+</div>
+{% endblock %}

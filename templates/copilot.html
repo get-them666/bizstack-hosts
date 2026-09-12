@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Copilot — BizStack Hosts{% endblock %}
+{% block content %}
+<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-slate-900">Copilot</h1>
+        <p class="mt-2 text-slate-600">Your AI operator. Ask it to add clients, schedule jobs, run payroll, review accounting, send texts/emails, build training decks, run an analysis, or check site health. Only you can reach this.</p>
+    </div>
+
+    {% if not has_key %}
+    <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 mb-6">
+        <strong>OPENAI_API_KEY</strong> is not configured, so Copilot can't reply yet. Set it in environment variables and redeploy.
+    </div>
+    {% endif %}
+
+    <div id="chat" class="rounded-2xl border border-slate-200 bg-white shadow-sm p-5 space-y-4" style="min-height: 240px; max-height: 480px; overflow-y: auto;">
+        <div class="text-sm text-slate-500">Example: "Add a host named Maria, repaint the schedule for the weekend, and show me the accounting balance."</div>
+    </div>
+
+    <form id="copilot-form" class="mt-4 flex gap-3">
+        <textarea id="copilot-input" rows="2" required placeholder="Tell Copilot what to do…" class="flex-1 rounded-xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+        <button type="submit" class="shrink-0 inline-flex items-center justify-center px-5 py-3 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-sm shadow-indigo-200">Send</button>
+    </form>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+    const chat = document.getElementById('chat');
+    const form = document.getElementById('copilot-form');
+    const input = document.getElementById('copilot-input');
+
+    function addMsg(role, text) {
+        const div = document.createElement('div');
+        div.className = 'rounded-xl px-4 py-3 text-sm whitespace-pre-wrap ' + (role === 'user'
+            ? 'bg-indigo-600 text-white self-end ml-12'
+            : 'bg-slate-100 text-slate-800 mr-12');
+        div.textContent = text;
+        chat.appendChild(div);
+        chat.scrollTop = chat.scrollHeight;
+    }
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const msg = input.value.trim();
+        if (!msg) return;
+        addMsg('user', msg);
+        input.value = '';
+        const thinking = document.createElement('div');
+        thinking.className = 'text-xs text-slate-400 italic';
+        thinking.textContent = '…';
+        chat.appendChild(thinking);
+        chat.scrollTop = chat.scrollHeight;
+        try {
+            const body = new FormData();
+            body.append('message', msg);
+            const res = await fetch('/api/copilot', { method: 'POST', body });
+            const data = await res.json();
+            thinking.textContent = data.reply || '(no reply)';
+        } catch (err) {
+            thinking.textContent = 'Something went wrong. Try again.';
+        }
+        chat.scrollTop = chat.scrollHeight;
+    });
+</script>
+{% endblock %}
