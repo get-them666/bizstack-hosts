@@ -290,6 +290,22 @@ def _slides_content(kind: str) -> list[tuple[str, list[str]]]:
     ]
 
 
+def deck_slides(kind: str) -> list[dict]:
+    """Deck slides as {title, bullets, voice} — voice is the bot's narration text."""
+    parsed = "host" if kind != "worker" else "worker"
+    phrases = {
+        "Welcome to BizStack Hosts!": "Welcome to BizStack Hosts.",
+        "Welcome to BizStack Hosts": "Welcome to BizStack Hosts.",
+        "About Our Company": "About our company.",
+    }
+    out = []
+    for title, bullets in _slides_content(parsed):
+        voice = phrases.get(title, f"Next up — {title}. ") + " "
+        voice += " ".join(b for b in bullets if b)
+        out.append({"title": title, "bullets": bullets, "voice": voice})
+    return out
+
+
 def build_deck(kind: str) -> bytes:
     """Build a powerpoint deck. kind: 'worker' or 'host'. Returns .pptx bytes."""
     from pptx import Presentation

@@ -3268,6 +3268,46 @@ async def training_deck_build(request: Request, kind: str = Form("worker"), db=D
         db.commit()
     return JSONResponse({"ok": True, "doc_id": doc_id, "download_url": f"/docs/download/{doc_id}"})
 
+@app.get("/present/{kind}")
+async def present_deck(kind: str, request: Request):
+    if kind not in ("worker", "host"):
+        raise HTTPException(status_code=404, detail="Deck not found")
+    slides = training_service.deck_slides(kind)
+    return templates.TemplateResponse(request, "narrated_deck.html", {
+        "kind": kind,
+        "slides": slides,
+        "deck_name": "New Worker Orientation" if kind == "worker" else "Host & Lead Onboarding",
+    })
+
+@app.get("/present/{kind}/audio/{idx}.mp3")
+async def present_deck_audio(kind: str, idx: int):
+    if kind not in ("worker", "host"):
+        raise HTTPException(status_code=404, detail="Deck not found")
+    slides = training_service.deck_slides(kind)
+    if idx < 0 or idx >= len(slides):
+        raise HTTPException(status_code=404, detail="Slide not found")
+    static_dir = Path(__file__).parent / "static" / "present" / kind
+    static_dir.mkdir(parents=True, exist_ok=True)
+    out_path = static_dir / f"{idx}.mp3"
+    if not out_path.exists() or out_path.stat().st_size == 0:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=503, detail="TTS not configured")
+        try:
+            from openai import OpenAI
+            text = slides[idx]["voice"]
+            client = OpenAI(api_key=api_key)
+            resp = client.audio.speech.create(
+                model="gpt-4o-mini-tts",
+                voice="onyx",
+                input=text,
+            )
+            out_path.write_bytes(resp.content)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"TTS failed: {e}")
+    return Response(content=out_path.read_bytes(), media_type="audio/mpeg",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
 @app.post("/api/training/quiz")
 async def training_quiz_submit(request: Request, worker_name: str = Form(...), email: str = Form(""), answers: str = Form(...), db=Depends(get_db)):
     try:
@@ -3288,6 +3328,71 @@ async def training_quiz_submit(request: Request, worker_name: str = Form(...), e
         result_id = cur.fetchone()["id"]
         db.commit()
     return JSONResponse({"ok": True, **grade, "result_id": result_id})
+
+# --- Narrated deck presentations (bot presents the PowerPoint) ---
+
+@app.get("/present/{kind}", response_class=HTMLResponse)
+async def present_deck(request: Request, kind: str):
+    slides = training_service.deck_slides(kind)
+    if not slides:
+        return RedirectResponse(url="/training", status_code=status.HTTP_303_SEE_OTHER)
+    label = "Worker Orientation" if kind == "worker" else "Host & Lead Onboarding"
+    return templates.TemplateResponse(request=request, name="narrated_deck.html", context={
+        "kind": kind,
+        "label": label,
+        "slides": slides,
+        "decks_json": json.dumps([
+            {"title": s["title"], "bullets": s["bullets"], "caption": s.get("caption", "")}
+            for s in slides
+        ]),
+    })
+
+@app.post("/api/present/{kind}/reset")
+async def present_reset_audio(kind: str):
+    import shutil
+    cache_dir = Path("static/present") / kind
+    if cache_dir.exists():
+        shutil.rmtree(cache_dir)
+    return JSONResponse({"ok": True})
+
+@app.get("/present/{kind}/audio/{idx}.mp3")
+async def present_slide_audio(kind: str, idx: int):
+    slides = training_service.deck_slides(kind)
+    if idx < 0 or idx >= len(slides):
+        raise HTTPException(status_code=404, detail="Slide not found")
+    cache_dir = Path("static/present") / kind
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = cache_dir / f"{idx}.mp3"
+    if not path.exists():
+        from openai import OpenAI
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=503, detail="OPENAI_API_KEY not configured")
+        slide = slides[idx]
+        title = slide["title"]
+        bullets = slide["bullets"]
+        bullets_txt = " ".join(f"{i}. {b}" for i, b in enumerate(bullets, 1)) if bullets else ""
+        script = (
+            f"Alright, here is slide {idx + 1} of {len(slides)}: {title}. "
+            + (f"{bullets_txt}. " if bullets_txt else " ")
+            + ("That's it for this slide. " if idx < len(slides) - 1 else "That's the whole deck, great job!")
+        )
+        client = OpenAI(api_key=api_key)
+        try:
+            resp = client.audio.speech.create(
+                model="gpt-4o-mini-tts",
+                voice="onyx",
+                input=script,
+                instructions="Speak like a warm, friendly training presenter for cleaners: clear, upbeat, unhurried. Read bullet points naturally, don't read numbers robotically.",
+            )
+            path.write_bytes(resp.content)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"TTS failed: {e}")
+    return Response(
+        content=path.read_bytes(),
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 # --- Bank / funding partners ---
 
