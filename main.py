@@ -1,6 +1,7 @@
 import os
 import secrets
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from contextlib import asynccontextmanager
 import psycopg
 from psycopg.rows import dict_row
@@ -13,8 +14,160 @@ from stripe_service import StripeService
 
 db_url = os.getenv("DATABASE_URL", "postgresql://shaun:secret@localhost:5432/bizstack")
 templates = Jinja2Templates(directory="templates")
-ai_agent = BusinessAIAgent()
 stripe_svc = StripeService()
+
+APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "America/New_York"))
+BOOKING_HOURS = int(os.getenv("BOOKING_HOURS", "1"))
+
+
+def parse_booking_time(raw: str) -> datetime:
+    raw = (raw or "").strip().replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(raw)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=APP_TZ)
+    return parsed.astimezone(APP_TZ)
+
+
+def build_tool_handlers(db, stripe_svc):
+    """DB/Stripe tool handlers that let the AI agent run the business end-to-end."""
+
+    def check_booking_availability(start_time: str):
+        try:
+            requested = parse_booking_time(start_time)
+        except (ValueError, TypeError):
+            return {"ok": False, "error": "Could not parse the date/time. Ask the guest for a specific date and time (e.g. Friday at 2pm)."}
+
+        window_end = requested + timedelta(hours=BOOKING_HOURS)
+        conflict_query = "SELECT COUNT(*) FROM calendar_events WHERE start_time < %s AND end_time > %s;"
+        with db.cursor() as cur:
+            cur.execute(conflict_query, (window_end, requested))
+            conflict = cur.fetchone()["count"] > 0
+
+        open_slots = []
+        for offset in (-2, -1, 1, 2):
+            cand = requested + timedelta(hours=offset)
+            cand_end = cand + timedelta(hours=BOOKING_HOURS)
+            cur.execute(conflict_query, (cand_end, cand))
+            if cur.fetchone()["count"] == 0:
+                open_slots.append(cand.isoformat())
+
+        if conflict:
+            return {
+                "ok": True,
+                "available": False,
+                "requested": requested.isoformat(),
+                "message": f"{requested:%A, %B %-d at %-I:%M %p} is already booked.",
+                "nearest_open_slots": open_slots,
+            }
+        return {
+            "ok": True,
+            "available": True,
+            "requested": requested.isoformat(),
+            "message": f"{requested:%A, %B %-d at %-I:%M %p} is open.",
+            "nearest_open_slots": open_slots,
+        }
+
+    def create_booking(customer_name: str, phone: str, service_type: str, start_time: str):
+        if not all([customer_name, phone, service_type, start_time]):
+            return {"ok": False, "error": "Missing booking details. Need name, phone, service, and start time."}
+        try:
+            requested = parse_booking_time(start_time)
+        except (ValueError, TypeError):
+            return {"ok": False, "error": "Could not parse the start time. Confirm the exact date and time with the guest."}
+        parsed_end = requested + timedelta(hours=BOOKING_HOURS)
+
+        with db.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM calendar_events WHERE start_time < %s AND end_time > %s;",
+                (parsed_end, requested),
+            )
+            if cur.fetchone()["count"] > 0:
+                return {
+                    "ok": False,
+                    "available": False,
+                    "message": f"{requested:%A, %B %-d at %-I:%M %p} conflicts with an existing booking.",
+                }
+            cur.execute(
+                "INSERT INTO calendar_events (customer_name, phone, start_time, end_time, service_type) VALUES (%s, %s, %s, %s, %s) RETURNING id;",
+                (customer_name, phone, requested, parsed_end, service_type),
+            )
+            event_id = cur.fetchone()["id"]
+            amount_cents = stripe_svc.get_price(service_type)
+            cur.execute("UPDATE calendar_events SET amount_cents = %s WHERE id = %s;", (amount_cents, event_id))
+            db.commit()
+
+        payment_url = ""
+        stripe_error = ""
+        try:
+            payment_url = stripe_svc.create_checkout_session(
+                event_id=event_id,
+                customer_name=customer_name,
+                customer_email="",
+                service_type=service_type,
+                start_time=requested,
+            )
+            session_id = None
+            if "session_id=" in payment_url:
+                session_id = payment_url.split("session_id=")[-1].split("&")[0]
+            if session_id:
+                with db.cursor() as cur:
+                    cur.execute(
+                        "UPDATE calendar_events SET stripe_session_id = %s WHERE id = %s;",
+                        (session_id, event_id),
+                    )
+                    db.commit()
+        except Exception as e:
+            print(f"⚠️ Stripe checkout creation skipped: {e}")
+            stripe_error = str(e)
+
+        return {
+            "ok": True,
+            "booking_id": event_id,
+            "customer_name": customer_name,
+            "service_type": service_type,
+            "start_time": requested.isoformat(),
+            "price_usd": f"{amount_cents / 100:.2f}",
+            "payment_url": payment_url,
+            "stripe_error": stripe_error or None,
+        }
+
+    def lookup_bookings(phone: str):
+        with db.cursor() as cur:
+            cur.execute(
+                "SELECT id, customer_name, service_type, start_time, end_time, payment_status, amount_cents FROM calendar_events WHERE phone = %s ORDER BY start_time DESC LIMIT 10;",
+                (phone,),
+            )
+            rows = cur.fetchall()
+            for row in rows:
+                row["start_time"] = row["start_time"].isoformat()
+                row["end_time"] = row["end_time"].isoformat()
+        return {"ok": True, "phone": phone, "bookings": rows}
+
+    def register_customer(name: str, email: str = "", phone: str = ""):
+        with db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO customers (name, email, phone, source) VALUES (%s, %s, %s, 'ai-assistant') RETURNING id;",
+                (name, email, phone),
+            )
+            customer_id = cur.fetchone()["id"]
+            db.commit()
+        return {"ok": True, "customer_id": customer_id}
+
+    def get_business_summary():
+        with db.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM hosts"); hosts = cur.fetchone()["count"]
+            cur.execute("SELECT COUNT(*) FROM customers"); customers = cur.fetchone()["count"]
+            cur.execute("SELECT COUNT(*) FROM calendar_events"); bookings = cur.fetchone()["count"]
+            cur.execute("SELECT COUNT(*) FROM leads"); leads = cur.fetchone()["count"]
+        return {"ok": True, "hosts": hosts, "customers": customers, "bookings": bookings, "leads": leads}
+
+    return {
+        "check_booking_availability": check_booking_availability,
+        "create_booking": create_booking,
+        "lookup_bookings": lookup_bookings,
+        "register_customer": register_customer,
+        "get_business_summary": get_business_summary,
+    }
 
 @asynccontextmanager
 async def lifecycle(app: FastAPI):
@@ -426,7 +579,8 @@ async def inbound_sms_webhook(
     From = form.get("From", "")
     Body = form.get("Body", "")
 
-    ai_reply = ai_agent.process_inbound_text(f"Inbound SMS from {From}: {Body}")
+    agent = BusinessAIAgent(tool_handlers=build_tool_handlers(db, stripe_svc))
+    ai_reply = agent.process_inbound_text(f"Inbound SMS from {From}: {Body}")
 
     with db.cursor() as cur:
         cur.execute("INSERT INTO comms_logs (direction, channel, sender, recipient, message_body) VALUES ('inbound', 'sms', %s, 'system', %s);", (From, Body))
@@ -481,7 +635,8 @@ async def voice_transcribe(request: Request, db=Depends(get_db)):
 
     if TranscriptionText:
         try:
-            ai_reply = ai_agent.process_inbound_text(f"Voice transcription from {From}: {TranscriptionText}")
+            agent = BusinessAIAgent(tool_handlers=build_tool_handlers(db, stripe_svc))
+            ai_reply = agent.process_inbound_text(f"Voice transcription from {From}: {TranscriptionText}")
         except Exception:
             ai_reply = "Thank you for your call. Our team will follow up shortly."
 

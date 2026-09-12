@@ -20,6 +20,7 @@ FastAPI + PostgreSQL web app for BizStack Hosts — short-term rental turnover c
   - `/api/payments/create-link/<event_id>` re-creates a payment link for unpaid bookings
   - `/payments/success` + `/payments/cancel` confirmation pages
 - **OpenAI AI agent** (`ai_agent.py`) — processes inbound SMS/voice text, falls back gracefully if no API key
+- **AI assistant runs the business** (`bot_knowledge.md`) — the bot knows the company, services, pricing, site navigation, and hospitality/STR industry. Via OpenAI tool calling it can check availability, **create bookings**, generate **Stripe payment links**, look up bookings by phone, register customers, and report business stats. Reply style is tuned to sound like a real human.
 
 ## Railway variables
 
@@ -32,6 +33,8 @@ Set these variables on the service:
 - `COOKIE_SECURE=true`
 - `OPENAI_API_KEY` (optional)
 - `OPENAI_MODEL=gpt-4o-mini` (optional)
+- `APP_TIMEZONE=America/New_York` (optional, timezone the AI uses for bookings)
+- `BOOKING_HOURS=1` (optional, slot length for AI-assisted bookings)
 - `SIGNALWIRE_PROJECT_ID` (optional)
 - `SIGNALWIRE_API_TOKEN` (optional)
 - `SIGNALWIRE_SPACE_URL=yourspace.signalwire.com` (optional)
