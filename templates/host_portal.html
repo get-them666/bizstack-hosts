@@ -111,6 +111,9 @@
                         <div class="min-w-0">
                             <div class="flex items-center gap-3 flex-wrap">
                                 <p class="font-bold text-slate-900">{{ e['service_type'] }}</p>
+                                {% if e['channel_label'] %}
+                                <span class="px-2 py-1 bg-rose-50 text-rose-600 text-[10px] font-semibold rounded-full">{{ e['channel_label'] }}</span>
+                                {% endif %}
                                 {% if e['property_name'] %}<span class="text-xs text-slate-500">· {{ e['property_name'] }}</span>{% endif %}
                                 {% if e['payment_status'] == 'paid' %}
                                 <span class="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-semibold rounded-full">Paid ✓</span>
@@ -118,7 +121,10 @@
                                 <span class="px-2 py-1 bg-amber-50 text-amber-700 text-[10px] font-semibold rounded-full">Pending</span>
                                 {% endif %}
                             </div>
-                            <p class="text-sm text-slate-600 mt-1">{{ e['start_time'].strftime('%A, %B %-d at %-I:%M %p') }}</p>
+                            <p class="text-sm text-slate-600 mt-1">{{ e['start_time'].strftime('%A, %B %-d at %-I:%M %p') }}{% if e['channel_label'] and e['end_time'] %} → {{ e['end_time'].strftime('%A, %B %-d at %-I:%M %p') }}{% endif %}</p>
+                            {% if e['customer_name'] %}
+                            <p class="text-sm text-slate-700 mt-1">Guest: <b>{{ e['customer_name'] }}</b></p>
+                            {% endif %}
                             {% if e['worker_name'] %}
                             <div class="flex items-center gap-3 mt-3 flex-wrap">
                                 {% if e['on_clock'] %}

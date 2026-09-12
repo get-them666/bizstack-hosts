@@ -130,15 +130,122 @@
                     <div class="flex items-center justify-between p-4 rounded-2xl bg-slate-50 border border-slate-100">
                         <div>
                             <p class="text-sm font-bold text-slate-800">Channel Manager Sync</p>
-                            <p class="text-xs text-slate-500">Airbnb / Vrbo / Hospitable API links</p>
+                            <p class="text-xs text-slate-500">Airbnb / Vrbo via Hospitable API</p>
                         </div>
-                        <span class="px-2 py-1 bg-amber-50 text-amber-700 text-[10px] font-semibold rounded-full">Configure via .env</span>
+                        {% if channel_configured %}
+                        <span class="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-semibold rounded-full">Configured · {{ channel_linked_count }} linked</span>
+                        {% else %}
+                        <span class="px-2 py-1 bg-amber-50 text-amber-700 text-[10px] font-semibold rounded-full">Token not set</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Channel Manager Sync (Hospitable) -->
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8 lg:col-span-2">
+                <div class="flex items-center gap-3 mb-6">
+                    <div class="w-10 h-10 rounded-xl bg-sky-50 flex items-center justify-center text-sky-600 font-bold">🔗</div>
+                    <div>
+                        <h2 class="text-lg font-bold text-slate-900">Channel Manager Sync</h2>
+                        <p class="text-xs text-slate-500">Import Airbnb / Vrbo / Booking.com reservations into your calendar so crew & hosts see them</p>
+                    </div>
+                </div>
+
+                {% if channel_error %}
+                <div class="mb-6 rounded-2xl bg-red-50 border border-red-200 p-4 text-sm text-red-700">{{ channel_error }}</div>
+                {% endif %}
+
+                <form method="post" action="/api/settings/channel" class="space-y-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Hospitable API Token (PAT)</label>
+                            <input type="password" name="hospitable_pat" autocomplete="off" placeholder="Leave blank to keep current"
+                                class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500">
+                            <p class="text-xs text-slate-400 mt-1">
+                                {% if channel_configured %}Current token is set.{% else %}Get it at my.hospitable.com → Apps → API access (paid plan required).{% endif %}
+                            </p>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Webhook Secret (optional)</label>
+                            <input type="password" name="hospitable_webhook_secret" autocomplete="off" placeholder="Leave blank to keep current"
+                                class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500">
+                            <p class="text-xs text-slate-400 mt-1">Used to verify Hospitable webhook signatures.</p>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="flex items-center justify-between mb-2">
+                            <p class="text-xs font-semibold text-slate-700 uppercase tracking-wider">Link properties → Hospitable listings</p>
+                            {% if channel_configured and not channel_hosp_props %}
+                            <span class="text-xs text-amber-600 font-semibold">No Hospitable properties returned — check your token/permissions.</span>
+                            {% endif %}
+                        </div>
+                        {% if channel_links %}
+                        <div class="overflow-x-auto rounded-2xl border border-slate-200">
+                            <table class="w-full text-sm">
+                                <thead>
+                                    <tr class="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider bg-slate-50 border-b border-slate-200">
+                                        <th class="px-4 py-3">Your Property</th>
+                                        <th class="px-4 py-3">Host</th>
+                                        <th class="px-4 py-3">Hospitable Listing</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for p in channel_links %}
+                                    <tr class="border-b border-slate-100">
+                                        <td class="px-4 py-3 font-semibold text-slate-800">🏡 {{ p['name'] }}</td>
+                                        <td class="px-4 py-3 text-slate-500">{{ p['host_name'] or '—' }}</td>
+                                        <td class="px-4 py-3">
+                                            <select name="link_{{ p['id'] }}" class="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm">
+                                                <option value="">— Not linked —</option>
+                                                {% for hp in channel_hosp_props %}
+                                                <option value="{{ hp['id'] }}" {% if p['channel_property_uuid']|string == hp['id']|string %}selected{% endif %}>{{ hp['name'] or hp['id'] }}</option>
+                                                {% endfor %}
+                                            </select>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <div class="rounded-2xl bg-slate-50 border border-slate-100 p-4 text-sm text-slate-500">No properties yet. Create one under Portfolio first.</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row gap-3">
+                        <button type="submit" class="px-6 py-3 text-sm font-bold text-white bg-sky-600 hover:bg-sky-700 rounded-xl transition-all">💾 Save Channel Settings</button>
+                        <button type="button" data-sync-now class="px-6 py-3 text-sm font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed">🔄 Sync Now</button>
+                    </div>
+                    <div data-sync-result class="hidden rounded-2xl border p-4 text-sm"></div>
+                </form>
+
+                <div class="mt-6 pt-6 border-t border-slate-100 space-y-4">
+                    <div>
+                        <p class="text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Webhook URL (add in Hospitable → Settings → Webhooks)</p>
+                        <div class="flex items-center gap-3">
+                            <code class="flex-1 px-4 py-2.5 rounded-xl bg-slate-900 text-emerald-300 text-xs overflow-x-auto">{{ channel_webhook_url }}</code>
+                            <button type="button" data-copy-url class="px-4 py-2.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl">Copy</button>
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-between p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                        <div>
+                            <p class="text-sm font-bold text-slate-800">Last Sync</p>
+                            {% if channel_last_sync %}
+                            <p class="text-xs text-slate-500">{{ channel_last_sync['summary'] }} · {{ channel_last_sync['finished_at'].strftime('%b %-d, %-I:%M %p') }}</p>
+                            {% else %}
+                            <p class="text-xs text-slate-500">No sync run yet.</p>
+                            {% endif %}
+                        </div>
+                        {% if channel_last_sync %}
+                        <span class="px-2 py-1 {% if channel_last_sync['status'] == 'success' %}bg-emerald-50 text-emerald-700{% else %}bg-red-50 text-red-700{% endif %} text-[10px] font-semibold rounded-full">{{ channel_last_sync['status']|upper }}</span>
+                        {% endif %}
                     </div>
                 </div>
             </div>
 
             <!-- Data & Security -->
-            <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8 lg:col-span-2">
                 <div class="flex items-center gap-3 mb-6">
                     <div class="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-600 font-bold">🔒</div>
                     <div>
@@ -173,4 +280,59 @@
         </div>
     </div>
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    var syncBtn = document.querySelector('[data-sync-now]');
+    var result = document.querySelector('[data-sync-result]');
+    if (syncBtn) {
+        syncBtn.addEventListener('click', function() {
+            syncBtn.disabled = true;
+            syncBtn.textContent = 'Syncing…';
+            result.classList.remove('hidden');
+            result.className = 'rounded-2xl border p-4 text-sm bg-slate-50 border-slate-200 text-slate-600';
+            result.textContent = 'Contacting Hospitable…';
+            fetch('/api/channels/sync', { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function(j) {
+                    result.classList.remove('hidden');
+                    if (j && j.status === 'success') {
+                        result.className = 'rounded-2xl border p-4 text-sm bg-emerald-50 border-emerald-200 text-emerald-800';
+                        result.textContent = '✅ ' + (j.message || 'Sync complete.');
+                    } else {
+                        result.className = 'rounded-2xl border p-4 text-sm bg-red-50 border-red-200 text-red-700';
+                        result.textContent = '❌ ' + ((j && j.message) || 'Sync failed (no token?).');
+                    }
+                })
+                .catch(function() {
+                    result.className = 'rounded-2xl border p-4 text-sm bg-red-50 border-red-200 text-red-700';
+                    result.textContent = '❌ Sync failed — check server logs.';
+                })
+                .finally(function() {
+                    syncBtn.disabled = false;
+                    syncBtn.textContent = '🔄 Sync Now';
+                });
+        });
+    }
+    var copyBtn = document.querySelector('[data-copy-url]');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', function() {
+            var code = document.querySelector('code');
+            if (!code) return;
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(code.textContent.trim())
+                    .then(function() { copyBtn.textContent = 'Copied!'; setTimeout(function() { copyBtn.textContent = 'Copy'; }, 1500); });
+            } else {
+                var range = document.createRange();
+                range.selectNodeContents(code);
+                var sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+        });
+    }
+})();
+</script>
 {% endblock %}

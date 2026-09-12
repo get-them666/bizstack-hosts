@@ -3,6 +3,7 @@ import json
 import math
 import secrets
 import hashlib
+import hmac
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, date
@@ -17,6 +18,7 @@ from fastapi.templating import Jinja2Templates
 from ai_agent import BusinessAIAgent
 from analysis_service import RentalAnalysisService
 from stripe_service import StripeService
+import channel_sync
 
 db_url = os.getenv("DATABASE_URL", "postgresql://shaun:secret@localhost:5432/bizstack")
 templates = Jinja2Templates(directory="templates")
@@ -209,6 +211,33 @@ async def lifecycle(app: FastAPI):
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'unpaid';")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS stripe_session_id VARCHAR(255);")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS amount_cents INTEGER;")
+                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS channel_source VARCHAR(20);")
+                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS channel_booking_id VARCHAR(64);")
+                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS channel_status VARCHAR(30);")
+                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS channel_guest_email VARCHAR(255);")
+                cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_calendar_channel_booking
+                ON calendar_events (channel_source, channel_booking_id)
+                WHERE channel_source IS NOT NULL AND channel_booking_id IS NOT NULL;
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS channel_sync_logs (
+                    id SERIAL PRIMARY KEY,
+                    channel VARCHAR(20) NOT NULL,
+                    status VARCHAR(20) NOT NULL,
+                    summary TEXT,
+                    details TEXT,
+                    started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    finished_at TIMESTAMP WITH TIME ZONE
+                );
+                """)
                 cur.execute("""
                 CREATE TABLE IF NOT EXISTS payments (
                     id SERIAL PRIMARY KEY,
@@ -266,6 +295,7 @@ async def lifecycle(app: FastAPI):
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
+                cur.execute("ALTER TABLE properties ADD COLUMN IF NOT EXISTS channel_property_uuid VARCHAR(64);")
                 cur.execute("""
                 CREATE TABLE IF NOT EXISTS customers (
                     id SERIAL PRIMARY KEY,
@@ -766,7 +796,7 @@ async def host_portal(request: Request, db=Depends(get_db)):
         properties = cur.fetchall()
         cur.execute("""
             SELECT ce.id, ce.customer_name, ce.start_time, ce.end_time, ce.service_type, ce.payment_status,
-                   ce.job_address, ce.job_lat, ce.job_lng, ce.worker_status,
+                   ce.job_address, ce.job_lat, ce.job_lng, ce.worker_status, ce.channel_source,
                    p.name AS property_name, p.address AS property_address,
                    w.id AS worker_id, w.name AS worker_name, w.phone AS worker_phone
             FROM calendar_events ce
@@ -816,6 +846,7 @@ async def host_portal(request: Request, db=Depends(get_db)):
             "map_url": map_url,
             "clocks_recorded": clock_counts.get(ev["id"], 0),
             "is_future": ev["start_time"] >= datetime.now(APP_TZ),
+            "channel_label": channel_sync.channel_label(ev.get("channel_source")),
         })
 
     future = [e for e in events if e["is_future"]]
@@ -1313,12 +1344,141 @@ async def comms_page(request: Request, db=Depends(get_db)):
 
 # --- SETTINGS ---
 
+def _get_setting(db, key, default=""):
+    with db.cursor() as cur:
+        cur.execute("SELECT value FROM app_settings WHERE key = %s;", (key,))
+        row = cur.fetchone()
+        return row["value"] if row else default
+
+
+def _set_setting(db, key, value):
+    with db.cursor() as cur:
+        cur.execute(
+            """INSERT INTO app_settings (key, value, updated_at) VALUES (%s, %s, NOW())
+               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();""",
+            (key, value),
+        )
+        db.commit()
+
+
+def _channel_pat(db):
+    return (os.getenv("HOSPITABLE_PAT", "") or _get_setting(db, "hospitable_pat") or "").strip()
+
+
 @app.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request):
+async def settings_page(request: Request, db=Depends(get_db)):
     is_authed, user_email = require_auth(request)
     if not is_authed:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    return templates.TemplateResponse(request=request, name="settings.html", context={"user": {"email": user_email}, "stripe_configured": stripe_svc.is_configured(), "signalwire_phone": os.getenv("SIGNALWIRE_PHONE", "")})
+
+    pat = _channel_pat(db)
+    ch_configured = bool(pat)
+    ch_error = ""
+    ch_hosp = []
+    if ch_configured:
+        svc = channel_sync.HospitableService(pat)
+        try:
+            ch_hosp = svc.get_properties()
+        except RuntimeError as e:
+            ch_error = str(e)
+            ch_hosp = []
+
+    hosp_by_id = {str(hp.get("id") or ""): hp.get("name") or "Unnamed" for hp in ch_hosp}
+    ch_links = []
+    ch_applied = 0
+    ch_last = None
+    with db.cursor() as cur:
+        cur.execute(
+            """SELECT p.id, p.name, p.channel_property_uuid, h.name AS host_name
+               FROM properties p LEFT JOIN hosts h ON h.id = p.host_id ORDER BY p.name;"""
+        )
+        for row in cur.fetchall():
+            row["hosp_name"] = hosp_by_id.get(str(row["channel_property_uuid"] or ""), "")
+            ch_links.append(row)
+        cur.execute("SELECT COUNT(*) FROM properties WHERE channel_property_uuid IS NOT NULL;")
+        ch_applied = cur.fetchone()["count"]
+        cur.execute("SELECT status, summary, finished_at FROM channel_sync_logs ORDER BY id DESC LIMIT 1;")
+        row = cur.fetchone()
+        if row:
+            ch_last = {"status": row["status"], "summary": row["summary"], "finished_at": row["finished_at"]}
+
+    webhook_url = str(request.base_url).rstrip("/") + "/api/channels/hospitable/webhook"
+    return templates.TemplateResponse(
+        request=request,
+        name="settings.html",
+        context={
+            "user": {"email": user_email},
+            "stripe_configured": stripe_svc.is_configured(),
+            "signalwire_phone": os.getenv("SIGNALWIRE_PHONE", ""),
+            "channel_configured": ch_configured,
+            "channel_error": ch_error,
+            "channel_hosp_props": ch_hosp,
+            "channel_links": ch_links,
+            "channel_linked_count": ch_applied,
+            "channel_last_sync": ch_last,
+            "channel_webhook_url": webhook_url,
+        },
+    )
+
+
+@app.post("/api/settings/channel")
+async def save_channel_settings(request: Request, db=Depends(get_db)):
+    is_authed, _ = require_auth(request)
+    if not is_authed:
+        return JSONResponse({"status": "error", "message": "Not authorized"}, status_code=401)
+    form = await request.form()
+    pat = (form.get("hospitable_pat") or "").strip()
+    secret = (form.get("hospitable_webhook_secret") or "").strip()
+    if pat:
+        _set_setting(db, "hospitable_pat", pat)
+    if secret:
+        _set_setting(db, "hospitable_webhook_secret", secret)
+    for key, value in form.items():
+        if key.startswith("link_"):
+            try:
+                pid = int(key.split("_", 1)[1])
+            except (ValueError, IndexError):
+                continue
+            val = value.strip() if value else None
+            with db.cursor() as cur:
+                cur.execute("UPDATE properties SET channel_property_uuid = %s WHERE id = %s;", (val, pid))
+                db.commit()
+    return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/api/channels/sync")
+async def run_channel_sync(request: Request, db=Depends(get_db)):
+    is_authed, _ = require_auth(request)
+    if not is_authed:
+        return JSONResponse({"status": "error", "message": "Not authorized"}, status_code=401)
+    pat = _channel_pat(db)
+    if not pat:
+        return JSONResponse({"status": "failed", "message": "Hospitable API token not configured."})
+    return JSONResponse(channel_sync.sync_hospitable(db, pat))
+
+
+@app.post("/api/channels/hospitable/webhook")
+async def hospitable_webhook(request: Request, db=Depends(get_db)):
+    body_bytes = await request.body()
+    secret = (os.getenv("HOSPITABLE_WEBHOOK_SECRET", "") or _get_setting(db, "hospitable_webhook_secret") or "").strip()
+    if secret:
+        sig = request.headers.get("x-hospitable-signature") or request.headers.get("x-signature") or ""
+        expected = hmac.new(secret.encode(), body_bytes, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return JSONResponse({"status": "error", "message": "invalid signature"}, status_code=403)
+    try:
+        payload = json.loads(body_bytes.decode("utf-8"))
+    except Exception:
+        payload = {}
+    action = payload.get("action") or ""
+    if action.startswith("reservation."):
+        pat = _channel_pat(db)
+        if pat:
+            try:
+                channel_sync.sync_hospitable(db, pat)
+            except Exception as e:
+                return JSONResponse({"status": "error", "message": str(e)})
+    return JSONResponse({"status": "ok", "received": True})
 
 # --- CALENDAR API ---
 
