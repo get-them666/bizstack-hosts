@@ -1,0 +1,41 @@
+{% extends "base.html" %}{% block title %}Host Portal | BizStack Hosts{% endblock %}
+
+{% block content %}
+<section class="relative py-16 lg:py-24 bg-white overflow-hidden">
+    <div class="max-w-md mx-auto px-4 sm:px-6 relative z-10">
+        <div class="bg-white rounded-3xl p-8 sm:p-10 shadow-xl shadow-slate-200 border border-slate-200">
+            <div class="text-center mb-8">
+                <div class="w-14 h-14 mx-auto bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 text-2xl font-bold mb-4">🏡</div>
+                <h1 class="text-3xl font-extrabold tracking-tight text-slate-900">Host Portal</h1>
+                <p class="text-sm text-slate-600 mt-2">Your property, your schedule, your cleaner — all in one place.</p>
+            </div>
+
+            {% if error %}
+            <div class="mb-4 p-3 rounded-xl bg-red-50 border border-red-100 text-red-700 text-sm font-medium">
+                {{ error }}
+            </div>
+            {% endif %}
+
+            <form action="/api/host/auth/login" method="POST" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Email Address</label>
+                    <input type="email" name="email" required placeholder="you@example.com"
+                        class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Password</label>
+                    <input type="password" name="password" required placeholder="••••••••"
+                        class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all">
+                </div>
+                <button type="submit" class="w-full py-4 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 rounded-xl transition-all shadow-md shadow-emerald-100 uppercase tracking-wider">
+                    Sign In
+                </button>
+            </form>
+
+            <div class="mt-6 pt-6 border-t border-slate-100 text-center">
+                <p class="text-xs text-slate-500">Need an account? Your manager creates one for you.</p>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

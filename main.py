@@ -250,6 +250,22 @@ async def lifecycle(app: FastAPI):
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
+                cur.execute("ALTER TABLE hosts ADD COLUMN IF NOT EXISTS email VARCHAR(255) UNIQUE;")
+                cur.execute("ALTER TABLE hosts ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);")
+                cur.execute("ALTER TABLE hosts ADD COLUMN IF NOT EXISTS host_token VARCHAR(255);")
+                cur.execute("ALTER TABLE hosts ADD COLUMN IF NOT EXISTS phone VARCHAR(50);")
+                cur.execute("ALTER TABLE hosts ADD COLUMN IF NOT EXISTS login_token VARCHAR(255);")
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS properties (
+                    id SERIAL PRIMARY KEY,
+                    host_id INTEGER REFERENCES hosts(id),
+                    name VARCHAR(255) NOT NULL,
+                    address VARCHAR(500),
+                    lat DOUBLE PRECISION,
+                    lng DOUBLE PRECISION,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
                 cur.execute("""
                 CREATE TABLE IF NOT EXISTS customers (
                     id SERIAL PRIMARY KEY,
@@ -288,6 +304,8 @@ async def lifecycle(app: FastAPI):
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS job_lat DOUBLE PRECISION;")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS job_lng DOUBLE PRECISION;")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS job_address VARCHAR(500);")
+                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS host_id INTEGER;")
+                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS property_id INTEGER REFERENCES properties(id);")
                 cur.execute("""
                 CREATE TABLE IF NOT EXISTS workers (
                     id SERIAL PRIMARY KEY,
@@ -326,6 +344,7 @@ async def lifecycle(app: FastAPI):
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
+                cur.execute("ALTER TABLE hosts ADD COLUMN IF NOT EXISTS property_address VARCHAR(500);")
                 conn.commit()
         print("🚀 Database connectivity and tables validated successfully.")
     except Exception as e:
@@ -459,13 +478,17 @@ async def read_dashboard(request: Request, db=Depends(get_db)):
         cur.execute("SELECT id, customer_name, phone, start_time, end_time, service_type, payment_status, amount_cents FROM calendar_events WHERE start_time >= NOW() - INTERVAL '7 days' ORDER BY start_time DESC LIMIT 10")
         events = cur.fetchall()
 
+        cur.execute("SELECT p.id, p.name, COALESCE(h.name, 'Unassigned host') AS host_name FROM properties p LEFT JOIN hosts h ON h.id = p.host_id ORDER BY p.name;")
+        properties = cur.fetchall()
+
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
         context={
             "user": {"email": user_email},
             "stats": {"hosts": hosts_count, "bookings": bookings_count, "customers": customers_count, "leads": leads_count},
-            "events": events
+            "events": events,
+            "properties": properties,
         }
     )
 
@@ -480,14 +503,101 @@ async def hosts_page(request: Request, db=Depends(get_db)):
     with db.cursor() as cur:
         cur.execute("SELECT * FROM leads ORDER BY created_at DESC LIMIT 50")
         leads = cur.fetchall()
+        cur.execute("SELECT * FROM hosts ORDER BY created_at DESC")
+        host_accounts = cur.fetchall()
+        cur.execute("""
+            SELECT id, customer_name, start_time, service_type
+            FROM calendar_events
+            WHERE host_id IS NULL AND start_time >= NOW() - INTERVAL '30 days'
+            ORDER BY start_time DESC;
+        """)
+        unlinked_events = cur.fetchall()
 
-    return templates.TemplateResponse(request=request, name="hosts.html", context={"user": {"email": user_email}, "leads": leads})
+    return templates.TemplateResponse(
+        request=request,
+        name="hosts.html",
+        context={
+            "user": {"email": user_email},
+            "leads": leads,
+            "host_accounts": host_accounts,
+            "unlinked_events": unlinked_events,
+            "generated_pw": request.query_params.get("pw"),
+            "form_error": request.query_params.get("error"),
+        },
+    )
 
 @app.post("/api/hosts")
-async def create_host(name: str = Form(...), property_name: str = Form(""), db=Depends(get_db)):
+async def create_host(
+    name: str = Form(...),
+    property_name: str = Form(""),
+    property_address: str = Form(""),
+    email: str = Form(""),
+    phone: str = Form(""),
+    password: str = Form(""),
+    db=Depends(get_db),
+):
+    generated = ""
+    if email.strip() and not password.strip():
+        generated = _generate_password()
+        password = generated
+    pw_hash = _hash_password(password) if email.strip() else None
+
+    if email.strip():
+        with db.cursor() as cur:
+            cur.execute("SELECT id FROM hosts WHERE LOWER(email) = LOWER(%s);", (email.strip(),))
+            if cur.fetchone():
+                return RedirectResponse(url="/hosts?error=That+email+already+has+an+account", status_code=303)
+
     with db.cursor() as cur:
-        cur.execute("INSERT INTO hosts (name, property_name) VALUES (%s, %s) RETURNING id", (name, property_name))
+        cur.execute(
+            "INSERT INTO hosts (name, property_name, property_address, email, phone, password_hash) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (name, property_name, property_address, email.strip(), phone, pw_hash),
+        )
         host_id = cur.fetchone()["id"]
+        db.commit()
+
+    query = f"?pw={urllib.parse.quote(generated)}" if generated else ""
+    return RedirectResponse(url=f"/hosts{query}", status_code=303)
+
+@app.post("/api/hosts/{host_id}/set-login")
+async def set_host_login(host_id: int, email: str = Form(...), password: str = Form(""), db=Depends(get_db)):
+    generated = ""
+    if not password.strip():
+        generated = _generate_password()
+        password = generated
+    with db.cursor() as cur:
+        cur.execute(
+            "UPDATE hosts SET email = %s, password_hash = %s, status = 'active' WHERE id = %s;",
+            (email.strip(), _hash_password(password), host_id),
+        )
+        db.commit()
+    query = f"?pw={urllib.parse.quote(generated)}" if generated else ""
+    return RedirectResponse(url=f"/hosts{query}", status_code=303)
+
+@app.post("/api/hosts/from-lead/{lead_id}")
+async def lead_to_host(lead_id: int, db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM leads WHERE id = %s;", (lead_id,))
+        lead = cur.fetchone()
+        if not lead:
+            return RedirectResponse(url="/hosts?error=Lead+not+found", status_code=303)
+        if lead.get("email") and cur.execute(
+            "SELECT id FROM hosts WHERE LOWER(email) = LOWER(%s);", (lead["email"],)
+        ).fetchone():
+            return RedirectResponse(url="/hosts?error=That+email+already+has+an+account", status_code=303)
+        password = _generate_password()
+        cur.execute(
+            "INSERT INTO hosts (name, email, phone, password_hash, status) VALUES (%s, %s, %s, %s, 'active') RETURNING id;",
+            (lead["name"], lead.get("email") or "", lead.get("phone") or "", _hash_password(password)),
+        )
+        cur.execute("UPDATE leads SET status = 'host' WHERE id = %s;", (lead_id,))
+        db.commit()
+    return RedirectResponse(url=f"/hosts?pw={urllib.parse.quote(password)}", status_code=303)
+
+@app.post("/api/hosts/{host_id}/link-booking")
+async def link_host_booking(host_id: int, event_id: int = Form(...), db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("UPDATE calendar_events SET host_id = %s WHERE id = %s;", (host_id, event_id))
         db.commit()
     return RedirectResponse(url="/hosts", status_code=303)
 
@@ -498,6 +608,232 @@ async def create_customer(name: str = Form(...), email: str = Form(""), phone: s
         customer_id = cur.fetchone()["id"]
         db.commit()
     return RedirectResponse(url="/hosts", status_code=303)
+
+# --- HOST PORTAL & PORTFOLIO ---
+
+@app.get("/host-login", response_class=HTMLResponse)
+async def read_host_login(request: Request):
+    error = request.query_params.get("error")
+    return templates.TemplateResponse(request=request, name="host_login.html", context={"error": error, "user": None})
+
+@app.post("/api/host/auth/login")
+async def host_login(email: str = Form(...), password: str = Form(...), db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM hosts WHERE email ILIKE %s AND status = 'active' AND password_hash IS NOT NULL;", (email.strip(),))
+        host = cur.fetchone()
+    if not host or host["password_hash"] != _hash_password(password):
+        return RedirectResponse(url="/host-login?error=Invalid+email+or+password", status_code=status.HTTP_303_SEE_OTHER)
+
+    token = secrets.token_urlsafe(32)
+    with db.cursor() as cur:
+        cur.execute("UPDATE hosts SET login_token = %s WHERE id = %s;", (token, host["id"]))
+        db.commit()
+
+    redirect = RedirectResponse(url="/host", status_code=status.HTTP_303_SEE_OTHER)
+    redirect.set_cookie(key="host_session", value=token, httponly=True, samesite="lax", secure=os.getenv("COOKIE_SECURE", "false").lower() == "true")
+    redirect.set_cookie(key="host_id", value=str(host["id"]), httponly=True, samesite="lax")
+    return redirect
+
+@app.get("/api/host/auth/logout")
+async def host_logout():
+    redirect = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+    redirect.delete_cookie("host_session")
+    redirect.delete_cookie("host_id")
+    return redirect
+
+@app.get("/portfolio", response_class=HTMLResponse)
+async def portfolio_page(request: Request, db=Depends(get_db)):
+    is_authed, user_email = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
+    with db.cursor() as cur:
+        cur.execute("""
+            SELECT h.*,
+                   COUNT(DISTINCT p.id) AS property_count,
+                   COUNT(DISTINCT ce.id) AS booking_count
+            FROM hosts h
+            LEFT JOIN properties p ON p.host_id = h.id
+            LEFT JOIN calendar_events ce ON ce.host_id = h.id
+            GROUP BY h.id
+            ORDER BY h.created_at DESC;
+        """)
+        hosts = cur.fetchall()
+        cur.execute("SELECT p.*, h.name AS host_name FROM properties p LEFT JOIN hosts h ON h.id = p.host_id ORDER BY p.created_at DESC;")
+        properties = cur.fetchall()
+        cur.execute("""
+            SELECT ce.id, ce.customer_name, ce.start_time, ce.service_type, ce.payment_status,
+                   p.name AS property_name, h.name AS host_name
+            FROM calendar_events ce
+            LEFT JOIN properties p ON p.id = ce.property_id
+            LEFT JOIN hosts h ON h.id = ce.host_id
+            WHERE ce.host_id IS NULL AND ce.start_time >= NOW() - INTERVAL '90 days'
+            ORDER BY ce.start_time ASC;
+        """)
+        unlinked = cur.fetchall()
+
+    return templates.TemplateResponse(
+        request=request,
+        name="portfolio.html",
+        context={
+            "user": {"email": user_email},
+            "hosts": hosts,
+            "properties": properties,
+            "unlinked": unlinked,
+            "host_choices": [{"id": h["id"], "name": h["name"]} for h in hosts],
+        },
+    )
+
+@app.post("/api/hosts/create-account")
+async def create_host_account(
+    name: str = Form(...),
+    email: str = Form(...),
+    phone: str = Form(""),
+    property_name: str = Form(""),
+    property_address: str = Form(""),
+    db=Depends(get_db),
+):
+    password = secrets.token_urlsafe(9)
+    try:
+        with db.cursor() as cur:
+            cur.execute("INSERT INTO hosts (name, email, phone, password_hash) VALUES (%s, %s, %s, %s) RETURNING id;",
+                        (name, email.strip(), phone, _hash_password(password)))
+            host_id = cur.fetchone()["id"]
+            if (property_name or "").strip():
+                lat, lng = None, None
+                if (property_address or "").strip():
+                    coords = _geocode(property_address)
+                    if coords:
+                        lat, lng = coords[0], coords[1]
+                cur.execute("INSERT INTO properties (host_id, name, address, lat, lng) VALUES (%s, %s, %s, %s, %s);",
+                            (host_id, property_name.strip(), (property_address or "").strip(), lat, lng))
+            db.commit()
+    except psycopg.errors.UniqueViolation as e:
+        db.rollback()
+        print(f"⚠️ create_host_account UniqueViolation: {e}")
+        return JSONResponse(status_code=400, content={"status": "error", "message": "A host with that email already exists."})
+    return JSONResponse(content={"status": "success", "host_id": host_id, "password": password})
+
+@app.post("/api/hosts/{host_id}/properties")
+async def add_host_property(host_id: int, property_name: str = Form(...), property_address: str = Form(""), db=Depends(get_db)):
+    lat, lng = None, None
+    if (property_address or "").strip():
+        coords = _geocode(property_address)
+        if coords:
+            lat, lng = coords[0], coords[1]
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO properties (host_id, name, address, lat, lng) VALUES (%s, %s, %s, %s, %s);",
+                    (host_id, property_name.strip(), (property_address or "").strip(), lat, lng))
+        db.commit()
+    return RedirectResponse(url="/portfolio", status_code=303)
+
+@app.post("/api/hosts/{host_id}/reset-password")
+async def reset_host_password(host_id: int, db=Depends(get_db)):
+    password = secrets.token_urlsafe(9)
+    with db.cursor() as cur:
+        cur.execute("UPDATE hosts SET password_hash = %s, login_token = NULL WHERE id = %s;", (_hash_password(password), host_id))
+        db.commit()
+    return JSONResponse(content={"status": "success", "host_id": host_id, "password": password})
+
+@app.post("/api/hosts/{host_id}/deactivate")
+async def deactivate_host(host_id: int, db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("UPDATE hosts SET status = 'inactive', login_token = NULL WHERE id = %s;", (host_id,))
+        db.commit()
+    return RedirectResponse(url="/portfolio", status_code=303)
+
+@app.post("/api/events/{event_id}/link-property")
+async def link_event_property(event_id: int, property_id: int = Form(...), db=Depends(get_db)):
+    with db.cursor() as cur:
+        cur.execute("SELECT host_id FROM properties WHERE id = %s;", (property_id,))
+        prop = cur.fetchone()
+        if not prop:
+            raise HTTPException(status_code=404, detail="Property not found")
+        if prop["host_id"] is None:
+            raise HTTPException(status_code=400, detail="Property has no host")
+        cur.execute("UPDATE calendar_events SET property_id = %s, host_id = %s WHERE id = %s;", (property_id, prop["host_id"], event_id))
+        db.commit()
+    return RedirectResponse(url="/portfolio", status_code=303)
+
+@app.get("/host", response_class=HTMLResponse)
+async def host_portal(request: Request, db=Depends(get_db)):
+    host = _require_host(request, db)
+    if not host:
+        return RedirectResponse(url="/host-login", status_code=status.HTTP_303_SEE_OTHER)
+
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM properties WHERE host_id = %s ORDER BY created_at;", (host["id"],))
+        properties = cur.fetchall()
+        cur.execute("""
+            SELECT ce.id, ce.customer_name, ce.start_time, ce.end_time, ce.service_type, ce.payment_status,
+                   ce.job_address, ce.job_lat, ce.job_lng, ce.worker_status,
+                   p.name AS property_name, p.address AS property_address,
+                   w.id AS worker_id, w.name AS worker_name, w.phone AS worker_phone
+            FROM calendar_events ce
+            LEFT JOIN properties p ON p.id = ce.property_id
+            LEFT JOIN workers w ON w.id = ce.worker_id
+            WHERE ce.host_id = %s
+            ORDER BY ce.start_time DESC LIMIT 60;
+        """, (host["id"],))
+        raw_events = cur.fetchall()
+
+    event_ids = [e["id"] for e in raw_events]
+    clock_latest = {}
+    clock_counts = {}
+    if event_ids:
+        with db.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT ON (event_id) event_id, action, lat, lng, created_at, distance_m
+                FROM worker_timeclocks
+                WHERE event_id = ANY(%s)
+                ORDER BY event_id, created_at DESC;
+            """, (event_ids,))
+            for row in cur.fetchall():
+                clock_latest[row["event_id"]] = row
+            cur.execute("SELECT event_id, COUNT(*) AS how_many FROM worker_timeclocks WHERE event_id = ANY(%s) GROUP BY event_id;", (event_ids,))
+            for row in cur.fetchall():
+                clock_counts[row["event_id"]] = row["how_many"]
+
+    events = []
+    for ev in raw_events:
+        latest = clock_latest.get(ev["id"])
+        on_clock = bool(latest and latest["action"] in ("in", "update"))
+        last_seen_mins = None
+        if latest:
+            try:
+                last_seen_mins = int((datetime.now() - latest["created_at"]).total_seconds() // 60)
+            except TypeError:
+                pass
+        map_url = None
+        if on_clock and latest and latest["lat"] is not None and latest["lng"] is not None:
+            map_url = _map_embed_url(latest["lat"], latest["lng"])
+        elif ev["job_lat"] is not None and ev["job_lng"] is not None:
+            map_url = _map_embed_url(ev["job_lat"], ev["job_lng"])
+        events.append({
+            **ev,
+            "on_clock": on_clock,
+            "last_seen_mins": last_seen_mins,
+            "map_url": map_url,
+            "clocks_recorded": clock_counts.get(ev["id"], 0),
+            "is_future": ev["start_time"] >= datetime.now(APP_TZ),
+        })
+
+    future = [e for e in events if e["is_future"]]
+    past = [e for e in events if not e["is_future"]]
+
+    return templates.TemplateResponse(
+        request=request,
+        name="host_portal.html",
+        context={
+            "user": None,
+            "host": host,
+            "properties": properties,
+            "events": events,
+            "future": future[:15],
+            "past": past[:30],
+            "next_event": future[0] if future else None,
+        },
+    )
 
 # --- CREW ACCOUNTS & PAYCHECKS ---
 
@@ -541,6 +877,22 @@ def _map_embed_url(lat: float, lng: float, zoom: int = 16) -> str:
 
 def _hash_pin(pin: str) -> str:
     return hashlib.sha256(f"{pin}:{os.getenv('APP_SECRET', 'bizstack')}".encode()).hexdigest()
+
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(f"host:{password}:{os.getenv('APP_SECRET', 'bizstack')}".encode()).hexdigest()
+
+def _generate_password(length: int = 8) -> str:
+    chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
+    return "".join(secrets.choice(chars) for _ in range(length))
+
+def _require_host(request: Request, db):
+    token = request.cookies.get("host_session")
+    host_id = request.cookies.get("host_id")
+    if not token or not host_id:
+        return None
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM hosts WHERE id = %s AND login_token = %s AND status = 'active';", (host_id, token))
+        return cur.fetchone()
 
 def _digits(value: str) -> str:
     return "".join(ch for ch in (value or "") if ch.isdigit())
@@ -986,18 +1338,31 @@ async def create_manual_booking(
     phone: str = Form(...),
     start_time: str = Form(...),
     service_type: str = Form(...),
+    property_id: int = Form(0),
     db=Depends(get_db)
 ):
     parsed_start = datetime.fromisoformat(start_time)
     parsed_end = parsed_start + timedelta(hours=1)
+
+    host_id = None
+    if property_id:
+        with db.cursor() as cur:
+            cur.execute("SELECT host_id FROM properties WHERE id = %s;", (property_id,))
+            prop = cur.fetchone()
+            if prop and prop["host_id"]:
+                host_id = prop["host_id"]
+            else:
+                property_id = None
+    else:
+        property_id = None
 
     with db.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM calendar_events WHERE start_time < %s AND end_time > %s;", (parsed_end, parsed_start))
         if cur.fetchone()['count'] > 0:
             raise HTTPException(status_code=400, detail="Requested timeframe collides with an active event.")
         cur.execute(
-            "INSERT INTO calendar_events (customer_name, phone, start_time, end_time, service_type) VALUES (%s, %s, %s, %s, %s) RETURNING id;",
-            (customer_name, phone, parsed_start, parsed_end, service_type)
+            "INSERT INTO calendar_events (customer_name, phone, start_time, end_time, service_type, host_id, property_id) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id;",
+            (customer_name, phone, parsed_start, parsed_end, service_type, host_id, property_id)
         )
         event_id = cur.fetchone()['id']
         amount_cents = stripe_svc.get_price(service_type)

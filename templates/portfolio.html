@@ -1,0 +1,270 @@
+{% extends "base.html" %}{% block title %}Portfolio | BizStack Hosts{% endblock %}
+
+{% block content %}
+<section class="bg-gradient-to-b from-slate-50 to-white">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+
+        <!-- Header -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-10">
+            <div>
+                <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900">Portfolio</h1>
+                <p class="mt-2 text-slate-600">Hosts, their properties, and the bookings you've attributed to each.</p>
+            </div>
+            <a href="/dashboard" class="inline-flex items-center justify-center px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all shadow-md shadow-indigo-100">← Back to Dashboard</a>
+        </div>
+
+        <!-- Create Host Account -->
+        <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8 mb-10">
+            <div class="flex items-center gap-3 mb-6">
+                <div class="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600 font-bold">🏠</div>
+                <div>
+                    <h2 class="text-lg font-bold text-slate-900">Create Host Account</h2>
+                    <p class="text-xs text-slate-500">Generates a portal login the host uses at bizstackperks.com/host-login</p>
+                </div>
+            </div>
+            <form data-create-host class="space-y-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Host Name</label>
+                        <input name="name" required placeholder="Jane Smith"
+                            class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Email</label>
+                        <input name="email" type="email" required placeholder="jane@example.com"
+                            class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Phone</label>
+                        <input name="phone" type="tel" placeholder="(555) 000-0000"
+                            class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">First Property Name</label>
+                        <input name="property_name" placeholder="Sunset Lakehouse"
+                            class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">First Property Address</label>
+                    <input name="property_address" placeholder="2211 Main St, Buffalo, NY"
+                        class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all">
+                </div>
+                <div id="pw-result" class="hidden rounded-2xl bg-emerald-50 border border-emerald-200 p-4 text-sm"></div>
+                <button type="submit" class="w-full py-3.5 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-all uppercase tracking-wider">Create Host & Login</button>
+            </form>
+        </div>
+
+        <!-- Hosts -->
+        <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 overflow-hidden mb-10">
+            <div class="p-6 border-b border-slate-100 flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 font-bold">🏘️</div>
+                <div>
+                    <h2 class="text-lg font-bold text-slate-900">Hosts</h2>
+                    <p class="text-xs text-slate-500">Accounts, properties, and bookings per host</p>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-100">
+                            <th class="px-6 py-4">Host</th>
+                            <th class="px-6 py-4">Email</th>
+                            <th class="px-6 py-4">Properties</th>
+                            <th class="px-6 py-4">Bookings</th>
+                            <th class="px-6 py-4">Login</th>
+                            <th class="px-6 py-4">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if hosts %}
+                            {% for h in hosts %}
+                            <tr class="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                                <td class="px-6 py-4">
+                                    <p class="font-semibold text-slate-800">{{ h['name'] }}</p>
+                                    <p class="text-xs text-slate-400">{{ h['property_name'] or '' }}</p>
+                                </td>
+                                <td class="px-6 py-4 text-slate-600">{{ h['email'] or '—' }}</td>
+                                <td class="px-6 py-4 font-bold text-indigo-600">{{ h['property_count'] }}</td>
+                                <td class="px-6 py-4 font-bold text-slate-800">{{ h['booking_count'] }}</td>
+                                <td class="px-6 py-4">
+                                    {% if h['email'] and h['password_hash'] %}
+                                    <span class="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-semibold rounded-full">Active</span>
+                                    {% else %}
+                                    <span class="px-2 py-1 bg-slate-100 text-slate-500 text-[10px] font-semibold rounded-full">No login</span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-6 py-4">
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <button data-reset-pw="{{ h['id'] }}" class="px-2.5 py-1.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg">Reset PW</button>
+                                        {% if h['status'] == 'active' %}
+                                        <form method="post" action="/api/hosts/{{ h['id'] }}/deactivate">
+                                            <button class="px-2.5 py-1.5 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg">Disable</button>
+                                        </form>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="6" class="px-6 py-12 text-center text-slate-400">
+                                    <p class="text-sm">No hosts yet. Create the first one above.</p>
+                                </td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Properties -->
+        <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 overflow-hidden mb-10">
+            <div class="p-6 border-b border-slate-100 flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-sky-50 flex items-center justify-center text-sky-600 font-bold">🗺️</div>
+                <div>
+                    <h2 class="text-lg font-bold text-slate-900">Properties</h2>
+                    <p class="text-xs text-slate-500">Each property links bookings to its host</p>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-100">
+                            <th class="px-6 py-4">Property</th>
+                            <th class="px-6 py-4">Address</th>
+                            <th class="px-6 py-4">Host</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if properties %}
+                            {% for p in properties %}
+                            <tr class="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                                <td class="px-6 py-4 font-semibold text-slate-800">🏡 {{ p['name'] }}</td>
+                                <td class="px-6 py-4 text-slate-600">{{ p['address'] or '—' }}</td>
+                                <td class="px-6 py-4 text-slate-600">{{ p['host_name'] or '—' }}</td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="3" class="px-6 py-12 text-center text-slate-400">
+                                    <p class="text-sm">No properties yet. Add one below.</p>
+                                </td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Add property + link bookings -->
+        {% if hosts %}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10">
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
+                <h3 class="text-lg font-bold text-slate-900 mb-2">Add a Property</h3>
+                <p class="text-xs text-slate-500 mb-6">Attach to a host so their bookings appear on their portal</p>
+                {% for h in host_choices %}
+                <form method="post" action="/api/hosts/{{ h['id'] }}/properties" class="border border-slate-100 rounded-2xl p-4 mb-3 space-y-3">
+                    <p class="text-sm font-bold text-slate-700">🏠 {{ h['name'] }}</p>
+                    <input name="property_name" required placeholder="Property name"
+                        class="w-full px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <input name="property_address" placeholder="Street address (for the clock geofence)"
+                        class="w-full px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <button class="w-full py-2.5 text-sm font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-xl">+ Add Property</button>
+                </form>
+                {% endfor %}
+            </div>
+
+            {% if unlinked %}
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
+                <h3 class="text-lg font-bold text-slate-900 mb-2">Attach Unlinked Bookings</h3>
+                <p class="text-xs text-slate-500 mb-6">Older bookings don't have a property yet — link one so a host can see it</p>
+                <form method="post" action="{{ '' }}" data-link-booking class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Booking</label>
+                        <select name="event_id" required class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm">
+                            {% for ev in unlinked %}
+                            <option value="{{ ev['id'] }}">#{{ ev['id'] }} · {{ ev['customer_name'] }} · {{ ev['start_time'].strftime('%b %d, %I:%M %p') }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Property</label>
+                        <select name="property_id" required class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm">
+                            {% for p in properties %}
+                            <option value="{{ p['id'] }}">🏡 {{ p['name'] }} ({{ p['host_name'] or 'no host' }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <button type="submit" class="w-full py-3 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl">Link Booking</button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Create host account (JSON) -> show generated password once
+    document.querySelectorAll('[data-create-host]').forEach(function(form) {
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const box = form.querySelector('#pw-result');
+            const data = new FormData(form);
+            try {
+                const res = await fetch('/api/hosts/create-account', { method: 'POST', body: data });
+                const json = await res.json();
+                if (json.status === 'success') {
+                    box.classList.remove('hidden');
+                    box.innerHTML = '<p class="font-bold text-emerald-800">🔑 Host created — give them this password</p>' +
+                        '<p class="mt-1 text-xl font-extrabold text-emerald-700 tracking-widest">' + json.password + '</p>' +
+                        '<p class="text-xs text-emerald-600 mt-1">They log in at <b>bizstackperks.com/host-login</b>. Save it before leaving this page.</p>';
+                    form.reset();
+                    setTimeout(function(){ box.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 50);
+                } else {
+                    box.classList.remove('hidden');
+                    box.innerHTML = '<p class="font-bold text-red-700">' + (json.message || 'Could not create host') + '</p>';
+                }
+            } catch (err) {
+                box.classList.remove('hidden');
+                box.innerHTML = '<p class="font-bold text-red-700">Could not create host.</p>';
+            }
+        });
+    });
+
+    // Reset password -> copy new one
+    document.querySelectorAll('[data-reset-pw]').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+            const id = this.dataset.resetPw;
+            try {
+                const res = await fetch('/api/hosts/' + id + '/reset-password', { method: 'POST' });
+                const json = await res.json();
+                if (json.status === 'success') {
+                    if (navigator.clipboard) { try { await navigator.clipboard.writeText(json.password); } catch (e) {} }
+                    alert('New password: ' + json.password + '\n\nCopied to clipboard if allowed.');
+                } else { alert('Could not reset password'); }
+            } catch (err) { alert('Could not reset password'); }
+        });
+    });
+
+    // Link booking -> property
+    document.querySelectorAll('[data-link-booking]').forEach(function(form) {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const eventId = form.querySelector('select[name="event_id"]').value;
+            const propertyId = form.querySelector('select[name="property_id"]').value;
+            fetch('/api/events/' + eventId + '/link-property', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'property_id=' + encodeURIComponent(propertyId)
+            }).then(function(r){ window.location.reload(); });
+        });
+    });
+});
+</script>
+{% endblock %}

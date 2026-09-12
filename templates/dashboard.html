@@ -127,6 +127,15 @@
                                 <option value="Inspection">Inspection</option>
                             </select>
                         </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Property (Host)</label>
+                            <select name="property_id" class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+                                <option value="0">— Unassigned —</option>
+                            {% for p in properties %}
+                                <option value="{{ p['id'] }}">{{ p['name'] }} · {{ p['host_name'] }}</option>
+                            {% endfor %}
+                            </select>
+                        </div>
                         <button type="submit" class="w-full py-3.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all shadow-md shadow-indigo-100 uppercase tracking-wider">
                             Book & Send Payment Link
                         </button>

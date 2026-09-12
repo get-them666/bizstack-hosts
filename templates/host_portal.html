@@ -1,0 +1,191 @@
+{% extends "base.html" %}{% block title %}Host Portal | BizStack Hosts{% endblock %}
+
+{% block content %}
+<section class="bg-gradient-to-b from-slate-50 to-white">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+
+        <!-- Header -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+            <div>
+                <p class="text-xs font-semibold text-emerald-600 uppercase tracking-widest">Host Portal</p>
+                <h1 class="text-3xl font-extrabold tracking-tight text-slate-900">Welcome, {{ host['name'] }}</h1>
+                <p class="mt-1 text-slate-600">Here's what's happening at your property.</p>
+            </div>
+            <a href="/api/host/auth/logout" class="inline-flex items-center justify-center px-4 py-2.5 text-sm font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl transition-all">
+                Log Out
+            </a>
+        </div>
+
+        <!-- Next Upcoming Turnover Highlight -->
+        {% if next_event %}
+        <div class="bg-slate-900 text-white rounded-3xl p-8 shadow-lg shadow-slate-300 mb-10">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+                <div class="flex items-center gap-5">
+                    <div class="text-center">
+                        <p class="text-3xl font-extrabold">{{ next_event['start_time'].strftime('%d') }}</p>
+                        <p class="text-xs text-slate-400 uppercase tracking-wider">{{ next_event['start_time'].strftime('%b') }}</p>
+                    </div>
+                    <div class="w-px h-12 bg-slate-700"></div>
+                    <div>
+                        <p class="text-xs text-slate-400 uppercase tracking-wider">Next Turnover</p>
+                        <p class="text-xl font-bold mt-1">{{ next_event['service_type'] }} — {{ next_event['property_name'] or 'Your property' }}</p>
+                        <p class="text-sm text-slate-300 mt-1">
+                            {{ next_event['start_time'].strftime('%A, %B %-d at %-I:%M %p') }}
+                            {% if next_event['worker_name'] %} · Cleaned by <span class="text-emerald-300 font-semibold">{{ next_event['worker_name'] }}</span>{% endif %}
+                        </p>
+                    </div>
+                </div>
+                {% if next_event['on_clock'] %}
+                <div class="inline-flex items-center gap-2 bg-emerald-500/15 border border-emerald-400/30 rounded-2xl px-4 py-3">
+                    <span class="relative flex h-3 w-3">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-400"></span>
+                    </span>
+                    <div>
+                        <p class="text-sm font-bold text-emerald-300">Cleaner on site now</p>
+                        <p class="text-xs text-slate-300">Live location shared</p>
+                    </div>
+                </div>
+                {% elif next_event['worker_status'] == 'completed' %}
+                <div class="inline-flex items-center gap-2 bg-sky-500/15 border border-sky-400/30 rounded-2xl px-4 py-3">
+                    <span class="text-sky-300 text-xl">✓</span>
+                    <p class="text-sm font-bold text-sky-300">Completed</p>
+                </div>
+                {% else %}
+                <div class="inline-flex items-center gap-2 bg-slate-700/40 rounded-2xl px-4 py-3">
+                    <span class="text-slate-300 text-xl">🕐</span>
+                    <p class="text-sm font-semibold text-slate-300">Scheduled</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% else %}
+        <div class="bg-slate-900 text-white rounded-3xl p-8 shadow-lg shadow-slate-300 mb-10">
+            <p class="text-lg font-bold">No upcoming turnovers yet</p>
+            <p class="text-sm text-slate-300 mt-1">Once your manager schedules one, it'll show up here with your cleaner's live status.</p>
+        </div>
+        {% endif %}
+
+        <!-- Properties Summary -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-10">
+            <div class="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
+                <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Your Properties</p>
+                <p class="text-4xl font-extrabold mt-2 text-emerald-600">{{ properties|length }}</p>
+            </div>
+            <div class="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
+                <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Upcoming</p>
+                <p class="text-4xl font-extrabold mt-2 text-indigo-600">{{ future|length }}</p>
+            </div>
+            <div class="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
+                <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Completed Jobs</p>
+                <p class="text-4xl font-extrabold mt-2 text-sky-600">{{ past|selectattr('worker_status', 'equalto', 'completed')|list|length }}</p>
+            </div>
+            <div class="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
+                <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Clearings Logged</p>
+                <p class="text-4xl font-extrabold mt-2 text-slate-800">{{ events|sum(attribute='clocks_recorded') }}</p>
+            </div>
+        </div>
+
+        {% if properties %}
+        <div class="mb-10">
+            <h3 class="text-sm font-bold text-slate-900 mb-3 uppercase tracking-wider">Your Properties</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {% for p in properties %}
+                <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                    <p class="font-bold text-slate-900">🏡 {{ p['name'] }}</p>
+                    {% if p['address'] %}<p class="text-xs text-slate-500 mt-1">{{ p['address'] }}</p>{% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Upcoming Schedule -->
+        <div class="mb-10">
+            <h3 class="text-sm font-bold text-slate-900 mb-4 uppercase tracking-wider">Upcoming Schedule</h3>
+            {% if future %}
+            <div class="space-y-4">
+                {% for e in future %}
+                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                    <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                        <div class="min-w-0">
+                            <div class="flex items-center gap-3 flex-wrap">
+                                <p class="font-bold text-slate-900">{{ e['service_type'] }}</p>
+                                {% if e['property_name'] %}<span class="text-xs text-slate-500">· {{ e['property_name'] }}</span>{% endif %}
+                                {% if e['payment_status'] == 'paid' %}
+                                <span class="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-semibold rounded-full">Paid ✓</span>
+                                {% else %}
+                                <span class="px-2 py-1 bg-amber-50 text-amber-700 text-[10px] font-semibold rounded-full">Pending</span>
+                                {% endif %}
+                            </div>
+                            <p class="text-sm text-slate-600 mt-1">{{ e['start_time'].strftime('%A, %B %-d at %-I:%M %p') }}</p>
+                            {% if e['worker_name'] %}
+                            <div class="flex items-center gap-3 mt-3 flex-wrap">
+                                {% if e['on_clock'] %}
+                                <span class="inline-flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 text-xs font-bold rounded-full border border-red-100">
+                                    <span class="relative flex h-2 w-2">
+                                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                                        <span class="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                                    </span>
+                                    {{ e['worker_name'] }} ON THE CLOCK · LIVE
+                                </span>
+                                {% if e['last_seen_mins'] is not none %}
+                                <span class="text-xs text-slate-400">seen {{ e['last_seen_mins'] }}m ago</span>
+                                {% endif %}
+                                {% elif e['worker_status'] == 'completed' %}
+                                <span class="px-3 py-1.5 bg-sky-50 text-sky-600 text-xs font-bold rounded-full border border-sky-100">✓ Completed by {{ e['worker_name'] }}</span>
+                                {% else %}
+                                <span class="px-3 py-1.5 bg-slate-100 text-slate-500 text-xs font-semibold rounded-full">👤 Cleaner: {{ e['worker_name'] }} (scheduled)</span>
+                                {% endif %}
+                            </div>
+                            {% else %}
+                            <p class="text-xs text-slate-400 mt-2">No cleaner assigned yet.</p>
+                            {% endif %}
+                        </div>
+                        {% if e['map_url'] %}
+                        <div class="w-full lg:w-64 shrink-0">
+                            <iframe src="{{ e['map_url'] }}" class="w-full h-28 rounded-xl border border-slate-200" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+                            {% if e['on_clock'] %}<p class="text-[10px] text-slate-400 text-center mt-1">Live cleaner location</p>{% endif %}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="text-center py-10 text-slate-400 bg-white rounded-2xl border border-slate-200">
+                <p class="text-3xl mb-2">🗓️</p>
+                <p class="text-sm">Nothing scheduled.</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Recent History -->
+        {% if past %}
+        <div>
+            <h3 class="text-sm font-bold text-slate-900 mb-4 uppercase tracking-wider">Recent History</h3>
+            <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+                {% for e in past %}
+                <div class="flex items-center justify-between gap-3 px-5 py-4 {% if not loop.last %}border-b border-slate-100{% endif %}">
+                    <div class="min-w-0">
+                        <p class="text-sm font-bold text-slate-800 truncate">{{ e['service_type'] }} — {{ e['property_name'] or 'Your property' }}</p>
+                        <p class="text-xs text-slate-500">{{ e['start_time'].strftime('%a, %b %-d, %-I:%M %p') }}</p>
+                    </div>
+                    <div class="shrink-0">
+                        {% if e['worker_status'] == 'completed' %}
+                        <span class="px-2.5 py-1 bg-sky-50 text-sky-600 text-[10px] font-semibold rounded-full">Completed ✓</span>
+                        {% elif e['worker_name'] %}
+                        <span class="px-2.5 py-1 bg-slate-100 text-slate-500 text-[10px] font-semibold rounded-full">{{ e['worker_name'] }}</span>
+                        {% else %}
+                        <span class="px-2.5 py-1 bg-slate-100 text-slate-400 text-[10px] font-semibold rounded-full">—</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+    </div>
+</section>
+{% endblock %}
