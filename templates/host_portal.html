@@ -11,9 +11,12 @@
                 <h1 class="text-3xl font-extrabold tracking-tight text-slate-900">Welcome, {{ host['name'] }}</h1>
                 <p class="mt-1 text-slate-600">Here's what's happening at your property.</p>
             </div>
-            <a href="/api/host/auth/logout" class="inline-flex items-center justify-center px-4 py-2.5 text-sm font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl transition-all">
-                Log Out
-            </a>
+            <div class="flex items-center gap-2">
+                <a href="/present/host" class="inline-flex items-center justify-center px-4 py-2.5 text-sm font-semibold text-emerald-700 bg-emerald-50 border border-emerald-100 hover:bg-emerald-100 rounded-xl transition-all">▶ Your welcome deck</a>
+                <a href="/api/host/auth/logout" class="inline-flex items-center justify-center px-4 py-2.5 text-sm font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl transition-all">
+                    Log Out
+                </a>
+            </div>
         </div>
 
         <!-- Next Upcoming Turnover Highlight -->

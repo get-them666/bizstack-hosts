@@ -9,9 +9,12 @@
                 <h1 class="text-3xl font-extrabold tracking-tight text-slate-900">Hi, {{ worker['name'] }}</h1>
                 <p class="mt-2 text-slate-600">Your earned total (completed jobs): <span class="font-bold text-emerald-600">${{ '%.2f'|format(totals['earned_cents'] / 100) }}</span> across {{ totals['jobs_done'] }} jobs.</p>
             </div>
-            <a href="/api/worker/auth/logout" class="inline-flex items-center justify-center px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-all shadow-md">
-                Log Out
-            </a>
+            <div class="flex items-center gap-2">
+                <a href="/present/worker" class="inline-flex items-center justify-center px-5 py-2.5 text-sm font-semibold text-indigo-700 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 rounded-xl transition-all shadow-sm">▶ Your orientation</a>
+                <a href="/api/worker/auth/logout" class="inline-flex items-center justify-center px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-xl transition-all shadow-md">
+                    Log Out
+                </a>
+            </div>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
