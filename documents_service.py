@@ -5,6 +5,7 @@ Rendering is data-driven from the prefab definitions in legal_forms.py
 or custom form definitions stored in the database.
 """
 
+import asyncio
 import io
 import re
 from email.message import EmailMessage
@@ -498,8 +499,8 @@ async def send_email(cfg: dict, to: str, subject: str, body: str, attachment: by
     tls = (cfg.get("SMTP_TLS") or "starttls").lower()
 
     # Build a retry ladder of (port, mode) candidates. Namecheap and other
-    # providers intermittently drop cloud-host egress, so we try STARTTLS,
-    # then implicit SSL, then plain submission with a short per-attempt timeout.
+    # providers intermittently drop cloud-host egress, so we race STARTTLS
+    # and implicit SSL candidates concurrently and use whichever connects.
     ladder = []
     if port not in (25, 465, 587):
         ladder.append((port, tls if tls in ("ssl", "starttls") else "starttls"))
@@ -515,20 +516,33 @@ async def send_email(cfg: dict, to: str, subject: str, body: str, attachment: by
         ladder.remove(tail[0])
         ladder.insert(0, (port, tls if tls in ("ssl", "starttls") else "starttls"))
 
-    last_err = None
-    for smtp_port, mode in ladder:
-        kwargs = dict(hostname=host, port=smtp_port, validate_certs=False, timeout=10)
+    async def _try(port: int, mode: str):
+        kwargs = dict(hostname=host, port=port, validate_certs=False, timeout=10)
         if cfg.get("SMTP_USER"):
             kwargs.update(username=cfg["SMTP_USER"], password=cfg.get("SMTP_PASS", ""))
-        try:
-            if mode == "ssl":
-                await aiosmtplib.send(msg, use_tls=True, **kwargs)
-            elif mode == "starttls":
-                await aiosmtplib.send(msg, start_tls=True, **kwargs)
-            else:
-                await aiosmtplib.send(msg, start_tls=False, **kwargs)
-            return True
-        except Exception as e:
-            last_err = e
-            print(f"[EMAIL] SMTP {host}:{smtp_port}/{mode} failed: {e}")
-    raise last_err
+        if mode == "ssl":
+            await aiosmtplib.send(msg, use_tls=True, **kwargs)
+        elif mode == "starttls":
+            await aiosmtplib.send(msg, start_tls=True, **kwargs)
+        else:
+            await aiosmtplib.send(msg, start_tls=False, **kwargs)
+
+    # Race the candidates so the first reachable port wins; cancel the rest.
+    tasks = [asyncio.ensure_future(_try(p, m)) for p, m in ladder]
+    try:
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+        for t in pending:
+            t.cancel()
+        for t in done:
+            if not t.exception():
+                return True
+        for t in done:
+            e = t.exception()
+            print(f"[EMAIL] SMTP {host} attempt failed: {e}")
+        raise t.exception()
+    except asyncio.CancelledError:
+        raise
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
