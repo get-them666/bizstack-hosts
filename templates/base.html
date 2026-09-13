@@ -161,6 +161,19 @@
                 <!-- Action Buttons -->
                 <div class="hidden lg:flex items-center gap-3 pl-2 shrink-0">
                     {% if actor_role == 'admin' or user %}
+                    <div class="nav-dropdown" id="security-alerts" tabindex="0">
+                        <button class="nav-link nav-dropdown-trigger relative" aria-label="Security alerts">
+                            🔔
+                            <span id="alert-count" class="hidden absolute -top-1 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">0</span>
+                        </button>
+                        <div class="nav-dropdown-menu" id="alert-menu" style="min-width: 340px; max-height: 420px; overflow: auto;">
+                            <div class="px-3 py-2 text-xs font-bold text-slate-800 uppercase tracking-wider border-b border-slate-100 flex items-center justify-between">
+                                <span>Security alerts</span>
+                                <button id="mark-alerts-read" type="button" class="text-indigo-600 hover:text-indigo-800 font-semibold normal-case">Mark all read</button>
+                            </div>
+                            <div id="alert-list" class="py-1"><p class="px-3 py-3 text-sm text-slate-400">Loading…</p></div>
+                        </div>
+                    </div>
                     <span class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-sm font-semibold text-slate-700 max-w-[220px] truncate" title="{{ user.email if user else current_actor(request).email }}">
                         <span class="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center shrink-0">{{ (user.email if user else current_actor(request).email)[0] | upper }}</span>
                         <span class="truncate">{{ user.email if user else current_actor(request).email }}</span>
@@ -292,6 +305,43 @@
                     }
                 });
             });
+
+            const bell = document.getElementById('security-alerts');
+            const countEl = document.getElementById('alert-count');
+            const listEl = document.getElementById('alert-list');
+            if (bell) {
+                let alerts = [];
+                async function loadAlerts() {
+                    try {
+                        const res = await fetch('/api/alerts', { credentials: 'same-origin' });
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        alerts = data.alerts || [];
+                        const unread = alerts.filter(a => !a.read).length;
+                        countEl.textContent = unread;
+                        countEl.classList.toggle('hidden', unread === 0);
+                        listEl.innerHTML = alerts.length
+                            ? alerts.map(a => {
+                                const t = (a.details && a.details !== '""' && a.details !== '') ? a.details : '';
+                                let ip = '', time = '';
+                                if (t) {
+                                    try { const d = JSON.parse(t); ip = d.ip || ''; time = d.time || ''; } catch (e) {}
+                                }
+                                return '<div class="px-3 py-2.5 border-b border-slate-50 ' + (a.read ? 'opacity-60' : 'bg-red-50/40') + '">' +
+                                    '<p class="text-sm font-semibold text-slate-800">' + a.message + '</p>' +
+                                    '<p class="text-xs text-slate-500 mt-0.5">' + (time || a.created_at) + (ip ? ' · IP ' + ip : '') + '</p>' +
+                                    '</div>';
+                            }).join('')
+                            : '<p class="px-3 py-3 text-sm text-slate-400">No security alerts.</p>';
+                    } catch (e) {}
+                }
+                document.getElementById('mark-alerts-read').addEventListener('click', async function() {
+                    await fetch('/api/alerts/read', { method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: 'ids=all' });
+                    loadAlerts();
+                });
+                loadAlerts();
+                setInterval(loadAlerts, 20000);
+            }
         });
     </script>
     {% block scripts %}{% endblock %}

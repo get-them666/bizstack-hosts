@@ -92,8 +92,14 @@ def issue_session(role: str, actor_id, email: str, name: str) -> str:
     return sign_token({
         "t": "session", "role": role, "id": actor_id,
         "email": email or "", "name": name or "",
+        "sid": secrets.token_urlsafe(24),
         "exp": time.time() + SESSION_TTL_SECONDS,
     })
+
+
+def session_id_from_token(token: str):
+    payload = verify_token(token)
+    return payload.get("sid") if payload else None
 
 
 def issue_pending(role: str, actor_id, email: str, name: str) -> str:

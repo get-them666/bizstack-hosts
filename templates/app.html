@@ -24,6 +24,13 @@
 
     <div id="app" class="max-w-md mx-auto min-h-screen flex flex-col">
 
+        <!-- Security alert banner (app) -->
+        <div id="app-alert-banner" class="hidden sticky top-0 z-40 px-4 py-3 bg-red-50 border-b border-red-200 text-red-700 text-sm font-semibold flex items-center gap-2">
+            <span>⚠️</span>
+            <span id="app-alert-banner-text" class="flex-1"></span>
+            <button type="button" id="app-alert-dismiss" class="text-red-400 hover:text-red-600 font-bold">✕</button>
+        </div>
+
         <!-- Login view -->
         <div id="login-view" class="hidden flex-1 flex flex-col px-6">
             <div class="safe-top mt-14 mb-6 text-center">
@@ -459,6 +466,27 @@
         document.addEventListener('DOMContentLoaded', () => {
             if ('serviceWorker' in navigator) {
                 navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
+            }
+
+            const alertBanner = $('app-alert-banner');
+            const alertText = $('app-alert-banner-text');
+            if (alertBanner) {
+                async function loadAlerts() {
+                    try {
+                        const { res, data } = await api('/api/alerts');
+                        if (!res.ok) return;
+                        const unread = (data.alerts || []).filter(a => !a.read);
+                        if (unread.length) {
+                            alertText.textContent = unread.length + ' security alert' + (unread.length > 1 ? 's' : '') + ' — ' + unread[0].message;
+                            alertBanner.classList.remove('hidden');
+                        } else {
+                            alertBanner.classList.add('hidden');
+                        }
+                    } catch (e) {}
+                }
+                $('app-alert-dismiss').addEventListener('click', () => alertBanner.classList.add('hidden'));
+                loadAlerts();
+                setInterval(loadAlerts, 30000);
             }
 
             window.addEventListener('online', () => $('offline-banner').classList.add('hidden'));

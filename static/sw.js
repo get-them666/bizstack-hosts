@@ -1,4 +1,4 @@
-const CACHE = "bizstack-crew-v1";
+const CACHE = "bizstack-crew-v2";
 const SHELL = [
   "/app",
   "/manifest.webmanifest",
@@ -41,19 +41,16 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // App shell: cache-first with network fallback.
+  // App shell: network-first (fresh always wins) with cached fallback for offline.
   if (url.origin === location.origin) {
     event.respondWith(
-      caches.match(request).then((cached) => {
-        const network = fetch(request).then((res) => {
-          if (res && res.ok && res.type === "basic") {
-            const copy = res.clone();
-            caches.open(CACHE).then((cache) => cache.put(request, copy));
-          }
-          return res;
-        }).catch(() => cached);
-        return cached || network;
-      })
+      fetch(request).then((res) => {
+        if (res && res.ok && res.type === "basic") {
+          const copy = res.clone();
+          caches.open(CACHE).then((cache) => cache.put(request, copy));
+        }
+        return res;
+      }).catch(() => caches.match(request))
     );
     return;
   }

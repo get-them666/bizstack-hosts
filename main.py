@@ -3,6 +3,7 @@ import json
 import math
 import secrets
 import hashlib
+import asyncio
 import hmac
 import urllib.parse
 import urllib.request
@@ -873,6 +874,31 @@ async def lifecycle(app: FastAPI):
                 );
                 """)
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_created ON messages (created_at DESC);")
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS active_sessions (
+                    id SERIAL PRIMARY KEY,
+                    role VARCHAR(20) NOT NULL,
+                    actor_id INTEGER NOT NULL,
+                    device_id VARCHAR(64) NOT NULL,
+                    token_ref VARCHAR(64) NOT NULL,
+                    ua VARCHAR(300) DEFAULT '',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    last_active_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    active BOOLEAN DEFAULT TRUE
+                );
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_active_sessions_actor ON active_sessions (role, actor_id);")
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS alerts (
+                    id SERIAL PRIMARY KEY,
+                    kind VARCHAR(50) NOT NULL DEFAULT 'info',
+                    severity VARCHAR(20) NOT NULL DEFAULT 'warning',
+                    message TEXT NOT NULL,
+                    details TEXT DEFAULT '',
+                    read BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
                 conn.commit()
         print("🚀 Database connectivity and tables validated successfully.")
     except Exception as e:
@@ -901,6 +927,116 @@ def require_auth(request: Request):
 def require_admin(request: Request) -> None:
     if not require_auth(request)[0]:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin login required")
+
+DEVICE_COOKIE = "device_id"
+
+def _get_device_id(request: Request, resp) -> str:
+    did = request.cookies.get(DEVICE_COOKIE)
+    if did and len(did) <= 64:
+        return did
+    did = secrets.token_urlsafe(16)
+    resp.set_cookie(key=DEVICE_COOKIE, value=did, httponly=True, samesite="lax",
+                    secure=_secure_cookies(), max_age=365 * 24 * 3600)
+    return did
+
+def _token_ref(sid: str) -> str:
+    return hashlib.sha256(("bzsid|" + (sid or "")).encode()).hexdigest()
+
+def _register_device_session(db, actor: dict, token: str, request: Request, resp) -> tuple:
+    """Record the active device for an actor's new session.
+
+    Returns (new_device: bool, new_device_id, old_device_id) where
+    new_device is True when this login came from a device different
+    from the previously active one."""
+    sid = auth_service.session_id_from_token(token)
+    if not sid:
+        return False, "", ""
+    device_id = _get_device_id(request, resp)
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT device_id FROM active_sessions WHERE role = %s AND actor_id = %s AND active = TRUE ORDER BY created_at DESC LIMIT 1;",
+            (actor["role"], actor.get("id")),
+        )
+        prior = cur.fetchone()
+        old_device_id = prior["device_id"] if prior else ""
+        new_device = bool(prior and prior["device_id"] != device_id)
+        cur.execute("UPDATE active_sessions SET active = FALSE WHERE role = %s AND actor_id = %s;", (actor["role"], actor.get("id")))
+        cur.execute(
+            "INSERT INTO active_sessions (role, actor_id, device_id, token_ref, ua) VALUES (%s, %s, %s, %s, %s);",
+            (actor["role"], actor.get("id"), device_id, _token_ref(sid), (request.headers.get("user-agent") or "")[:300]),
+        )
+        db.commit()
+    return new_device, device_id, old_device_id
+
+def _device_session_ok(db, actor: dict, request: Request) -> bool:
+    token = request.cookies.get(auth_service.SESSION_COOKIE)
+    sid = auth_service.session_id_from_token(token) if token else None
+    if not sid:
+        return False
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT id FROM active_sessions WHERE role = %s AND actor_id = %s AND active = TRUE AND token_ref = %s;",
+            (actor["role"], actor.get("id"), _token_ref(sid)),
+        )
+        row = cur.fetchone()
+        if row:
+            cur.execute("UPDATE active_sessions SET last_active_at = NOW() WHERE id = %s;", (row["id"],))
+            db.commit()
+    return bool(row)
+
+def _log_alert(db, kind: str, severity: str, message: str, details: str = "") -> int:
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO alerts (kind, severity, message, details) VALUES (%s, %s, %s, %s) RETURNING id;",
+            (kind, severity, message, details[:2000]),
+        )
+        alert_id = cur.fetchone()["id"]
+        db.commit()
+    return alert_id
+
+async def _notify_new_device(actor: dict, new_device_id: str, old_device_id: str, request: Request):
+    """Record + push a new-device login alert to the admin console, email, and SMS."""
+    conn = psycopg.connect(db_url, row_factory=dict_row)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO alerts (kind, severity, message, details) VALUES ('new_device_login', 'warning', %s, %s) RETURNING id;",
+                (
+                    f"New device signed in to {actor.get('role')} account {actor.get('name') or actor.get('email') or '?'}",
+                    json.dumps({
+                        "role": actor.get("role"), "name": actor.get("name"), "email": actor.get("email"),
+                        "new_device": new_device_id, "previous_device": old_device_id,
+                        "ip": request.client.host if request.client else "",
+                        "ua": (request.headers.get("user-agent") or "")[:300],
+                        "time": datetime.now(APP_TZ).isoformat(),
+                    }),
+                ),
+            )
+            conn.commit()
+
+        to_email = (os.getenv("ADMIN_ALERT_EMAIL") or os.getenv("ADMIN_OTP_EMAIL") or os.getenv("ADMIN_EMAIL") or "").strip()
+        to_phone = (os.getenv("ADMIN_ALERT_PHONE") or "").strip()
+        subject = "⚠️ New device signed in — BizStack Hosts"
+        msg_text = (
+            f"A new device just signed in to the {actor.get('role')} account "
+            f"{actor.get('name') or actor.get('email') or '?'}.\n\n"
+            f"Role: {actor.get('role')}\nEmail: {actor.get('email')}\n"
+            f"Device ID: {new_device_id}\nPrevious device: {old_device_id or 'none'}\n"
+            f"IP: {(request.client.host if request.client else 'unknown')}\n"
+            f"Time: {datetime.now(APP_TZ).strftime('%b %d, %Y %I:%M %p %Z')}\n\n"
+            f"If this wasn't you, change the login credentials and review active sessions."
+        )
+        if to_email:
+            cfg = documents_service.smtp_config_from_env()
+            if documents_service.smtp_configured(cfg):
+                try:
+                    await documents_service.send_email(cfg, to_email, subject, msg_text)
+                except Exception as e:
+                    print(f"[ALERT] email failed: {e}")
+        if to_phone:
+            await asyncio.to_thread(signalwire.send_sms, to_phone, ("[ALERT] " + msg_text)[:1600])
+    finally:
+        conn.close()
 
 def _features(db, role: str) -> dict:
     return auth_service.features_for(role, _get_setting(db, f"perms_{role}", ""))
@@ -1062,7 +1198,7 @@ async def _deliver_otp(db, email: str, code: str, actor: dict):
     print(f"[OTP] SMTP not configured — code for {email}: {code}")
     return False, "Email delivery is not configured yet. Ask the office to set up SMTP on the Documents page."
 
-def _finish_login(actor: dict) -> RedirectResponse:
+def _finish_login(actor: dict, request: Request | None = None) -> RedirectResponse:
     token = auth_service.issue_session(actor["role"], actor.get("id"), actor.get("email"), actor.get("name"))
     resp = RedirectResponse(url=_login_redirect(actor["role"]), status_code=status.HTTP_303_SEE_OTHER)
     resp.set_cookie(key=auth_service.SESSION_COOKIE, value=token, httponly=True, samesite="lax", secure=_secure_cookies())
@@ -1071,10 +1207,18 @@ def _finish_login(actor: dict) -> RedirectResponse:
     resp.set_cookie(key="role", value=actor["role"], httponly=True, samesite="lax")
     resp.set_cookie(key="actor_id", value=str(actor.get("id")), httponly=True, samesite="lax")
     resp.delete_cookie(auth_service.OTP_COOKIE)
+    if request is not None:
+        with psycopg.connect(db_url, row_factory=dict_row) as conn:
+            new_device, new_device_id, old_device_id = _register_device_session(conn, actor, token, request, resp)
+        if new_device:
+            try:
+                asyncio.create_task(_notify_new_device(actor, new_device_id, old_device_id, request))
+            except Exception as e:
+                print(f"[SECURITY] could not raise new-device alert: {e}")
     return resp
 
 @app.post("/api/auth/login")
-async def api_login(identifier: str = Form(...), secret: str = Form(...), db=Depends(get_db)):
+async def api_login(identifier: str = Form(...), secret: str = Form(...), request: Request = None, db=Depends(get_db)):
     actor = _resolve_credentials(db, identifier, secret)
     if not actor:
         return RedirectResponse(url="/login?error=Invalid+email%2Fphone+or+password%2FPIN", status_code=status.HTTP_303_SEE_OTHER)
@@ -1083,7 +1227,7 @@ async def api_login(identifier: str = Form(...), secret: str = Form(...), db=Dep
         return RedirectResponse(url="/login?error=No+email+on+file+%E2%80%94+ask+the+office+to+add+one", status_code=status.HTTP_303_SEE_OTHER)
 
     if not _otp_enabled(db):
-        return _finish_login(actor)
+        return _finish_login(actor, request)
 
     code = auth_service.generate_otp()
     _store_otp(db, actor["role"], actor.get("id"), email, code)
@@ -1138,7 +1282,7 @@ async def api_verify_otp(request: Request, code: str = Form(...), db=Depends(get
     return _finish_login({
         "role": pending["role"], "id": pending.get("id"),
         "email": pending.get("email"), "name": pending.get("name"),
-    })
+    }, request)
 
 @app.post("/api/auth/resend-otp")
 async def api_resend_otp(request: Request, db=Depends(get_db)):
@@ -1552,7 +1696,7 @@ async def host_login(email: str = Form(...), password: str = Form(...), db=Depen
     if _otp_enabled(db) and not (host.get("email") or "").strip():
         return RedirectResponse(url="/host-login?error=No+email+on+file+%E2%80%94+ask+the+office+to+add+one", status_code=status.HTTP_303_SEE_OTHER)
     if not _otp_enabled(db):
-        return _finish_login(actor)
+        return _finish_login(actor, request)
 
     code = auth_service.generate_otp()
     _store_otp(db, "host", host["id"], host["email"], code)
@@ -2138,7 +2282,7 @@ async def worker_login(phone: str = Form(...), pin: str = Form(...), db=Depends(
     if _otp_enabled(db) and not (match.get("email") or "").strip():
         return RedirectResponse(url="/worker-login?error=No+email+on+file+%E2%80%94+ask+the+office+to+add+one", status_code=status.HTTP_303_SEE_OTHER)
     if not _otp_enabled(db):
-        return _finish_login(actor)
+        return _finish_login(actor, request)
 
     code = auth_service.generate_otp()
     _store_otp(db, "worker", match["id"], match["email"], code)
@@ -2856,6 +3000,8 @@ async def messages_list(request: Request, after: int = 0, db=Depends(get_db)):
     actor = current_actor(request)
     if not actor:
         raise HTTPException(status_code=401, detail="Login required")
+    if not _device_session_ok(db, actor, request):
+        raise HTTPException(status_code=403, detail="Messaging is locked to this account's active device. Log in again on this device to take over.")
     with db.cursor() as cur:
         cur.execute("""
             SELECT * FROM messages WHERE id > %s
@@ -2880,6 +3026,8 @@ async def messages_send(request: Request, body: str = Form(...), audience: str =
     actor = current_actor(request)
     if not actor:
         raise HTTPException(status_code=401, detail="Login required")
+    if not _device_session_ok(db, actor, request):
+        raise HTTPException(status_code=403, detail="Messaging is locked to this account's active device. Log in again on this device to take over.")
     if not body.strip():
         raise HTTPException(status_code=400, detail="Message is empty")
     if audience not in ("office", "workers", "hosts"):
@@ -2915,6 +3063,14 @@ async def ws_messages(websocket: WebSocket):
     if not actor:
         await websocket.close(code=1008)
         return
+    conn = psycopg.connect(db_url, row_factory=dict_row)
+    try:
+        device_ok = _device_session_ok(conn, actor, websocket)
+    finally:
+        conn.close()
+    if not device_ok:
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     msg_clients.add(websocket)
     websocket.state.actor = actor
@@ -2948,6 +3104,38 @@ async def ws_messages(websocket: WebSocket):
         pass
     finally:
         msg_clients.discard(websocket)
+
+@app.get("/api/alerts", response_class=JSONResponse)
+async def alerts_list(request: Request, db=Depends(get_db)):
+    actor = current_actor(request)
+    if not actor:
+        raise HTTPException(status_code=401, detail="Login required")
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM alerts ORDER BY id DESC LIMIT 30;")
+        rows = cur.fetchall()
+    return JSONResponse(content={"ok": True, "alerts": [
+        {
+            "id": a["id"], "kind": a["kind"], "severity": a["severity"],
+            "message": a["message"], "details": a["details"],
+            "read": bool(a["read"]), "created_at": a["created_at"].isoformat(),
+        }
+        for a in rows
+    ]})
+
+@app.post("/api/alerts/read")
+async def alerts_mark_read(request: Request, ids: str = Form(""), db=Depends(get_db)):
+    actor = current_actor(request)
+    if not actor:
+        raise HTTPException(status_code=401, detail="Login required")
+    with db.cursor() as cur:
+        if (ids or "").strip() and (ids or "").strip() != "all":
+            wanted = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+            if wanted:
+                cur.execute("UPDATE alerts SET read = TRUE WHERE id = ANY(%s);", (wanted,))
+        else:
+            cur.execute("UPDATE alerts SET read = TRUE;")
+        db.commit()
+    return JSONResponse(content={"ok": True})
 
 # The /app installable phone app reuses the exact same worker auth, clock,
 # geofence, location-tracking and paycheck backend as the web portal above.
@@ -3041,6 +3229,13 @@ async def worker_app_verify(request: Request, code: str = Form(...), db=Depends(
     resp.set_cookie(key="role", value="worker", httponly=True, samesite="lax")
     resp.set_cookie(key="actor_id", value=str(actor["id"]), httponly=True, samesite="lax")
     resp.delete_cookie(auth_service.OTP_COOKIE)
+    with psycopg.connect(db_url, row_factory=dict_row) as conn:
+        new_device, new_device_id, old_device_id = _register_device_session(conn, actor, token, request, resp)
+    if new_device:
+        try:
+            asyncio.create_task(_notify_new_device(actor, new_device_id, old_device_id, request))
+        except Exception as e:
+            print(f"[SECURITY] could not raise new-device alert: {e}")
     return resp
 
 @app.post("/api/worker/app/resend")

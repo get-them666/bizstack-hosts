@@ -66,6 +66,15 @@ function filterAudience(m) {
     return true;
 }
 
+function lockedError(detail) {
+    document.getElementById('message-list').innerHTML =
+        '<div class="text-center text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl my-4 py-4 px-3">' +
+        '🔒 ' + (detail || 'Messaging is locked to this account\'s active device.') + '<br>' +
+        '<span class="text-xs text-red-400 block mt-1">Sign in again on this device to take over messaging.</span>' +
+        '<a href="/api/auth/logout" class="inline-block mt-2 text-xs font-bold text-red-700 underline">Log in again</a>' +
+        '</div>';
+}
+
 function connect() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     ws = new WebSocket(`${proto}://${location.host}/ws/messages`);
@@ -76,11 +85,15 @@ function connect() {
         const m = JSON.parse(ev.data);
         if (filterAudience(m)) appendMessage(m);
     };
-    ws.onclose = () => { setTimeout(connect, 3000); };
+    ws.onclose = (ev) => { if (ev.code === 1008) { lockedError(); return; } setTimeout(connect, 3000); };
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    fetch('/api/messages?after=0').then(r => r.json()).then(d => {
+    fetch('/api/messages?after=0').then(r => {
+        if (r.status === 403) return {locked: true, message: null};
+        return r.json();
+    }).then(d => {
+        if (d.locked) { lockedError(); return; }
         const list = document.getElementById('message-list');
         list.innerHTML = '';
         const visible = (d.messages || []).filter(filterAudience);
