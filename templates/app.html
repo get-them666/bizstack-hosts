@@ -153,7 +153,7 @@
 
     <script>
         const FENCE_M = 100.584;
-        const state = { worker: null, jobs: [], paychecks: [], features: {}, otpEmail: '', watcher: null, updateTimer: null };
+        const state = { worker: null, jobs: [], paychecks: [], features: {}, otpEmail: '', lastPos: null, updateTimer: null, sampling: false };
 
         const $ = id => document.getElementById(id);
 
@@ -424,39 +424,47 @@
             }
         }
 
-        // Location is ONLY tracked while the worker is on the clock for a job.
+        // Location is sampled periodically (NOT a continuous GPS watch) while
+        // the worker is on the clock. Constant high-accuracy GPS keeps the
+        // phone's radios busy and drags cellular down to "no signal" on weak
+        // coverage, so we take one fix per minute instead and let the radio idle.
         function startTracking() {
-            if (state.watcher) return;
+            if (state.updateTimer) return;
             if (!navigator.geolocation) return;
-            state.watcher = navigator.geolocation.watchPosition(
-                pos => {
-                    const active = state.jobs.find(j => j.clocked_in);
-                    if (!active) { stopTracking(); return; }
-                    const c = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy };
-                    updateDistance(active.id, c);
-                },
-                () => {},
-                { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 }
-            );
-            state.updateTimer = setInterval(sendLocationUpdate, 20000);
+            state.lastPos = null;
+            sampleAndSend();
+            state.updateTimer = setInterval(sampleAndSend, 60000);
         }
 
-        function sendLocationUpdate() {
-            const active = state.jobs.find(j => j.clocked_in);
-            if (!active) return;
-            navigator.geolocation.getCurrentPosition(async pos => {
-                const c = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy };
-                await api('/api/worker/clock', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: new URLSearchParams({ event_id: active.id, action: 'update', lat: c.latitude, lng: c.longitude, accuracy: c.accuracy || '' })
-                });
-            }, () => {}, { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 });
+        async function sampleAndSend() {
+            if (state.sampling) return;
+            state.sampling = true;
+            try {
+                const active = state.jobs.find(j => j.clocked_in);
+                if (!active) { stopTracking(); return; }
+                try {
+                    const pos = await new Promise((resolve, reject) =>
+                        navigator.geolocation.getCurrentPosition(resolve, reject,
+                            { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }));
+                    const c = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy };
+                    state.lastPos = c;
+                    updateDistance(active.id, c);
+                    await api('/api/worker/clock', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: new URLSearchParams({ event_id: active.id, action: 'update', lat: c.latitude, lng: c.longitude, accuracy: c.accuracy || '' })
+                    });
+                } catch (e) {
+                    // Weak signal — skip this sample; the next tick retries.
+                }
+            } finally {
+                state.sampling = false;
+            }
         }
 
         function stopTracking() {
-            if (state.watcher) { navigator.geolocation.clearWatch(state.watcher); state.watcher = null; }
             if (state.updateTimer) { clearInterval(state.updateTimer); state.updateTimer = null; }
+            state.lastPos = null;
         }
 
         function stopTrackingIfNone() {
@@ -486,7 +494,7 @@
                 }
                 $('app-alert-dismiss').addEventListener('click', () => alertBanner.classList.add('hidden'));
                 loadAlerts();
-                setInterval(loadAlerts, 30000);
+                setInterval(loadAlerts, 60000);
             }
 
             window.addEventListener('online', () => $('offline-banner').classList.add('hidden'));
