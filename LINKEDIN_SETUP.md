@@ -52,10 +52,13 @@ Three campaign groups, one per audience angle. Single image creatives, **no vide
 - **CTA button:** "Learn More"
 - Intro/eyebrow: "Short-Term Rental Operations"
 
-### Budget plan (first 30 days)
-- **Daily budget:** $20/day split across the 3 groups (~$7 each)
-- Run 2 weeks baseline, then kill the worst group and double the best
-- Track: cost per lead (goal < $25), CTR (>0.8%), conversion to "host" (channel shows up in dashboard as `linkedin`, `camp=*`)
+### Budget plan — $250 free credit (first ~14 days)
+- You have **$250 in free LinkedIn ad credit** — LinkedIn applies it automatically to new spend; nothing special to do in billing
+- **Daily budget:** $18/day total (≈ $250 over 14 days) split across the 3 groups (~$6 each)
+- Run the full credit, then evaluate the scoreboard:
+  - **Goal:** cost per lead < $25 · CTR > 0.8% · leads converting to host
+  - Kill the worst-performing group and double the best after the credit is spent
+- Note: LinkedIn still requires a **payment method on file** to launch ads — the card only gets charged if you exceed the credit
 
 ## Measurement
 Every lead from ads lands in the dashboard under **source = linkedin** with a campaign badge (`autopilot` / `numbers` / `ai`) shown next to the channel on `/hosts` — so you can see which ad group converts.
