@@ -486,7 +486,8 @@ async def send_email(cfg: dict, to: str, subject: str, body: str, attachment: by
     msg["Subject"] = subject
     msg["From"] = formataddr((cfg.get("SMTP_NAME", ""), cfg.get("SMTP_FROM", "")))
     msg["To"] = to
-    msg.set_content(body)
+    physical = (os_getenv("SENDER_PHYSICAL_ADDRESS", "")).strip()
+    msg.set_content(body + ("\n\n" + physical if physical else ""))
     if attachment and filename:
         msg.add_attachment(
             attachment, maintype="application", subtype=mime_type(filename).split("/")[1], filename=filename
@@ -516,7 +517,7 @@ async def send_email(cfg: dict, to: str, subject: str, body: str, attachment: by
 
     last_err = None
     for smtp_port, mode in ladder:
-        kwargs = dict(hostname=host, port=smtp_port, validate_certs=False, timeout=15)
+        kwargs = dict(hostname=host, port=smtp_port, validate_certs=False, timeout=10)
         if cfg.get("SMTP_USER"):
             kwargs.update(username=cfg["SMTP_USER"], password=cfg.get("SMTP_PASS", ""))
         try:

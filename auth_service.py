@@ -55,7 +55,7 @@ DEFAULT_PERMISSIONS = {
 
 
 def _secret() -> bytes:
-    return (os.getenv("APP_SECRET") or os.getenv("SECRET_KEY") or "dev-insecure-secret").encode()
+    return (os.getenv("SESSION_COOKIE_SECRET") or os.getenv("APP_SECRET") or os.getenv("SECRET_KEY") or "dev-insecure-secret").encode()
 
 
 def _b64e(raw: bytes) -> str:
