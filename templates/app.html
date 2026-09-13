@@ -516,7 +516,9 @@
 
         document.addEventListener('DOMContentLoaded', () => {
             if ('serviceWorker' in navigator) {
-                navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
+                navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(() => {
+                    navigator.serviceWorker.getRegistration().then(r => { if (r) r.update().catch(() => {}); });
+                }).catch(() => {});
             }
 
             const phoneEl = $('login-phone');

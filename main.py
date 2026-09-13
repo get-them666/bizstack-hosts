@@ -3155,7 +3155,12 @@ async def alerts_mark_read(request: Request, ids: str = Form(""), db=Depends(get
 
 @app.get("/app", response_class=HTMLResponse)
 async def worker_app_page(request: Request):
-    return templates.TemplateResponse(request=request, name="app.html", context={})
+    return templates.TemplateResponse(
+        request=request,
+        name="app.html",
+        context={},
+        headers={"Cache-Control": "no-cache, max-age=0"},
+    )
 
 @app.get("/manifest.webmanifest", response_class=Response)
 async def web_manifest():
@@ -3165,7 +3170,11 @@ async def web_manifest():
 @app.get("/sw.js", response_class=Response)
 async def service_worker():
     content = Path(__file__).with_name("static") / "sw.js"
-    return Response(content=content.read_text(), media_type="application/javascript")
+    return Response(
+        content=content.read_text(),
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 @app.post("/api/worker/app/login")
 async def worker_app_login(phone: str = Form(...), pin: str = Form(...), db=Depends(get_db)):
