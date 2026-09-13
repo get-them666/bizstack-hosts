@@ -31,6 +31,19 @@
             <button type="button" id="app-alert-dismiss" class="text-red-400 hover:text-red-600 font-bold">✕</button>
         </div>
 
+        <!-- Location permission banner -->
+        <div id="geo-banner" class="hidden sticky top-0 z-40 px-4 py-3 bg-amber-50 border-b border-amber-200 text-amber-800 text-sm font-semibold">
+            <div class="flex items-center gap-2">
+                <span>📍</span>
+                <span class="flex-1">Location access is off — the office can't verify you at the job site without it.</span>
+            </div>
+            <button id="geo-enable" type="button"
+                class="mt-2 w-full py-2.5 text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl">
+                Allow Location
+            </button>
+            <p class="mt-2 text-xs text-amber-600 font-medium">Still blocked? Go to your phone's <b>Settings → Privacy → Location Services</b> and turn it on for this app, then reopen it.</p>
+        </div>
+
         <!-- Login view -->
         <div id="login-view" class="hidden flex-1 flex flex-col px-6">
             <div class="safe-top mt-14 mb-6 text-center">
@@ -198,6 +211,7 @@
             state.paychecks = data.paychecks;
             state.features = data.features || {};
             renderHome();
+            checkGeo();
         }
 
         function renderHome() {
@@ -368,7 +382,8 @@
                 startTracking();
             } catch (e) {
                 if (btn) { btn.disabled = false; btn.textContent = '🕐 Clock In'; }
-                alert('Could not get your location. Enable GPS/location and try again.');
+                checkGeo();
+                alert('Could not get your location. Tap "Allow Location" at the top, or enable Location in your phone settings.');
             }
         }
 
@@ -464,7 +479,8 @@
                         body: new URLSearchParams({ event_id: active.id, action: 'update', lat: c.latitude, lng: c.longitude, accuracy: c.accuracy || '' })
                     });
                 } catch (e) {
-                    // Weak signal — skip this sample; the next tick retries.
+                    // Weak signal or permission issue — retry next tick and surface the banner.
+                    checkGeo();
                 }
             } finally {
                 state.sampling = false;
@@ -480,6 +496,24 @@
             if (!state.jobs.some(j => j.clocked_in)) stopTracking();
         }
 
+        function showGeo(show) { $('geo-banner').classList.toggle('hidden', !show); }
+
+        function probeGeo() {
+            navigator.geolocation.getCurrentPosition(() => showGeo(false), () => showGeo(true), { timeout: 4000 });
+        }
+
+        function checkGeo() {
+            if (!navigator.geolocation) { showGeo(true); return; }
+            if (navigator.permissions && navigator.permissions.query) {
+                navigator.permissions.query({ name: 'geolocation' }).then(p => {
+                    if (p.state === 'denied') showGeo(true);
+                    else showGeo(false);
+                }).catch(() => probeGeo());
+            } else {
+                probeGeo();
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
             if ('serviceWorker' in navigator) {
                 navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
@@ -488,6 +522,17 @@
             const phoneEl = $('login-phone');
             if (phoneEl) {
                 phoneEl.addEventListener('input', () => { phoneEl.value = fmtPhone(phoneEl.value); });
+            }
+
+            const geoEnable = $('geo-enable');
+            if (geoEnable) {
+                geoEnable.addEventListener('click', () => {
+                    navigator.geolocation.getCurrentPosition(
+                        () => { checkGeo(); },
+                        () => { checkGeo(); },
+                        { enableHighAccuracy: true, timeout: 12000 }
+                    );
+                });
             }
 
             const alertBanner = $('app-alert-banner');
