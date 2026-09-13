@@ -166,7 +166,7 @@
 
     <script>
         const FENCE_M = 100.584;
-        const state = { worker: null, jobs: [], paychecks: [], features: {}, otpEmail: '', lastPos: null, updateTimer: null, sampling: false };
+        const state = { worker: null, jobs: [], paychecks: [], features: {}, totals: { earned_cents: 0, jobs_done: 0 }, otpEmail: '', lastPos: null, updateTimer: null, sampling: false };
 
         const $ = id => document.getElementById(id);
 
@@ -209,9 +209,11 @@
             state.worker = data.worker;
             state.jobs = data.jobs;
             state.paychecks = data.paychecks;
+            state.totals = data.totals || { earned_cents: 0, jobs_done: 0 };
             state.features = data.features || {};
             renderHome();
             checkGeo();
+            show('home');
         }
 
         function renderHome() {
