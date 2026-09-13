@@ -35,6 +35,20 @@
                 <p class="font-semibold text-slate-900">{{ p.name }}</p>
                 <p class="text-xs text-slate-500 mt-1">{{ p.kind }}{% if p.website %} · <a class="text-indigo-600" href="{{ p.website }}" target="_blank" rel="noopener">site</a>{% endif %}</p>
                 <p class="text-sm text-slate-600 mt-2">{{ p.contact_email or '—' }} {{ p.contact_phone or '' }}</p>
+                {% if p.referral_code %}
+                <div class="mt-3 pt-3 border-t border-slate-100">
+                    <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Referral link</p>
+                    <div class="flex items-center gap-2">
+                        <code class="flex-1 text-[10px] font-mono text-indigo-600 bg-indigo-50 rounded-md px-2 py-1 truncate">{{ p.referral_code }}</code>
+                        <button data-copy-partner data-url="/?ref={{ p.referral_code }}&amp;src=referral"
+                            class="text-[10px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-md px-2 py-1">Copy</button>
+                    </div>
+                    {% set act = referral_activity.get(p.referral_code) %}
+                    <p class="mt-2 text-[11px] text-slate-500">{{ act.cnt if act else 0 }} leads · {{ act.funding_cnt if act else 0 }} funding-need</p>
+                </div>
+                {% else %}
+                <button data-gen-partner data-id="{{ p.id }}" class="mt-3 text-[11px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-md px-2 py-1">Add referral link</button>
+                {% endif %}
             </div>
             {% endfor %}
         </div>
@@ -79,6 +93,20 @@
 {% endblock %}
 {% block scripts %}
 <script>
+function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(text);
+    }
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    return Promise.resolve();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('partner-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const body = new FormData(e.target);
@@ -86,5 +114,24 @@
         const data = await res.json();
         if (data.ok) { window.location.reload(); } else { alert(data.error || 'Could not save partner.'); }
     });
+
+    document.querySelectorAll('[data-copy-partner]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            copyText(window.location.origin + btn.getAttribute('data-url')).then(function() {
+                var old = btn.textContent;
+                btn.textContent = 'Copied ✓';
+                setTimeout(function() { btn.textContent = old; }, 1500);
+            });
+        });
+    });
+
+    document.querySelectorAll('[data-gen-partner]').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+            var res = await fetch('/api/partners/' + btn.dataset.genPartner + '/referral', { method: 'POST' });
+            var data = await res.json();
+            if (data.ok) { window.location.reload(); } else { alert(data.error || 'Could not create link.'); }
+        });
+    });
+});
 </script>
 {% endblock %}

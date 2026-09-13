@@ -53,6 +53,9 @@
                                 {% if features.get('timeclock') %}
                                 <button class="clock-in px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg" data-event="{{ job['id'] }}" data-coords="{{ '1' if job['job_coords'] else '0' }}">🕐 Clock In</button>
                                 {% endif %}
+                                {% if features.get('photos') %}
+                                <button class="open-photo-upload px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg" data-event="{{ job['id'] }}" data-name="{{ job['customer_name'] }}">📷 Photo Verify</button>
+                                {% endif %}
                                 {% if features.get('jobs') and job['worker_status'] != 'completed' %}
                                 <form method="post" action="/api/worker/jobs/{{ job['id'] }}/complete">
                                     <button class="text-xs font-semibold text-slate-400 hover:text-slate-600">Mark job done</button>
@@ -116,6 +119,46 @@
         </div>
     </div>
 </section>
+
+{% if features.get('photos') %}
+<!-- Photo Upload Modal -->
+<div id="photo-upload-modal" class="fixed inset-0 z-[60] hidden items-center justify-center p-4 bg-slate-900/60">
+    <div class="w-full max-w-md bg-white rounded-3xl shadow-2xl p-6">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-bold text-slate-900">📷 Photo Verify</h3>
+            <button type="button" id="photo-upload-close" class="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+        </div>
+        <p class="text-xs text-slate-500 mb-2">Show the office the finished clean. Use your camera — one photo per room (plus shots of any damage or problems found).</p>
+        <form id="photo-upload-form">
+            <input type="hidden" name="event_id" id="photo-upload-event">
+            <div class="space-y-3">
+                <div>
+                    <label class="text-xs font-semibold text-slate-600">Room / area</label>
+                    <input type="text" name="room" id="photo-upload-room" placeholder="Kitchen, Bathroom 1, Living Room…" class="w-full mt-1 px-3 py-2 rounded-xl border border-slate-200 text-sm">
+                </div>
+                <div>
+                    <label class="text-xs font-semibold text-slate-600">Type</label>
+                    <select name="category" id="photo-upload-category" class="w-full mt-1 px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white">
+                        <option value="clean">Clean / photo-finish</option>
+                        <option value="damage">Damage</option>
+                        <option value="other">Problem / note</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="text-xs font-semibold text-slate-600">Caption (optional)</label>
+                    <input type="text" name="caption" placeholder="e.g. Made the beds, towels out" class="w-full mt-1 px-3 py-2 rounded-xl border border-slate-200 text-sm">
+                </div>
+                <div>
+                    <label class="text-xs font-semibold text-slate-600">Photo</label>
+                    <input type="file" name="photo" accept="image/*" capture="environment" required class="w-full mt-1 text-sm">
+                </div>
+                <button type="submit" class="w-full px-4 py-3 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">Upload Photo</button>
+                <p id="photo-upload-status" class="text-xs text-emerald-600 font-semibold"></p>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -213,6 +256,38 @@ document.addEventListener('DOMContentLoaded', () => {
     startWatch({{ job['id'] }});
     {% endif %}
     {% endfor %}
+    const modal = document.getElementById('photo-upload-modal');
+    if (modal) {
+        const form = document.getElementById('photo-upload-form');
+        const statusEl = document.getElementById('photo-upload-status');
+        const closeBtn = document.getElementById('photo-upload-close');
+        document.querySelectorAll('.open-photo-upload').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.getElementById('photo-upload-event').value = btn.dataset.event;
+                document.getElementById('photo-upload-room').value = '';
+                statusEl.textContent = '';
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+            });
+        });
+        closeBtn.addEventListener('click', () => { modal.classList.add('hidden'); modal.classList.remove('flex'); });
+        modal.addEventListener('click', e => { if (e.target === modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); } });
+        form.addEventListener('submit', async e => {
+            e.preventDefault();
+            statusEl.textContent = 'Uploading…';
+            try {
+                const res = await fetch('/api/photos/upload', {method: 'POST', body: new FormData(form)});
+                const data = await res.json();
+                if (!res.ok) { statusEl.style.color = 'red'; statusEl.textContent = data.detail || 'Upload failed.'; return; }
+                statusEl.style.color = '';
+                statusEl.textContent = '✅ Photo uploaded — thank you!';
+                form.reset();
+            } catch (err) {
+                statusEl.style.color = 'red';
+                statusEl.textContent = 'Upload failed. Check your connection.';
+            }
+        });
+    }
 });
 </script>
 {% endblock %}

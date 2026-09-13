@@ -530,6 +530,9 @@
                 const fundingCheck = document.getElementById('form-funding');
                 urlEncodedData.append('funding_needed', fundingCheck && fundingCheck.checked ? 'on' : 'off');
                 urlEncodedData.append('funding_use', (document.getElementById('form-funding-use').value || ''));
+                const qs = new URLSearchParams(window.location.search);
+                urlEncodedData.append('source', qs.get('src') || '');
+                urlEncodedData.append('ref', qs.get('ref') || '');
 
                 fetch('/submit-lead', {
                     method: 'POST',

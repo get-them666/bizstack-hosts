@@ -40,12 +40,15 @@ class HospitableService:
     def configured(self):
         return bool(self.pat)
 
-    def _get(self, path, params=None):
+    def _get(self, path, params=None, multi=None):
         if not self.configured:
             raise RuntimeError("Hospitable API token is not configured.")
         url = self.base_url + path
         if params:
             url += "?" + urllib.parse.urlencode(params)
+        if multi:
+            sep = "&" if "?" in url else "?"
+            url += sep + "&".join(f"{key}={urllib.parse.quote(str(v), safe='')}" for key, values in multi.items() for v in values)
         req = urllib.request.Request(
             url,
             headers={"Authorization": f"Bearer {self.pat}", "Accept": "application/json"},
@@ -69,9 +72,10 @@ class HospitableService:
 
     def get_reservations(self, property_uuids, start_date, end_date, include="guest,properties,financials"):
         params = {"start_date": start_date, "end_date": end_date, "include": include}
+        multi = None
         if property_uuids:
-            params["properties"] = ",".join(property_uuids)
-        data = self._get("/reservations", params)
+            multi = {"properties[]": property_uuids}
+        data = self._get("/reservations", params, multi=multi)
         return data.get("data") or []
 
 
@@ -124,6 +128,99 @@ def extract_reservation(res):
         "total_cents": total_cents,
         "raw": res,
     }
+
+
+def _upsert_reservation(db, r, uuid_to_local, mapped_source):
+    """Create or update one calendar_events row from a parsed reservation dict."""
+    if not r["id"] or not r["check_in"] or not r["check_out"]:
+        return "skipped_no_dates"
+
+    local = None
+    for pu in r["property_uuids"]:
+        if pu in uuid_to_local:
+            local = uuid_to_local[pu]
+            break
+    if local is None:
+        return "skipped_unmatched"
+
+    status_val = "cancelled" if r["status"] in CANCELLED_STATUSES else "active"
+
+    with db.cursor() as cur:
+        cur.execute(
+            """SELECT id, payment_status FROM calendar_events
+               WHERE channel_source = %s AND channel_booking_id = %s FOR UPDATE;""",
+            (mapped_source, r["id"]),
+        )
+        existing = cur.fetchone()
+        if existing:
+            cur.execute(
+                """UPDATE calendar_events
+                   SET customer_name = %s, phone = %s, start_time = %s, end_time = %s,
+                       host_id = %s, property_id = %s, channel_status = %s,
+                       channel_guest_email = %s, amount_cents = COALESCE(%s, amount_cents)
+                   WHERE id = %s;""",
+                (
+                    r["guest_name"],
+                    r["guest_phone"] or "(channel)",
+                    r["check_in"],
+                    r["check_out"],
+                    local["host_id"],
+                    local["id"],
+                    status_val,
+                    r["guest_email"],
+                    r["total_cents"],
+                    existing["id"],
+                ),
+            )
+            if status_val == "cancelled" and existing["payment_status"] != "paid":
+                cur.execute(
+                    "UPDATE calendar_events SET payment_status = 'cancelled' WHERE id = %s;",
+                    (existing["id"],),
+                )
+        else:
+            cur.execute(
+                """INSERT INTO calendar_events
+                   (customer_name, phone, start_time, end_time, service_type,
+                    payment_status, host_id, property_id, channel_source, channel_booking_id,
+                    channel_status, channel_guest_email, amount_cents)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);""",
+                (
+                    r["guest_name"],
+                    r["guest_phone"] or "(channel)",
+                    r["check_in"],
+                    r["check_out"],
+                    "Channel Booking",
+                    "cancelled" if status_val == "cancelled" else "unpaid",
+                    local["host_id"],
+                    local["id"],
+                    mapped_source,
+                    r["id"],
+                    status_val,
+                    r["guest_email"],
+                    r["total_cents"],
+                ),
+            )
+    db.commit()
+    return "updated" if existing else "created"
+
+
+def sync_hospitable_webhook(db, pat, res):
+    """Upsert a single reservation (from a webhook payload) into calendar_events.
+    Returns a summary dict.
+    """
+    with db.cursor() as cur:
+        cur.execute("SELECT id, host_id, name, channel_property_uuid FROM properties WHERE channel_property_uuid IS NOT NULL;")
+        link_rows = cur.fetchall()
+    uuid_to_local = {str(r["channel_property_uuid"]): r for r in link_rows}
+    r = extract_reservation(res)
+    source = r["source"] or "direct"
+    mapped_source = source if source in CHANNEL_LABELS else "hospitable"
+    result = _upsert_reservation(db, r, uuid_to_local, mapped_source)
+    if result == "skipped_no_dates":
+        return {"status": "skipped", "reason": "reservation missing id or dates in webhook payload"}
+    if result == "skipped_unmatched":
+        return {"status": "skipped", "reason": "reservation property is not linked to a local property"}
+    return {"status": "success", "result": result, "booking_id": r["id"]}
 
 
 def sync_hospitable(db, pat):

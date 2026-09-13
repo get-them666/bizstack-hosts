@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+{% block title %}Labor Sourcing | BizStack Hosts{% endblock %}
+{% block content %}
+<section class="bg-gradient-to-b from-slate-50 to-white">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-10">
+      <div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900">Labor Sourcing</h1>
+        <p class="mt-2 text-slate-600">Staff your Hampton Roads cleanings — day labor, recurring hires, and job boards.</p>
+      </div>
+      <a href="/dashboard" class="inline-flex items-center justify-center px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all shadow-md shadow-indigo-100">
+        ← Back to Dashboard
+      </a>
+    </div>
+
+    <!-- Strategy Overview -->
+    <div class="mb-10 bg-slate-900 text-white rounded-3xl p-8 shadow-lg shadow-slate-300">
+      <div class="flex items-center gap-3 mb-6">
+        <div class="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-white font-bold">🧭</div>
+        <div>
+          <h2 class="text-lg font-bold">Recommended Strategy — Build a 3-Tier Bench</h2>
+          <p class="text-xs text-slate-400">Free channels first, job boards when volume grows, day labor only for emergencies</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 text-sm">
+        <div class="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-400/30">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="w-6 h-6 rounded-lg bg-emerald-500 text-white text-xs font-bold flex items-center justify-center">1</span>
+            <p class="font-semibold text-white">Your Vetted Subs <span class="text-emerald-300">· do this now</span></p>
+          </div>
+          <p class="text-xs text-slate-300 leading-relaxed">Recruit 2–3 part-time cleaners via Facebook groups + Craigslist while you have time. Run a photo-verified trial on your own property first — it filters out the flaky 60% and doubles as training. Free, and they're your go-to on every job.</p>
+        </div>
+        <div class="p-4 rounded-2xl bg-indigo-500/10 border border-indigo-400/30">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="w-6 h-6 rounded-lg bg-indigo-500 text-white text-xs font-bold flex items-center justify-center">2</span>
+            <p class="font-semibold text-white">Indeed Hiring <span class="text-indigo-300">· when volume is recurring</span></p>
+          </div>
+          <p class="text-xs text-slate-300 leading-relaxed">Post the template below when you have steady turnover volume to sustain a regular hire. Respond to applicants same day — good cleaners get snatched fast.</p>
+        </div>
+        <div class="p-4 rounded-2xl bg-amber-500/10 border border-amber-400/30">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="w-6 h-6 rounded-lg bg-amber-500 text-white text-xs font-bold flex items-center justify-center">3</span>
+            <p class="font-semibold text-white">Day-Labor Backup <span class="text-amber-300">· emergencies only</span></p>
+          </div>
+          <p class="text-xs text-slate-300 leading-relaxed">PeopleReady / Instawork / Wonolo cost a premium per worker. Keep their numbers handy for same-day gaps when every sub is booked — not as the week-to-week answer.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+      <!-- Day Labor (On-Demand) -->
+      <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
+        <div class="flex items-center gap-3 mb-6">
+          <div class="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center text-orange-600 font-bold">⚡</div>
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">Day Labor — On-Demand</h2>
+            <p class="text-xs text-slate-500">Vetted workers dispatched the same day</p>
+          </div>
+        </div>
+        <div class="space-y-3">
+          <!-- PeopleReady -->
+          <div class="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+            <div class="flex items-center justify-between mb-1">
+              <p class="text-sm font-bold text-slate-800">PeopleReady (Labor Ready)</p>
+              <span class="px-2 py-1 bg-amber-50 text-amber-700 text-[10px] font-semibold rounded-full">Sign Up</span>
+            </div>
+            <p class="text-xs text-slate-500 mb-2">Day-labor staffing for housekeeping, turnover, and light maintenance.</p>
+            <div class="flex flex-wrap gap-2 text-xs">
+              <span class="px-2 py-1 bg-white rounded-lg border border-slate-200 text-slate-700 font-medium">📞 (757) 802-4693 — Norfolk</span>
+              <span class="px-2 py-1 bg-white rounded-lg border border-slate-200 text-slate-700 font-medium">🌐 peopleready.com</span>
+            </div>
+          </div>
+          <!-- Instawork -->
+          <div class="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+            <div class="flex items-center justify-between mb-1">
+              <p class="text-sm font-bold text-slate-800">Instawork</p>
+              <span class="px-2 py-1 bg-amber-50 text-amber-700 text-[10px] font-semibold rounded-full">Sign Up</span>
+            </div>
+            <p class="text-xs text-slate-500 mb-2">App-based shifts; workers claim your posting. Strong in hospitality/custodial.</p>
+            <div class="flex flex-wrap gap-2 text-xs">
+              <span class="px-2 py-1 bg-white rounded-lg border border-slate-200 text-slate-700 font-medium">🌐 instawork.com</span>
+              <span class="px-2 py-1 bg-white rounded-lg border border-slate-200 text-slate-700 font-medium">📱 App Store / Google Play</span>
+            </div>
+          </div>
+          <!-- Wonolo -->
+          <div class="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+            <div class="flex items-center justify-between mb-1">
+              <p class="text-sm font-bold text-slate-800">Wonolo</p>
+              <span class="px-2 py-1 bg-amber-50 text-amber-700 text-[10px] font-semibold rounded-full">Sign Up</span>
+            </div>
+            <p class="text-xs text-slate-500 mb-2">On-demand temp work. Check Hampton Roads coverage before signing up.</p>
+            <div class="flex flex-wrap gap-2 text-xs">
+              <span class="px-2 py-1 bg-white rounded-lg border border-slate-200 text-slate-700 font-medium">🌐 wonolo.com</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Indeed & Job Boards -->
+      <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
+        <div class="flex items-center gap-3 mb-6">
+          <div class="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600 font-bold">📋</div>
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">Job Boards — Indeed / Listings</h2>
+            <p class="text-xs text-slate-500">Post once, applications roll in</p>
+          </div>
+        </div>
+        <div class="space-y-3">
+          <!-- Indeed -->
+          <div class="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+            <div class="flex items-center justify-between mb-1">
+              <p class="text-sm font-bold text-slate-800">Indeed</p>
+              <span class="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-semibold rounded-full">Free Post</span>
+            </div>
+            <p class="text-xs text-slate-500 mb-2">Basic job listings are free; paid boosts optional. Best for recurring cleaner hires.</p>
+            <div class="flex flex-wrap gap-2 text-xs">
+              <span class="px-2 py-1 bg-white rounded-lg border border-slate-200 text-slate-700 font-medium">🌐 indeed.com/hire</span>
+            </div>
+          </div>
+          <!-- Craigslist -->
+          <div class="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+            <div class="flex items-center justify-between mb-1">
+              <p class="text-sm font-bold text-slate-800">Craigslist Hampton Roads — Gigs</p>
+              <span class="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-semibold rounded-full">Free Post</span>
+            </div>
+            <p class="text-xs text-slate-500 mb-2">High-conversion local channel. Post in "gigs > domestic" or "household services."</p>
+            <div class="flex flex-wrap gap-2 text-xs">
+              <span class="px-2 py-1 bg-white rounded-lg border border-slate-200 text-slate-700 font-medium">🌐 hamptonroads.craigslist.org</span>
+            </div>
+          </div>
+          <!-- Facebook Groups -->
+          <div class="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+            <div class="flex items-center justify-between mb-1">
+              <p class="text-sm font-bold text-slate-800">Facebook Local Groups</p>
+              <span class="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-semibold rounded-full">Free Post</span>
+            </div>
+            <p class="text-xs text-slate-500 mb-2">Join Hampton Roads cleaning/mom groups; post a help-wanted listing. High conversion in this market.</p>
+            <div class="flex flex-wrap gap-2 text-xs">
+              <span class="px-2 py-1 bg-white rounded-lg border border-slate-200 text-slate-700 font-medium">"Hampton Roads House Cleaners"</span>
+              <span class="px-2 py-1 bg-white rounded-lg border border-slate-200 text-slate-700 font-medium">"Hampton Roads Jobs & Gigs"</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Indeed Posting Template -->
+      <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
+        <div class="flex items-center gap-3 mb-6">
+          <div class="w-10 h-10 rounded-xl bg-violet-50 flex items-center justify-center text-violet-600 font-bold">✍️</div>
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">Indeed Job Posting Template</h2>
+            <p class="text-xs text-slate-500">Copy-paste ready — edit address/availability before posting</p>
+          </div>
+        </div>
+        <div class="bg-slate-50 rounded-2xl border border-slate-100 p-4 mb-4">
+          <div class="space-y-1.5 text-xs text-slate-800 leading-relaxed">
+            <p class="font-bold text-sm">Turnover Cleaning — Short-Term Rental (Hampton Roads)</p>
+            <p>📍 Location: <span class="font-semibold text-slate-600">[YOUR AREA]</span></p>
+            <p>💰 Pay: <span class="font-semibold text-slate-600">$XX/hour or $XX/turnover</span></p>
+            <p>📅 Schedule: <span class="font-semibold text-slate-600">As-needed, with 1–2 day notice</span></p>
+            <p class="pt-1">We're a short-term rental operations company managing vacation rentals in Hampton Roads. We're looking for reliable, detail-oriented cleaners for guest turnovers.</p>
+            <p class="pt-1"><span class="font-bold">What you'll do:</span></p>
+            <ul class="list-disc ml-4 space-y-0.5">
+              <li>Turnover cleaning between guest stays (2–4hr blocks)</li>
+              <li>Strip/make beds, clean bathrooms, kitchen, and floors</li>
+              <li>Check linens, restock supplies, report damages via photo</li>
+            </ul>
+            <p class="pt-1"><span class="font-bold">Requirements:</span></p>
+            <ul class="list-disc ml-4 space-y-0.5">
+              <li>Reliable transportation within Hampton Roads</li>
+              <li>Can lift up to 30 lbs, bend/stoop for cleaning tasks</li>
+              <li>Available mornings/midday on short notice</li>
+              <li>Phone with camera (for reporting/communications)</li>
+            </ul>
+            <p class="pt-1">No experience required — we provide cleaning checklist and supplies. Perfect for flexible scheduling.</p>
+            <p class="pt-1 font-semibold">Reply with your availability and nearest city in Hampton Roads.</p>
+          </div>
+        </div>
+        <p class="text-xs text-slate-400">💡 Tips: Post as "Paid" in Indeed's free tier. Respond to applicants same day — quality cleaners get snatched fast. Track applicants in BizStack Docs.</p>
+      </div>
+
+      <!-- Booking Workflow Checklist -->
+      <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
+        <div class="flex items-center gap-3 mb-6">
+          <div class="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600 font-bold">✅</div>
+          <div>
+            <h2 class="text-lg font-bold text-slate-900">Cleaner Booking Checklist</h2>
+            <p class="text-xs text-slate-500">When you have a turnover to fill — run through this</p>
+          </div>
+        </div>
+        <div class="space-y-2">
+          {% for step in [
+            ("1. Post / call", "Post an Indeed/Gig listing or call PeopleReady/Instawork. Include: property address, date/time, estimated hours."),
+            ("2. Confirm availability", "Cleaner confirms they can cover the shift. Verify they have transportation to the property."),
+            ("3. Send property details", "Share address, access instructions (lockbox/code), parking, and any guest notes via BizStack."),
+            ("4. Confirm on calendar", "Once confirmed: go to Dashboard → 'Book Job' → assign the cleaner. This triggers the dispatch message."),
+            ("5. Post-clean photos", "Cleaner submits photos via their BizStack worker portal for host/quality verification."),
+            ("6. Payment", "If using PeopleReady/Instawork — billed through them. If direct hire — process via Dashboard → 'Send link to host' if host-funded, or manual payout.")
+          ] %}
+          <label class="flex gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100 cursor-pointer hover:bg-white transition-colors group">
+            <input type="checkbox" class="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 shrink-0">
+            <div>
+              <p class="text-sm font-semibold text-slate-800 group-hover:text-slate-900">{{ step[0] }}</p>
+              <p class="text-xs text-slate-500 leading-relaxed">{{ step[1] }}</p>
+            </div>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Local Contacts (Full Width) -->
+    <div class="mt-8 bg-slate-900 text-white rounded-3xl p-8 shadow-lg">
+      <div class="flex items-center gap-3 mb-6">
+        <div class="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-white font-bold">📍</div>
+        <div>
+          <h2 class="text-lg font-bold">Hampton Roads — Quick Contacts</h2>
+          <p class="text-xs text-slate-400">Reference these when staffing a job in the area</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+        <div class="p-4 rounded-2xl bg-white/5 border border-white/10">
+          <p class="font-semibold text-white">Virginia Beach</p>
+          <p class="text-xs text-slate-400 mt-1">PeopleReady Norfolk: (757) 802-4693</p>
+          <p class="text-xs text-slate-400">Instawork: app shift</p>
+        </div>
+        <div class="p-4 rounded-2xl bg-white/5 border border-white/10">
+          <p class="font-semibold text-white">Norfolk / Portsmouth</p>
+          <p class="text-xs text-slate-400 mt-1">PeopleReady: (757) 802-4693</p>
+          <p class="text-xs text-slate-400">Craigslist gigs</p>
+        </div>
+        <div class="p-4 rounded-2xl bg-white/5 border border-white/10">
+          <p class="font-semibold text-white">Chesapeake / Suffolk</p>
+          <p class="text-xs text-slate-400 mt-1">PeopleReady: (757) 802-4693</p>
+          <p class="text-xs text-slate-400">FB groups + Wonolo</p>
+        </div>
+        <div class="p-4 rounded-2xl bg-white/5 border border-white/10">
+          <p class="font-semibold text-white">Newport News / Hampton</p>
+          <p class="text-xs text-slate-400 mt-1">PeopleReady: (757) 802-4693</p>
+          <p class="text-xs text-slate-400">Hampton FB groups + backup</p>
+        </div>
+      </div>
+      <p class="mt-4 text-xs text-slate-400">All 7 cities: Virginia Beach · Norfolk · Chesapeake · Suffolk · Portsmouth · Newport News · Hampton</p>
+    </div>
+
+  </div>
+</section>
+{% endblock %}

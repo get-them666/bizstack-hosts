@@ -25,6 +25,32 @@
         <div class="mb-8 px-6 py-4 rounded-3xl bg-red-50 border border-red-200 text-sm font-semibold text-red-700">{{ form_error }}</div>
         {% endif %}
 
+        <!-- Lead Channel Summary -->
+        {% if channel_stats %}
+        <div class="mb-8">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-sm font-bold text-slate-700 uppercase tracking-wider">Leads by Channel{% if active_source %} — filtered: <span class="text-indigo-600 normal-case">{{ active_source }}</span>{% endif %}</h2>
+                {% if active_source %}<a href="/hosts" class="text-xs font-semibold text-slate-500 hover:text-indigo-600 transition-colors">✕ Clear filter</a>{% endif %}
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                {% if not active_source %}
+                <a href="/hosts" class="block rounded-2xl border border-indigo-200 bg-indigo-50 p-4 transition-all hover:shadow-md">
+                    <p class="text-2xl font-extrabold text-indigo-700">{{ lead_totals.total }}</p>
+                    <p class="text-xs font-semibold text-indigo-600 mt-0.5">All Leads</p>
+                    <p class="text-[10px] text-indigo-500 mt-0.5">{{ lead_totals.converted }} converted</p>
+                </a>
+                {% endif %}
+                {% for ch in channel_stats %}
+                <a href="/hosts?source={{ ch.channel }}" class="block rounded-2xl border p-4 transition-all hover:shadow-md {{ 'border-indigo-200 bg-indigo-50 ring-2 ring-indigo-500' if active_source == ch.channel else 'border-slate-200 bg-white hover:border-indigo-200' }}">
+                    <p class="text-2xl font-extrabold text-slate-900">{{ ch.cnt }}</p>
+                    <p class="text-xs font-semibold text-slate-700 mt-0.5">{{ ch.channel }}</p>
+                    <p class="text-[10px] text-slate-500 mt-0.5">{{ ch.converted }} converted</p>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
         <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10">
             <!-- Create Host Account -->
             <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8">
@@ -100,6 +126,20 @@
                         <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Phone</label>
                         <input name="phone" type="tel" placeholder="(555) 000-0000"
                             class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Channel</label>
+                        <select name="source" class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+                            <option value="manual">Manual / walk-in</option>
+                            <option value="referral">Referral</option>
+                            <option value="linkedin">LinkedIn</option>
+                            <option value="facebook">Facebook group</option>
+                            <option value="meetup">Investor meetup</option>
+                            <option value="realtor">Realtor / PM</option>
+                            <option value="sms">SMS / text</option>
+                            <option value="ai-assistant">AI assistant</option>
+                            <option value="website">Website</option>
+                        </select>
                     </div>
                     <button type="submit" class="w-full py-3.5 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-all uppercase tracking-wider">
                         Add Customer
@@ -204,6 +244,77 @@
         </div>
         {% endif %}
 
+        <!-- Referral Programs -->
+        <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 overflow-hidden mb-10">
+            <div class="p-6 border-b border-slate-100 flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-violet-50 flex items-center justify-center text-violet-600 font-bold">🔗</div>
+                <div>
+                    <h2 class="text-lg font-bold text-slate-900">Referral Programs</h2>
+                    <p class="text-xs text-slate-500">Share these links — every lead who uses one is attributed here automatically</p>
+                </div>
+            </div>
+            <div class="p-6">
+                <form id="ref-create-form" class="grid sm:grid-cols-4 gap-3 mb-6">
+                    <select name="ref_type" required class="px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="partner">Lender / Partner</option>
+                        <option value="host">Host</option>
+                        <option value="worker">Crew / Worker</option>
+                        <option value="admin">Internal</option>
+                    </select>
+                    <select name="ref_id" class="px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="">Link to entity (optional)…</option>
+                        {% for p in partners %}<option data-type="partner" value="{{ p.id }}">{{ p.name }} (partner)</option>{% endfor %}
+                        {% for h in host_accounts %}<option data-type="host" value="{{ h.id }}">{{ h.name }} (host)</option>{% endfor %}
+                    </select>
+                    <input name="label" placeholder="Label (e.g. John's bank, Jane's listing)" class="px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <button type="submit" class="px-6 py-3 text-sm font-bold text-white bg-violet-600 hover:bg-violet-700 rounded-xl transition-all uppercase tracking-wider whitespace-nowrap">Generate Link</button>
+                </form>
+
+                {% if referral_codes %}
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="border-b border-slate-100">
+                            <tr class="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                <th class="px-4 py-3">Code</th>
+                                <th class="px-4 py-3">Label</th>
+                                <th class="px-4 py-3">Type</th>
+                                <th class="px-4 py-3">Leads</th>
+                                <th class="px-4 py-3">Converted</th>
+                                <th class="px-4 py-3">Link</th>
+                                <th class="px-4 py-3"></th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-50">
+                            {% for rc in referral_codes %}
+                            <tr class="hover:bg-slate-50 transition-colors">
+                                <td class="px-4 py-3 font-mono text-xs font-semibold text-indigo-700">{{ rc.code }}</td>
+                                <td class="px-4 py-3 text-slate-700">{{ rc.label or '—' }}</td>
+                                <td class="px-4 py-3"><span class="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-slate-100 text-slate-600">{{ rc.ref_type }}</span></td>
+                                <td class="px-4 py-3 font-semibold text-slate-800">{{ rc.led_count }}</td>
+                                <td class="px-4 py-3">
+                                    {% if rc.converted %}<span class="text-emerald-600 font-bold">{{ rc.converted }}</span>{% else %}<span class="text-slate-400">0</span>{% endif %}
+                                </td>
+                                <td class="px-4 py-3 text-xs">
+                                    <a href="/?ref={{ rc.code }}&src=referral" target="_blank" rel="noopener" class="text-indigo-600 hover:text-indigo-800 font-semibold">Open ↗</a>
+                                </td>
+                                <td class="px-4 py-3 text-xs flex items-center gap-2">
+                                    <button data-copy-link data-url="/?ref={{ rc.code }}&src=referral" class="text-slate-400 hover:text-violet-600 font-semibold">Copy link</button>
+                                    {% if rc.ref_type == 'partner' and rc.ref_id %}
+                                    <button data-regen-ref="{{ rc.id }}" class="text-slate-400 hover:text-violet-600 font-semibold">Refresh</button>
+                                    {% endif %}
+                                    <button data-cancel-ref data-cancel-ref="{{ rc.id }}" class="text-slate-400 hover:text-red-600 font-semibold">Delete</button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-sm text-slate-500 text-center py-4">No referral codes yet. Create one above to start tracking attributed leads.</p>
+                {% endif %}
+            </div>
+        </div>
+
         <!-- Lead Pipeline -->
         <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 overflow-hidden">
             <div class="p-6 border-b border-slate-100 flex items-center gap-3">
@@ -213,13 +324,13 @@
                     <p class="text-xs text-slate-500">Free rental analysis requests from the landing page</p>
                 </div>
             </div>
-            <div class="overflow-x-auto">
                 <table class="w-full text-sm">
                     <thead>
                         <tr class="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-100">
                             <th class="px-6 py-4">Name</th>
                             <th class="px-6 py-4">Email</th>
                             <th class="px-6 py-4">Phone</th>
+                            <th class="px-6 py-4">Channel</th>
                             <th class="px-6 py-4">Listing URL</th>
                             <th class="px-6 py-4">Received</th>
                             <th class="px-6 py-4">Status</th>
@@ -233,13 +344,17 @@
                                 <td class="px-6 py-4 font-semibold text-slate-800">{{ lead['name'] }}</td>
                                 <td class="px-6 py-4 text-slate-600">{{ lead['email'] }}</td>
                                 <td class="px-6 py-4 text-slate-600">{{ lead['phone'] }}</td>
-                                <td class="px-6 py-4 text-slate-500 max-w-[180px] truncate">{{ lead['listing_url'] or '—' }}</td>
+                                <td class="px-6 py-4">
+                                    <span class="px-2 py-1 bg-slate-100 text-slate-700 text-[10px] font-semibold rounded-full">{{ lead['source'] or 'website' }}</span>
+                                    {% if lead['referral_code'] %}<a href="/hosts?source=referral" class="ml-1 text-[10px] font-mono text-indigo-600 hover:underline">@{{ lead['referral_code'] }}</a>{% endif %}
+                                </td>
+                                <td class="px-6 py-4 text-slate-500 max-w-[150px] truncate">{{ lead['listing_url'] or '—' }}</td>
                                 <td class="px-6 py-4 text-slate-500">{{ lead['created_at'].strftime('%b %d, %Y') }}</td>
                                 <td class="px-6 py-4">
                                     {% if lead['status'] == 'host' %}
                                     <span class="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-semibold rounded-full">Converted to host</span>
                                     {% else %}
-                                    <span class="px-2 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-semibold rounded-full">New</span>
+                                    <span class="px-2 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-semibold rounded-full">{{ lead['status'] | capitalize }}</span>
                                     {% endif %}
                                 </td>
                                 <td class="px-6 py-4">
@@ -255,7 +370,7 @@
                             {% endfor %}
                         {% else %}
                             <tr>
-                                <td colspan="7" class="px-6 py-12 text-center text-slate-400">
+                                <td colspan="8" class="px-6 py-12 text-center text-slate-400">
                                     <p class="text-3xl mb-2">📭</p>
                                     <p class="text-sm">No leads yet.</p>
                                     <p class="text-xs mt-1">Leads from the landing page analysis form will appear here.</p>
@@ -272,6 +387,19 @@
 
 {% block scripts %}
 <script>
+function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(text);
+    }
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    return Promise.resolve();
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('[data-bind-host]').forEach(function(form) {
         form.addEventListener('submit', function(e) {
@@ -279,6 +407,48 @@ document.addEventListener('DOMContentLoaded', function() {
             var host = form.querySelector('[data-host-select]').value;
             form.action = '/api/hosts/' + host + '/link-booking';
             form.submit();
+        });
+    });
+
+    var refForm = document.getElementById('ref-create-form');
+    if (refForm) {
+        refForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            var body = new FormData(refForm);
+            var res = await fetch('/api/referrals', { method: 'POST', body: body });
+            var data = await res.json();
+            if (data.ok) { window.location.reload(); } else { alert(data.error || 'Could not create link.'); }
+        });
+    }
+
+    document.querySelectorAll('[data-copy-link]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var url = window.location.origin + btn.getAttribute('data-url');
+            copyText(url).then(function() {
+                var old = btn.textContent;
+                btn.textContent = 'Copied ✓';
+                setTimeout(function() { btn.textContent = old; }, 1500);
+            });
+        });
+    });
+
+    document.querySelectorAll('[data-regen-ref]').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+            var res = await fetch('/api/referrals/' + btn.dataset.regenRef + '/regen', { method: 'POST' });
+            var data = await res.json();
+            if (data.ok) {
+                alert('New link: ' + window.location.origin + '/?ref=' + data.code + '&src=referral');
+                window.location.reload();
+            } else { alert('Could not refresh link.'); }
+        });
+    });
+
+    document.querySelectorAll('[data-cancel-ref]').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+            if (!confirm('Delete this referral code? Its history is kept on leads.')) return;
+            var res = await fetch('/api/referrals/' + btn.dataset.cancelRef + '/cancel', { method: 'POST' });
+            var data = await res.json();
+            if (data.ok) { window.location.reload(); } else { alert('Could not delete link.'); }
         });
     });
 });

@@ -32,21 +32,25 @@ WORKER_FEATURES = {
     "map": "Job location maps & directions",
     "pay": "Pay summary & paychecks",
     "paystubs": "Download paystub PDFs",
+    "photos": "Photo finish (room photos for the office)",
     "messages": "Messages with the office",
+    "devices": "Door & alarm access codes",
 }
 HOST_FEATURES = {
     "bookings": "Their bookings & schedule",
     "properties": "Their properties",
     "payments": "Payment status",
     "map": "Booking location maps",
+    "photos": "Cleaning photos & photo finish",
     "messages": "Messages with the office",
+    "devices": "Smart devices (locks, alarms, lighting)",
 }
 
 # Sensible defaults: give workers only what they need to do the job and get
 # paid; give hosts only read access to their own bookings.
 DEFAULT_PERMISSIONS = {
-    "worker": {k: (k in ("jobs", "timeclock", "map", "pay", "paystubs")) for k in WORKER_FEATURES},
-    "host": {k: (k in ("bookings", "properties", "payments", "map")) for k in HOST_FEATURES},
+    "worker": {k: (k in ("jobs", "timeclock", "map", "pay", "paystubs", "photos", "messages", "devices")) for k in WORKER_FEATURES},
+    "host": {k: (k in ("bookings", "properties", "payments", "map", "photos", "messages", "devices")) for k in HOST_FEATURES},
 }
 
 

@@ -7,13 +7,13 @@ import hmac
 import urllib.parse
 import urllib.request
 from xml.sax.saxutils import escape as xml_escape
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from zoneinfo import ZoneInfo
 from contextlib import asynccontextmanager
 from pathlib import Path
 import psycopg
 from psycopg.rows import dict_row
-from fastapi import FastAPI, Request, Form, Response, Depends, HTTPException, status
+from fastapi import FastAPI, Request, Form, Response, Depends, HTTPException, status, File, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -636,6 +636,26 @@ async def lifecycle(app: FastAPI):
                 """)
                 cur.execute("ALTER TABLE properties ADD COLUMN IF NOT EXISTS channel_property_uuid VARCHAR(64);")
                 cur.execute("""
+                CREATE TABLE IF NOT EXISTS devices (
+                    id SERIAL PRIMARY KEY,
+                    host_id INTEGER REFERENCES hosts(id),
+                    property_id INTEGER REFERENCES properties(id),
+                    kind VARCHAR(50) NOT NULL DEFAULT 'other',
+                    custom_kind VARCHAR(100),
+                    name VARCHAR(255) NOT NULL,
+                    vendor VARCHAR(255),
+                    model VARCHAR(255),
+                    device_ref VARCHAR(255),
+                    access_code VARCHAR(255),
+                    access_instructions TEXT,
+                    status VARCHAR(20) DEFAULT 'active',
+                    meta_json TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_devices_host ON devices (host_id);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_devices_property ON devices (property_id);")
+                cur.execute("""
                 CREATE TABLE IF NOT EXISTS customers (
                     id SERIAL PRIMARY KEY,
                     name VARCHAR(255) NOT NULL,
@@ -667,6 +687,8 @@ async def lifecycle(app: FastAPI):
                 """)
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS zip VARCHAR(10);")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS analysis_json TEXT;")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS source VARCHAR(100) DEFAULT 'website';")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS referral_code VARCHAR(50);")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS worker_id INTEGER;")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS worker_pay_cents INTEGER;")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS worker_status VARCHAR(50) DEFAULT 'assigned';")
@@ -793,6 +815,24 @@ async def lifecycle(app: FastAPI):
                 );
                 """)
                 cur.execute("""
+                CREATE TABLE IF NOT EXISTS referral_codes (
+                    id SERIAL PRIMARY KEY,
+                    code VARCHAR(50) NOT NULL UNIQUE,
+                    ref_type VARCHAR(20) NOT NULL,
+                    ref_id INTEGER,
+                    label VARCHAR(255),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("ALTER TABLE partners ADD COLUMN IF NOT EXISTS referral_code VARCHAR(50);")
+                cur.execute("SELECT id, name FROM partners WHERE referral_code IS NULL;")
+                for prow in cur.fetchall():
+                    new_code = _gen_referral_code()
+                    cur.execute("INSERT INTO referral_codes (code, ref_type, ref_id, label) VALUES (%s, 'partner', %s, %s) ON CONFLICT (code) DO NOTHING;",
+                                (new_code, prow["id"], prow["name"]))
+                    cur.execute("UPDATE partners SET referral_code = %s WHERE id = %s AND referral_code IS NULL;",
+                                (new_code, prow["id"]))
+                cur.execute("""
                 CREATE TABLE IF NOT EXISTS worker_quiz_results (
                     id SERIAL PRIMARY KEY,
                     worker_id INTEGER,
@@ -805,13 +845,40 @@ async def lifecycle(app: FastAPI):
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS job_photos (
+                    id SERIAL PRIMARY KEY,
+                    event_id INTEGER NOT NULL REFERENCES calendar_events(id),
+                    worker_id INTEGER REFERENCES workers(id),
+                    room VARCHAR(120),
+                    category VARCHAR(20) NOT NULL DEFAULT 'clean',
+                    caption TEXT,
+                    file_type VARCHAR(20),
+                    file_data BYTEA,
+                    verified BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_job_photos_event ON job_photos (event_id);")
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS messages (
+                    id SERIAL PRIMARY KEY,
+                    author_role VARCHAR(20) NOT NULL,
+                    author_id INTEGER,
+                    author_name VARCHAR(255),
+                    audience VARCHAR(30) NOT NULL DEFAULT 'office',
+                    body TEXT NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_created ON messages (created_at DESC);")
                 conn.commit()
         print("🚀 Database connectivity and tables validated successfully.")
     except Exception as e:
         print(f"❌ Structural database connection failure: {e}")
     yield
 
-app = FastAPI(lifespan=lifecycle)
+app = FastAPI(lifespan=lifecycle, docs_url="/swagger", redoc_url="/redoc")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 def get_db():
@@ -896,6 +963,7 @@ async def robots_txt(request: Request):
         "Disallow: /partners\n"
         "Disallow: /accounting\n"
         "Disallow: /worker\n"
+        "Disallow: /devices\n"
         "\n"
         f"Sitemap: {base}/sitemap.xml\n"
     )
@@ -1123,6 +1191,8 @@ async def submit_lead(
     url: str = Form(""),
     funding_needed: str = Form("off"),
     funding_use: str = Form(""),
+    source: str = Form(""),
+    ref: str = Form(""),
     db=Depends(get_db)
 ):
     result = rental_analysis.analyze(url) if url else {"ok": False, "error": "No property address provided."}
@@ -1131,10 +1201,30 @@ async def submit_lead(
     zip_code = result.get("zip", "")
     needed = funding_needed.lower() in ("on", "true", "1", "yes")
 
+    src = (source or "").strip().lower() or "website"
+    ref_code = (ref or "").strip().lower()
+
+    partner_id = None
+    with db.cursor() as cur:
+        if ref_code:
+            cur.execute("SELECT id FROM partners WHERE referral_code = %s;", (ref_code,))
+            prow = cur.fetchone()
+            if prow:
+                partner_id = prow["id"]
+            else:
+                cur.execute("SELECT id FROM referral_codes WHERE code = %s;", (ref_code,))
+                if not cur.fetchone():
+                    ref_code = ""
+            if ref_code:
+                if src in ("", "website"):
+                    src = "referral"
+        elif src in ("", "website"):
+            src = "website"
+
     with db.cursor() as cur:
         cur.execute(
-            "INSERT INTO leads (name, email, phone, listing_url, status, zip, analysis_json, funding_needed, funding_use) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NULLIF(%s,'')) RETURNING id",
-            (name, email, phone, url, status_value, zip_code, analysis_json, needed, funding_use)
+            "INSERT INTO leads (name, email, phone, listing_url, status, zip, analysis_json, funding_needed, funding_use, source, referral_code, partner_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NULLIF(%s,''), %s, NULLIF(%s,''), %s) RETURNING id",
+            (name, email, phone, url, status_value, zip_code, analysis_json, needed, funding_use, src, ref_code, partner_id)
         )
         lead_id = cur.fetchone()["id"]
         db.commit()
@@ -1196,8 +1286,15 @@ async def read_dashboard(request: Request, db=Depends(get_db)):
         cur.execute("SELECT id, customer_name, phone, start_time, end_time, service_type, payment_status, amount_cents FROM calendar_events WHERE start_time >= NOW() - INTERVAL '7 days' ORDER BY start_time DESC LIMIT 10")
         events = cur.fetchall()
 
-        cur.execute("SELECT p.id, p.name, COALESCE(h.name, 'Unassigned host') AS host_name FROM properties p LEFT JOIN hosts h ON h.id = p.host_id ORDER BY p.name;")
-        properties = cur.fetchall()
+        cur.execute("""
+            SELECT h.id, h.name, h.property_name, h.property_address, h.email, h.phone,
+                   COALESCE(COUNT(DISTINCT p.id)::int, 0) AS property_count
+            FROM hosts h
+            LEFT JOIN properties p ON p.host_id = h.id
+            GROUP BY h.id
+            ORDER BY h.created_at DESC;
+        """)
+        hosts = cur.fetchall()
 
     return templates.TemplateResponse(
         request=request,
@@ -1206,7 +1303,7 @@ async def read_dashboard(request: Request, db=Depends(get_db)):
             "user": {"email": user_email},
             "stats": {"hosts": hosts_count, "bookings": bookings_count, "customers": customers_count, "leads": leads_count},
             "events": events,
-            "properties": properties,
+            "hosts": hosts,
         }
     )
 
@@ -1218,9 +1315,32 @@ async def hosts_page(request: Request, db=Depends(get_db)):
     if not is_authed:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
 
+    source_filter = (request.query_params.get("source") or "").strip().lower()
+
     with db.cursor() as cur:
-        cur.execute("SELECT * FROM leads ORDER BY created_at DESC LIMIT 50")
+        if source_filter:
+            cur.execute("SELECT * FROM leads WHERE LOWER(COALESCE(source, 'website')) = %s ORDER BY created_at DESC LIMIT 100", (source_filter,))
+        else:
+            cur.execute("SELECT * FROM leads ORDER BY created_at DESC LIMIT 100")
         leads = cur.fetchall()
+
+        cur.execute("SELECT COALESCE(NULLIF(source, ''), 'website') AS channel, COUNT(*)::int AS cnt, COUNT(*) FILTER (WHERE status = 'host')::int AS converted FROM leads GROUP BY channel ORDER BY cnt DESC;")
+        channel_stats = cur.fetchall()
+        cur.execute("SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status = 'host')::int AS converted FROM leads;")
+        lead_totals = cur.fetchone()
+
+        cur.execute("""
+            SELECT r.*, COUNT(l.id)::int AS led_count,
+                   COUNT(l.id) FILTER (WHERE l.status = 'host')::int AS converted
+            FROM referral_codes r
+            LEFT JOIN leads l ON l.referral_code = r.code
+            GROUP BY r.id
+            ORDER BY r.created_at DESC;
+        """)
+        referral_codes = cur.fetchall()
+        cur.execute("SELECT * FROM partners ORDER BY created_at DESC;")
+        partners = cur.fetchall()
+
         cur.execute("SELECT * FROM hosts ORDER BY created_at DESC")
         host_accounts = cur.fetchall()
         cur.execute("""
@@ -1239,6 +1359,11 @@ async def hosts_page(request: Request, db=Depends(get_db)):
             "leads": leads,
             "host_accounts": host_accounts,
             "unlinked_events": unlinked_events,
+            "channel_stats": channel_stats,
+            "lead_totals": lead_totals,
+            "referral_codes": referral_codes,
+            "partners": partners,
+            "active_source": source_filter,
             "generated_pw": request.query_params.get("pw"),
             "form_error": request.query_params.get("error"),
         },
@@ -1320,12 +1445,82 @@ async def link_host_booking(host_id: int, event_id: int = Form(...), db=Depends(
     return RedirectResponse(url="/hosts", status_code=303)
 
 @app.post("/api/customers")
-async def create_customer(name: str = Form(...), email: str = Form(""), phone: str = Form(""), db=Depends(get_db)):
+async def create_customer(name: str = Form(...), email: str = Form(""), phone: str = Form(""), source: str = Form("manual"), db=Depends(get_db)):
     with db.cursor() as cur:
-        cur.execute("INSERT INTO customers (name, email, phone) VALUES (%s, %s, %s) RETURNING id", (name, email, phone))
+        cur.execute("INSERT INTO customers (name, email, phone, source) VALUES (%s, %s, %s, %s) RETURNING id", (name, email, phone, source.strip() or "manual"))
         customer_id = cur.fetchone()["id"]
         db.commit()
     return RedirectResponse(url="/hosts", status_code=303)
+
+# --- REFERRAL CODES ---
+
+@app.post("/api/referrals")
+async def create_referral(
+    request: Request,
+    ref_type: str = Form(...),
+    ref_id: str = Form(""),
+    label: str = Form(""),
+    db=Depends(get_db),
+):
+    require_admin(request)
+    ref_type = (ref_type or "").strip().lower()
+    if ref_type not in ("partner", "host", "worker", "admin"):
+        return JSONResponse({"ok": False, "error": "Invalid referral type."})
+    rid = int(ref_id) if (ref_id or "").strip().isdigit() else None
+
+    wanted = label.strip()
+    if not wanted:
+        if ref_type == "partner" and rid:
+            cur = db.cursor()
+            cur.execute("SELECT name FROM partners WHERE id = %s;", (rid,))
+            row = cur.fetchone()
+            wanted = row["name"] if row else f"Partner #{rid}"
+    display = wanted or f"{ref_type.capitalize()} code"
+
+    with db.cursor() as cur:
+        code = _gen_referral_code(ref_type)
+        for _ in range(5):
+            try:
+                cur.execute(
+                    "INSERT INTO referral_codes (code, ref_type, ref_id, label) VALUES (%s, %s, %s, %s) RETURNING id;",
+                    (code, ref_type, rid, display),
+                )
+                db.commit()
+                break
+            except psycopg.errors.UniqueViolation:
+                db.rollback()
+                code = _gen_referral_code(ref_type)
+    return JSONResponse({"ok": True, "code": code, "url": f"{os.getenv('APP_BASE_URL', 'https://bizstackperks.com')}/?ref={urllib.parse.quote(code)}&src=referral"})
+
+@app.post("/api/referrals/{referral_id}/regen")
+async def regen_referral(referral_id: int, request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM referral_codes WHERE id = %s;", (referral_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Referral code not found.")
+        needs_link = row["ref_type"] == "partner" and row["ref_id"]
+        new_code = _gen_referral_code(row["ref_type"])
+        cur.execute("UPDATE referral_codes SET code = %s WHERE id = %s RETURNING code;", (new_code, referral_id))
+        if needs_link:
+            cur.execute("UPDATE partners SET referral_code = %s WHERE id = %s;", (new_code, row["ref_id"]))
+        db.commit()
+    return JSONResponse({"ok": True, "code": new_code, "url": f"{os.getenv('APP_BASE_URL', 'https://bizstackperks.com')}/?ref={urllib.parse.quote(new_code)}&src=referral"})
+
+@app.post("/api/referrals/{referral_id}/cancel")
+async def cancel_referral(referral_id: int, request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute("SELECT ref_type, ref_id FROM referral_codes WHERE id = %s;", (referral_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Referral code not found.")
+        if row["ref_type"] == "partner" and row["ref_id"]:
+            cur.execute("UPDATE partners SET referral_code = NULL WHERE id = %s;", (row["ref_id"],))
+        cur.execute("DELETE FROM referral_codes WHERE id = %s;", (referral_id,))
+        db.commit()
+    return JSONResponse({"ok": True})
 
 # --- HOST PORTAL & PORTFOLIO ---
 
@@ -1619,6 +1814,12 @@ def _generate_password(length: int = 8) -> str:
     chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
     return "".join(secrets.choice(chars) for _ in range(length))
 
+_REFERRAL_PREFIXES = {"partner": "lender", "host": "host", "worker": "crew", "admin": "biz"}
+
+def _gen_referral_code(ref_type: str = "partner") -> str:
+    prefix = _REFERRAL_PREFIXES.get(ref_type, "ref")
+    return f"{prefix}-{secrets.token_hex(3)}"
+
 def _require_host(request: Request, db):
     actor = current_actor(request)
     if actor and actor.get("role") == "host":
@@ -1681,7 +1882,7 @@ async def crew_page(request: Request, db=Depends(get_db)):
         """)
         workers = cur.fetchall()
         cur.execute("""
-            SELECT id, customer_name, start_time, service_type, amount_cents
+            SELECT id, customer_name, start_time, service_type, amount_cents, worker_pay_cents
             FROM calendar_events
             WHERE worker_id IS NULL AND start_time >= NOW() - INTERVAL '60 days'
             ORDER BY start_time ASC;
@@ -1749,6 +1950,7 @@ async def crew_page(request: Request, db=Depends(get_db)):
             "scheduled": scheduled,
             "timeclocks": clock_rows,
             "on_clock": live_rows,
+            "default_pay_cents": 5000,
             "worker_choices": [{"id": w["id"], "name": w["name"]} for w in workers],
             "worker_rates": {w["id"]: w["pay_rate_cents"] for w in workers},
         },
@@ -2116,7 +2318,602 @@ async def worker_clock(
         msg = "Clocked out. Location sharing stopped."
     return JSONResponse(content={"status": "ok", "action": action, "event_id": event_id, "message": msg, "distance_m": distance_m})
 
-# --- WORKER MOBILE APP (PWA) ---
+# --- WORKER PHOTO FINISH (photo-verified cleaning) ---
+
+def _worker_owns_event(db, event_id: int, worker_id: int) -> bool:
+    with db.cursor() as cur:
+        cur.execute("SELECT 1 FROM calendar_events WHERE id = %s AND worker_id = %s;", (event_id, worker_id))
+        return cur.fetchone() is not None
+
+def _serialize_photo(p: dict, request: Request) -> dict:
+    return {
+        "id": p["id"],
+        "event_id": p["event_id"],
+        "room": p["room"] or "",
+        "category": p["category"] or "clean",
+        "caption": p["caption"] or "",
+        "file_type": p["file_type"] or "image/jpeg",
+        "verified": bool(p["verified"]),
+        "worker_name": p.get("worker_name") or "",
+        "created_at": p["created_at"].isoformat() if p["created_at"] else "",
+        "url": f"/api/photos/{p['id']}/image",
+    }
+
+def _can_access_photo(request: Request, db, photo_id: int) -> dict:
+    """Return the photo row if the current actor may view it (worker-owned job,
+    matching host, or admin), else None."""
+    with db.cursor() as cur:
+        cur.execute("""
+            SELECT jp.*, w.name AS worker_name, e.host_id AS event_host_id
+            FROM job_photos jp
+            JOIN calendar_events e ON e.id = jp.event_id
+            LEFT JOIN workers w ON w.id = jp.worker_id
+            WHERE jp.id = %s;
+        """, (photo_id,))
+        row = cur.fetchone()
+    if not row:
+        return None
+    actor = current_actor(request)
+    if actor and actor.get("role") == "admin":
+        return row
+    if actor and actor.get("role") == "worker" and actor.get("id") == row["worker_id"]:
+        return row
+    if actor and actor.get("role") == "host" and row["event_host_id"] == actor.get("id"):
+        return row
+    return None
+
+@app.get("/photos", response_class=HTMLResponse)
+async def photos_page(request: Request, db=Depends(get_db)):
+    actor = current_actor(request)
+    if not actor:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    is_admin = actor["role"] == "admin"
+    with db.cursor() as cur:
+        if is_admin:
+            cur.execute("""
+                SELECT jp.id, jp.event_id, jp.room, jp.category, jp.caption, jp.file_type,
+                       jp.verified, jp.created_at, w.name AS worker_name,
+                       e.customer_name, e.service_type, e.start_time, e.job_address
+                FROM job_photos jp
+                JOIN calendar_events e ON e.id = jp.event_id
+                LEFT JOIN workers w ON w.id = jp.worker_id
+                ORDER BY jp.created_at DESC
+                LIMIT 300;
+            """)
+        elif actor["role"] == "host":
+            cur.execute("""
+                SELECT jp.id, jp.event_id, jp.room, jp.category, jp.caption, jp.file_type,
+                       jp.verified, jp.created_at, w.name AS worker_name,
+                       e.customer_name, e.service_type, e.start_time, e.job_address
+                FROM job_photos jp
+                JOIN calendar_events e ON e.id = jp.event_id
+                LEFT JOIN workers w ON w.id = jp.worker_id
+                WHERE e.host_id = %s
+                ORDER BY jp.created_at DESC
+                LIMIT 300;
+            """, (actor["id"],))
+        elif actor["role"] == "worker":
+            cur.execute("""
+                SELECT jp.id, jp.event_id, jp.room, jp.category, jp.caption, jp.file_type,
+                       jp.verified, jp.created_at, w.name AS worker_name,
+                       e.customer_name, e.service_type, e.start_time, e.job_address
+                FROM job_photos jp
+                JOIN calendar_events e ON e.id = jp.event_id
+                LEFT JOIN workers w ON w.id = jp.worker_id
+                WHERE jp.worker_id = %s
+                ORDER BY jp.created_at DESC
+                LIMIT 300;
+            """, (actor["id"],))
+        else:
+            raise HTTPException(status_code=403, detail="Access denied")
+        photos = cur.fetchall()
+    return templates.TemplateResponse(request=request, name="photos.html", context={
+        "user": None,
+        "actor": actor,
+        "photos": photos,
+        "is_admin": is_admin,
+    })
+
+@app.post("/api/photos/upload")
+async def photo_upload(
+    request: Request,
+    event_id: int = Form(...),
+    room: str = Form(""),
+    category: str = Form("clean"),
+    caption: str = Form(""),
+    photo: UploadFile = File(...),
+    db=Depends(get_db),
+):
+    worker = _require_worker(request, db)
+    if not worker:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    _require_feature(db, "worker", "photos")
+    if not _worker_owns_event(db, event_id, worker["id"]):
+        raise HTTPException(status_code=404, detail="Job not found or not assigned to you")
+    if category not in ("clean", "damage", "other"):
+        category = "clean"
+    data = await photo.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Photo too large (max 15 MB)")
+    file_type = (photo.content_type or "image/jpeg").split(";")[0]
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO job_photos (event_id, worker_id, room, category, caption, file_type, file_data) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id;",
+            (event_id, worker["id"], room or None, category, caption or None, file_type, data),
+        )
+        photo_id = cur.fetchone()["id"]
+        db.commit()
+    return JSONResponse(content={"ok": True, "photo_id": photo_id, "url": f"/api/photos/{photo_id}/image"})
+
+@app.get("/api/photos/{photo_id}/image", response_class=Response)
+async def photo_image(photo_id: int, request: Request, db=Depends(get_db)):
+    row = _can_access_photo(request, db, photo_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return Response(
+        content=bytes(row["file_data"] or b""),
+        media_type=row["file_type"] or "image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+@app.get("/api/photos", response_class=JSONResponse)
+async def photos_list(request: Request, event_id: int | None = None, db=Depends(get_db)):
+    actor = current_actor(request)
+    if not actor:
+        raise HTTPException(status_code=401, detail="Login required")
+    with db.cursor() as cur:
+        if actor["role"] == "admin":
+            if event_id:
+                cur.execute("SELECT jp.*, w.name AS worker_name FROM job_photos jp LEFT JOIN workers w ON w.id = jp.worker_id WHERE jp.event_id = %s ORDER BY jp.created_at DESC;", (event_id,))
+            else:
+                cur.execute("SELECT jp.*, w.name AS worker_name FROM job_photos jp LEFT JOIN workers w ON w.id = jp.worker_id ORDER BY jp.created_at DESC LIMIT 300;")
+        elif actor["role"] == "host":
+            cur.execute("""
+                SELECT jp.*, w.name AS worker_name FROM job_photos jp
+                JOIN calendar_events e ON e.id = jp.event_id
+                LEFT JOIN workers w ON w.id = jp.worker_id
+                WHERE e.host_id = %s ORDER BY jp.created_at DESC LIMIT 300;
+            """, (actor["id"],))
+        elif actor["role"] == "worker":
+            cur.execute("SELECT jp.*, w.name AS worker_name FROM job_photos jp LEFT JOIN workers w ON w.id = jp.worker_id WHERE jp.worker_id = %s ORDER BY jp.created_at DESC;", (actor["id"],))
+        else:
+            raise HTTPException(status_code=403, detail="Access denied")
+        rows = cur.fetchall()
+    return JSONResponse(content={"ok": True, "photos": [_serialize_photo(p, request) for p in rows]})
+
+@app.post("/api/photos/{photo_id}/verify")
+async def photo_verify(photo_id: int, request: Request, verified: bool = Form(True), db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute("UPDATE job_photos SET verified = %s WHERE id = %s;", (verified, photo_id))
+        db.commit()
+    return JSONResponse(content={"ok": True, "verified": bool(verified)})
+
+@app.get("/photos/export/{event_id}.pdf", response_class=Response)
+async def photos_export_pdf(event_id: int, request: Request, db=Depends(get_db)):
+    actor = current_actor(request)
+    if not actor:
+        raise HTTPException(status_code=401, detail="Login required")
+    with db.cursor() as cur:
+        if actor["role"] == "admin":
+            cur.execute("SELECT * FROM calendar_events WHERE id = %s;", (event_id,))
+        elif actor["role"] == "host":
+            cur.execute("SELECT * FROM calendar_events WHERE id = %s AND host_id = %s;", (event_id, actor["id"]))
+        else:
+            cur.execute("SELECT * FROM calendar_events WHERE id = %s AND worker_id = %s;", (event_id, actor["id"]))
+        event = cur.fetchone()
+        cur.execute("""
+            SELECT jp.*, w.name AS worker_name FROM job_photos jp
+            LEFT JOIN workers w ON w.id = jp.worker_id
+            WHERE jp.event_id = %s ORDER BY jp.category, jp.room, jp.created_at ASC;
+        """, (event_id,))
+        photos = cur.fetchall()
+    if not event or not photos:
+        raise HTTPException(status_code=404, detail="No photos for this job")
+    from fpdf import FPDF
+    import io
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=14)
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 15)
+    pdf.cell(0, 9, "BizStack Hosts - Photo Verification Report", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(0, 6, f"Job: {event['customer_name'] or ''}  |  {event['service_type'] or ''}  |  {event['start_time']}", new_x="LMARGIN", new_y="NEXT")
+    if event.get("job_address"):
+        pdf.cell(0, 6, f"Address: {event['job_address']}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, f"Export ready for Airbnb checkout / guest turnover handoff. Generated {datetime.now().strftime('%Y-%m-%d %H:%M')}.", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(3)
+    for p in photos:
+        if len(bytes(p["file_data"] or b"")) > 3 * 1024 * 1024:
+            continue
+        room = p["room"] or "Room"
+        cat = {"clean": "CLEAN", "damage": "DAMAGE", "other": "OTHER"}.get(p["category"], "NOTE")
+        label = f"{cat} - {room}"
+        if p.get("caption"):
+            label += f" - {p['caption']}"
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.cell(0, 7, label, new_x="LMARGIN", new_y="NEXT")
+        try:
+            pdf.image(io.BytesIO(bytes(p["file_data"])), w=150)
+            pdf.ln(2)
+        except Exception as e:
+            pdf.set_font("Helvetica", "", 9)
+            pdf.cell(0, 6, f"(Image could not be embedded: {e})", new_x="LMARGIN", new_y="NEXT")
+    pdf_bytes = pdf.output()
+    return Response(content=pdf_bytes, media_type="application/pdf",
+                    headers={"Content-Disposition": f"inline; filename=\"photos-{event_id}.pdf\""})
+
+# --- SMART DEVICES (LOCKS, ALARMS, LIGHTING & MORE) ---
+
+DEVICE_KINDS = ("lock", "alarm", "lighting", "thermostat", "camera", "garage", "other")
+
+
+def _property_host(db, property_id):
+    with db.cursor() as cur:
+        cur.execute("SELECT host_id FROM properties WHERE id = %s;", (property_id,))
+        row = cur.fetchone()
+    return row["host_id"] if row else None
+
+
+def _host_owns_property(db, host_id, property_id) -> bool:
+    with db.cursor() as cur:
+        cur.execute("SELECT id FROM properties WHERE id = %s AND host_id = %s;", (property_id, host_id))
+        return cur.fetchone() is not None
+
+
+def _owns_device(db, device_id, host_id) -> bool:
+    with db.cursor() as cur:
+        cur.execute("SELECT host_id FROM devices WHERE id = %s;", (device_id,))
+        row = cur.fetchone()
+    return bool(row and row["host_id"] == host_id)
+
+
+def _clean_device_form(form) -> dict:
+    name = (form.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Device name is required")
+    kind = (form.get("kind") or "other").strip()
+    if kind not in DEVICE_KINDS:
+        kind = "other"
+    custom_kind = (form.get("custom_kind") or "").strip()
+    if kind == "other" and not custom_kind:
+        custom_kind = "Other"
+    elif kind != "other":
+        custom_kind = None
+    try:
+        property_id = int(form.get("property_id") or 0) or None
+    except (TypeError, ValueError):
+        property_id = None
+    status = (form.get("status") or "active").strip()
+    if status not in ("active", "disabled"):
+        status = "active"
+    return {
+        "name": name,
+        "kind": kind,
+        "custom_kind": custom_kind,
+        "vendor": (form.get("vendor") or "").strip(),
+        "model": (form.get("model") or "").strip(),
+        "device_ref": (form.get("device_ref") or "").strip(),
+        "property_id": property_id,
+        "access_code": (form.get("access_code") or "").strip(),
+        "access_instructions": (form.get("access_instructions") or "").strip(),
+        "status": status,
+    }
+
+
+@app.get("/devices", response_class=HTMLResponse)
+async def devices_page(request: Request, db=Depends(get_db)):
+    actor = current_actor(request)
+    if not actor:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    role = actor.get("role")
+
+    with db.cursor() as cur:
+        if role == "admin":
+            cur.execute("""
+                SELECT d.*, p.name AS property_name, p.address AS property_address,
+                       h.name AS host_name
+                FROM devices d
+                LEFT JOIN properties p ON p.id = d.property_id
+                LEFT JOIN hosts h ON h.id = d.host_id
+                ORDER BY p.name NULLS LAST, d.kind, d.name;
+            """)
+            devices = cur.fetchall()
+            cur.execute("SELECT id, name, address, host_id FROM properties ORDER BY name;")
+            properties = cur.fetchall()
+        elif role == "host":
+            host = _require_host(request, db)
+            if not host:
+                return RedirectResponse(url="/host-login", status_code=status.HTTP_303_SEE_OTHER)
+            cur.execute("""
+                SELECT d.*, p.name AS property_name, p.address AS property_address
+                FROM devices d
+                LEFT JOIN properties p ON p.id = d.property_id
+                WHERE d.host_id = %s
+                ORDER BY p.name NULLS LAST, d.kind, d.name;
+            """, (host["id"],))
+            devices = cur.fetchall()
+            cur.execute("SELECT id, name, address FROM properties WHERE host_id = %s ORDER BY name;", (host["id"],))
+            properties = cur.fetchall()
+        elif role == "worker":
+            worker = _require_worker(request, db)
+            if not worker:
+                return RedirectResponse(url="/worker-login", status_code=status.HTTP_303_SEE_OTHER)
+            cur.execute("""
+                SELECT DISTINCT d.*, p.name AS property_name, p.address AS property_address,
+                       h.name AS host_name
+                FROM devices d
+                JOIN properties p ON p.id = d.property_id
+                LEFT JOIN hosts h ON h.id = d.host_id
+                WHERE d.status = 'active'
+                  AND d.kind IN ('lock', 'alarm', 'garage')
+                  AND d.property_id IN (
+                      SELECT ce.property_id FROM calendar_events ce
+                      WHERE ce.worker_id = %s AND ce.property_id IS NOT NULL
+                  )
+                ORDER BY p.name, d.kind;
+            """, (worker["id"],))
+            devices = cur.fetchall()
+            properties = []
+        else:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    groups = []
+    by_name = {}
+    for d in devices:
+        key = d.get("property_name") or "Unassigned"
+        if key not in by_name:
+            by_name[key] = {"name": key, "address": d.get("property_address"), "host": d.get("host_name"), "devices": []}
+            groups.append(by_name[key])
+        by_name[key]["devices"].append(d)
+
+    return templates.TemplateResponse(
+        request=request,
+        name="devices.html",
+        context={
+            "user": None,
+            "actor": actor,
+            "role": role,
+            "groups": groups,
+            "properties": properties,
+            "flash": (request.query_params.get("added") or request.query_params.get("edited") or request.query_params.get("deleted")),
+        },
+    )
+
+
+@app.post("/api/devices")
+async def devices_add(request: Request, db=Depends(get_db)):
+    actor = current_actor(request)
+    if not actor:
+        raise HTTPException(status_code=401, detail="Login required")
+    role = actor.get("role")
+    form = await request.form()
+    data = _clean_device_form(form)
+    if role == "admin":
+        host_id = data["property_id"] and _property_host(db, data["property_id"])
+    elif role == "host":
+        host = _require_host(request, db)
+        if not host:
+            raise HTTPException(status_code=401, detail="Host login required")
+        host_id = host["id"]
+        if data["property_id"] and not _host_owns_property(db, host_id, data["property_id"]):
+            raise HTTPException(status_code=403, detail="That property does not belong to you")
+    else:
+        raise HTTPException(status_code=403, detail="Workers cannot add devices")
+
+    with db.cursor() as cur:
+        cur.execute("""
+            INSERT INTO devices (host_id, property_id, kind, custom_kind, name, vendor, model,
+                                 device_ref, access_code, access_instructions, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id;
+        """, (
+            host_id, data["property_id"], data["kind"], data["custom_kind"], data["name"],
+            data["vendor"], data["model"], data["device_ref"], data["access_code"],
+            data["access_instructions"], data["status"],
+        ))
+        db.commit()
+    return RedirectResponse(url="/devices?added=1", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/api/devices/{device_id}/edit")
+async def devices_edit(device_id: int, request: Request, db=Depends(get_db)):
+    actor = current_actor(request)
+    if not actor:
+        raise HTTPException(status_code=401, detail="Login required")
+    role = actor.get("role")
+    form = await request.form()
+    data = _clean_device_form(form)
+    if role == "admin":
+        with db.cursor() as cur:
+            cur.execute("SELECT id FROM devices WHERE id = %s;", (device_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Device not found")
+        host_id = data["property_id"] and _property_host(db, data["property_id"])
+    elif role == "host":
+        host = _require_host(request, db)
+        if not host or not _owns_device(db, device_id, host["id"]):
+            raise HTTPException(status_code=403, detail="You can only edit your own devices")
+        host_id = host["id"]
+        if data["property_id"] and not _host_owns_property(db, host_id, data["property_id"]):
+            raise HTTPException(status_code=403, detail="That property does not belong to you")
+    else:
+        raise HTTPException(status_code=403, detail="Workers cannot edit devices")
+
+    with db.cursor() as cur:
+        cur.execute("""
+            UPDATE devices SET host_id = %s, property_id = %s, kind = %s, custom_kind = %s,
+                   name = %s, vendor = %s, model = %s, device_ref = %s,
+                   access_code = %s, access_instructions = %s, status = %s
+            WHERE id = %s;
+        """, (
+            host_id, data["property_id"], data["kind"], data["custom_kind"], data["name"],
+            data["vendor"], data["model"], data["device_ref"], data["access_code"],
+            data["access_instructions"], data["status"], device_id,
+        ))
+        db.commit()
+    return RedirectResponse(url="/devices?edited=1", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/api/devices/{device_id}/toggle")
+async def devices_toggle(device_id: int, request: Request, db=Depends(get_db)):
+    actor = current_actor(request)
+    if not actor:
+        raise HTTPException(status_code=401, detail="Login required")
+    role = actor.get("role")
+    with db.cursor() as cur:
+        if role == "host":
+            host = _require_host(request, db)
+            if not host or not _owns_device(db, device_id, host["id"]):
+                raise HTTPException(status_code=403, detail="Not allowed")
+            cur.execute("SELECT status FROM devices WHERE id = %s AND host_id = %s;", (device_id, host["id"]))
+        elif role == "admin":
+            cur.execute("SELECT status FROM devices WHERE id = %s;", (device_id,))
+        else:
+            raise HTTPException(status_code=403, detail="Not allowed")
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Device not found")
+    new_status = "disabled" if row["status"] == "active" else "active"
+    with db.cursor() as cur:
+        cur.execute("UPDATE devices SET status = %s WHERE id = %s;", (new_status, device_id))
+        db.commit()
+    return RedirectResponse(url="/devices", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/api/devices/{device_id}/delete")
+async def devices_delete(device_id: int, request: Request, db=Depends(get_db)):
+    actor = current_actor(request)
+    if not actor:
+        raise HTTPException(status_code=401, detail="Login required")
+    role = actor.get("role")
+    if role == "admin":
+        with db.cursor() as cur:
+            cur.execute("DELETE FROM devices WHERE id = %s;", (device_id,))
+            db.commit()
+    elif role == "host":
+        host = _require_host(request, db)
+        if not host or not _owns_device(db, device_id, host["id"]):
+            raise HTTPException(status_code=403, detail="Not allowed")
+        with db.cursor() as cur:
+            cur.execute("DELETE FROM devices WHERE id = %s;", (device_id,))
+            db.commit()
+    else:
+        raise HTTPException(status_code=403, detail="Not allowed")
+    return RedirectResponse(url="/devices?deleted=1", status_code=status.HTTP_303_SEE_OTHER)
+
+# --- INTERNAL OFFICE MESSAGING ---
+
+@app.get("/messages", response_class=HTMLResponse)
+async def messages_page(request: Request, db=Depends(get_db)):
+    actor = current_actor(request)
+    if not actor:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    return templates.TemplateResponse(request=request, name="messages.html", context={
+        "user": None,
+        "actor": actor,
+    })
+
+@app.get("/api/messages", response_class=JSONResponse)
+async def messages_list(request: Request, after: int = 0, db=Depends(get_db)):
+    actor = current_actor(request)
+    if not actor:
+        raise HTTPException(status_code=401, detail="Login required")
+    with db.cursor() as cur:
+        cur.execute("""
+            SELECT * FROM messages WHERE id > %s
+            ORDER BY id ASC LIMIT 500;
+        """, (int(after),))
+        rows = cur.fetchall()
+    msgs = []
+    for m in rows:
+        msgs.append({
+            "id": m["id"],
+            "author_role": m["author_role"],
+            "author_id": m["author_id"],
+            "author_name": m["author_name"],
+            "audience": m["audience"],
+            "body": m["body"],
+            "created_at": m["created_at"].isoformat(),
+        })
+    return JSONResponse(content={"ok": True, "messages": msgs})
+
+@app.post("/api/messages", response_class=JSONResponse)
+async def messages_send(request: Request, body: str = Form(...), audience: str = Form("office"), db=Depends(get_db)):
+    actor = current_actor(request)
+    if not actor:
+        raise HTTPException(status_code=401, detail="Login required")
+    if not body.strip():
+        raise HTTPException(status_code=400, detail="Message is empty")
+    if audience not in ("office", "workers", "hosts"):
+        audience = "office"
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO messages (author_role, author_id, author_name, audience, body) VALUES (%s, %s, %s, %s, %s) RETURNING id;",
+            (actor["role"], actor["id"], actor["name"], audience, body[:4000]),
+        )
+        new_id = cur.fetchone()["id"]
+        db.commit()
+    broadcast = {
+        "id": new_id,
+        "author_role": actor["role"],
+        "author_id": actor["id"],
+        "author_name": actor["name"],
+        "audience": audience,
+        "body": body[:4000],
+        "created_at": datetime.now(ZoneInfo("UTC")).isoformat(),
+    }
+    for ws in list(msg_clients):
+        try:
+            await ws.send_json(broadcast)
+        except Exception:
+            msg_clients.discard(ws)
+    return JSONResponse(content={"ok": True})
+
+msg_clients: set = set()
+
+@app.websocket("/ws/messages")
+async def ws_messages(websocket: WebSocket):
+    actor = current_actor(websocket)
+    if not actor:
+        await websocket.close(code=1008)
+        return
+    await websocket.accept()
+    msg_clients.add(websocket)
+    websocket.state.actor = actor
+    try:
+        while True:
+            id_text = await websocket.receive_text()
+            try:
+                after_id = int(id_text)
+            except (TypeError, ValueError):
+                after_id = 0
+            conn = psycopg.connect(db_url, row_factory=dict_row)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT * FROM messages WHERE id > %s ORDER BY id ASC LIMIT 100;", (after_id,))
+                    rows = cur.fetchall()
+                for m in rows:
+                    await websocket.send_json({
+                        "id": m["id"],
+                        "author_role": m["author_role"],
+                        "author_id": m["author_id"],
+                        "author_name": m["author_name"],
+                        "audience": m["audience"],
+                        "body": m["body"],
+                        "created_at": m["created_at"].isoformat(),
+                    })
+            finally:
+                conn.close()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        msg_clients.discard(websocket)
+
 # The /app installable phone app reuses the exact same worker auth, clock,
 # geofence, location-tracking and paycheck backend as the web portal above.
 
@@ -2369,6 +3166,12 @@ def _set_setting(db, key, value):
         db.commit()
 
 
+def _del_setting(db, key):
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM app_settings WHERE key = %s;", (key,))
+        db.commit()
+
+
 def _channel_pat(db):
     return (os.getenv("HOSPITABLE_PAT", "") or _get_setting(db, "hospitable_pat") or "").strip()
 
@@ -2429,6 +3232,18 @@ async def settings_page(request: Request, db=Depends(get_db)):
     )
 
 
+@app.get("/labor", response_class=HTMLResponse)
+async def labor_page(request: Request):
+    is_authed, user_email = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    return templates.TemplateResponse(
+        request=request,
+        name="labor.html",
+        context={"user": {"email": user_email}},
+    )
+
+
 @app.post("/api/settings/channel")
 async def save_channel_settings(request: Request, db=Depends(get_db)):
     is_authed, _ = require_auth(request)
@@ -2439,7 +3254,9 @@ async def save_channel_settings(request: Request, db=Depends(get_db)):
     secret = (form.get("hospitable_webhook_secret") or "").strip()
     if pat:
         _set_setting(db, "hospitable_pat", pat)
-    if secret:
+    if form.get("clear_hospitable_webhook_secret"):
+        _del_setting(db, "hospitable_webhook_secret")
+    elif secret:
         _set_setting(db, "hospitable_webhook_secret", secret)
     for key, value in form.items():
         if key.startswith("link_"):
@@ -2470,7 +3287,12 @@ async def hospitable_webhook(request: Request, db=Depends(get_db)):
     body_bytes = await request.body()
     secret = (os.getenv("HOSPITABLE_WEBHOOK_SECRET", "") or _get_setting(db, "hospitable_webhook_secret") or "").strip()
     if secret:
-        sig = request.headers.get("x-hospitable-signature") or request.headers.get("x-signature") or ""
+        sig = (
+            request.headers.get("Signature")
+            or request.headers.get("x-hospitable-signature")
+            or request.headers.get("x-signature")
+            or ""
+        )
         expected = hmac.new(secret.encode(), body_bytes, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, expected):
             return JSONResponse({"status": "error", "message": "invalid signature"}, status_code=403)
@@ -2479,14 +3301,60 @@ async def hospitable_webhook(request: Request, db=Depends(get_db)):
     except Exception:
         payload = {}
     action = payload.get("action") or ""
-    if action.startswith("reservation."):
-        pat = _channel_pat(db)
-        if pat:
-            try:
+    wh_id = str(payload.get("id") or "")
+    data = payload.get("data")
+    try:
+        result = None
+        if action.startswith("reservation.") and isinstance(data, dict):
+            pat = _channel_pat(db)
+            if pat:
+                result = channel_sync.sync_hospitable_webhook(db, pat, data)
+        elif action.startswith("reservation."):
+            pat = _channel_pat(db)
+            if pat:
                 channel_sync.sync_hospitable(db, pat)
-            except Exception as e:
-                return JSONResponse({"status": "error", "message": str(e)})
-    return JSONResponse({"status": "ok", "received": True})
+        summary = f"Webhook {action}"
+        details = {"webhook_id": wh_id}
+        if result is not None:
+            details = {**result, "webhook_id": wh_id}
+        try:
+            with db.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO channel_sync_logs (channel, status, summary, details, started_at, finished_at)
+                       VALUES (%s, %s, %s, %s, %s, %s);""",
+                    (
+                        channel_sync.HOSPITABLE_CHANNEL,
+                        (result or {}).get("status", "success"),
+                        summary,
+                        json.dumps(details, default=str),
+                        datetime.now(timezone.utc),
+                        datetime.now(timezone.utc),
+                    ),
+                )
+            db.commit()
+        except Exception as _log_e:
+            db.rollback()
+            print(f"WEBHOOK LOG INSERT FAILED ({action}): {_log_e}", flush=True)
+        return JSONResponse({"status": "ok", "received": True, "action": action})
+    except Exception as e:
+        try:
+            with db.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO channel_sync_logs (channel, status, summary, details, started_at, finished_at)
+                       VALUES (%s, %s, %s, %s, %s, %s);""",
+                    (
+                        channel_sync.HOSPITABLE_CHANNEL,
+                        "failed",
+                        f"Webhook {action}",
+                        json.dumps({"error": str(e), "webhook_id": wh_id}, default=str),
+                        datetime.now(timezone.utc),
+                        datetime.now(timezone.utc),
+                    ),
+                )
+            db.commit()
+        except Exception:
+            db.rollback()
+        return JSONResponse({"status": "ok", "received": True, "action": action, "error": str(e)})
 
 # --- DOCUMENTS, FORMS & DELIVERY (ADMIN ONLY) ---
 
@@ -2907,27 +3775,53 @@ async def fetch_calendar_data(db=Depends(get_db)):
 
 @app.post("/api/calendar/book")
 async def create_manual_booking(
-    customer_name: str = Form(...),
-    phone: str = Form(...),
+    customer_name: str = Form(""),
+    phone: str = Form(""),
     start_time: str = Form(...),
     service_type: str = Form(...),
-    property_id: int = Form(0),
+    property_id: str = Form(""),
     db=Depends(get_db)
 ):
     parsed_start = datetime.fromisoformat(start_time)
     parsed_end = parsed_start + timedelta(hours=1)
 
     host_id = None
+    prop_id = None
+    host = None
     if property_id:
-        with db.cursor() as cur:
-            cur.execute("SELECT host_id FROM properties WHERE id = %s;", (property_id,))
+        property_id = property_id.strip()
+        if property_id.startswith("host_"):
+            try:
+                host_id = int(property_id.split("host_", 1)[1])
+            except (ValueError, IndexError):
+                host_id = None
+        else:
+            try:
+                prop_id = int(property_id)
+            except (ValueError, TypeError):
+                prop_id = None
+
+    with db.cursor() as cur:
+        if host_id is not None:
+            cur.execute("SELECT id, name, email, phone FROM hosts WHERE id = %s;", (host_id,))
+            host = cur.fetchone()
+            if host is None:
+                host_id = None
+        if prop_id is not None:
+            cur.execute("SELECT id, host_id FROM properties WHERE id = %s;", (prop_id,))
             prop = cur.fetchone()
-            if prop and prop["host_id"]:
-                host_id = prop["host_id"]
+            if prop:
+                prop_id = prop["id"]
+                if not host_id and prop["host_id"]:
+                    host_id = prop["host_id"]
             else:
-                property_id = None
-    else:
-        property_id = None
+                prop_id = None
+
+    if host:
+        customer_name = host["name"] or customer_name
+        phone = host["phone"] or phone
+    elif not customer_name.strip():
+        customer_name = "Unknown host"
 
     with db.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM calendar_events WHERE start_time < %s AND end_time > %s;", (parsed_end, parsed_start))
@@ -2935,7 +3829,7 @@ async def create_manual_booking(
             raise HTTPException(status_code=400, detail="Requested timeframe collides with an active event.")
         cur.execute(
             "INSERT INTO calendar_events (customer_name, phone, start_time, end_time, service_type, host_id, property_id) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id;",
-            (customer_name, phone, parsed_start, parsed_end, service_type, host_id, property_id)
+            (customer_name, phone, parsed_start, parsed_end, service_type, host_id, prop_id)
         )
         event_id = cur.fetchone()['id']
         amount_cents = stripe_svc.get_price(service_type)
@@ -2945,29 +3839,7 @@ async def create_manual_booking(
         )
         db.commit()
 
-    # Create Stripe Checkout session so the guest can pay for this booking
-    try:
-        checkout_url = stripe_svc.create_checkout_session(
-            event_id=event_id,
-            customer_name=customer_name,
-            customer_email="",
-            service_type=service_type,
-            start_time=parsed_start,
-        )
-        session_id = None
-        if "session_id=" in checkout_url:
-            session_id = checkout_url.split("session_id=")[-1].split("&")[0]
-        if session_id:
-            with db.cursor() as cur:
-                cur.execute(
-                    "UPDATE calendar_events SET stripe_session_id = %s WHERE id = %s;",
-                    (session_id, event_id)
-                )
-                db.commit()
-        return RedirectResponse(url=checkout_url, status_code=303)
-    except Exception as e:
-        print(f"⚠️ Stripe checkout creation skipped: {e}")
-        return RedirectResponse(url="/dashboard", status_code=303)
+    return RedirectResponse(url="/dashboard?booked=1", status_code=303)
 
 @app.get("/api/payments/create-link/{event_id}")
 async def create_payment_link(event_id: int, db=Depends(get_db)):
@@ -2981,10 +3853,17 @@ async def create_payment_link(event_id: int, db=Depends(get_db)):
         return JSONResponse(content={"error": "Booking already paid"}, status_code=400)
 
     try:
+        customer_email = ""
+        if event.get("host_id"):
+            with db.cursor() as cur:
+                cur.execute("SELECT email FROM hosts WHERE id = %s;", (event["host_id"],))
+                host_row = cur.fetchone()
+            if host_row and host_row["email"]:
+                customer_email = host_row["email"]
         checkout_url = stripe_svc.create_checkout_session(
             event_id=event["id"],
             customer_name=event["customer_name"],
-            customer_email="",
+            customer_email=customer_email,
             service_type=event["service_type"],
             start_time=event["start_time"],
         )
@@ -3180,7 +4059,7 @@ GENERAL
 - Direct callers to text +1 (757) 846-9275, visit https://bizstackperks.com, or use the free rental analysis form on the home page.
 - Never expose internal data, credentials, or secrets. If a caller is distressed or requests an emergency, give a calm, brief reply and offer to follow up by text."""
 
-@app.get("/voice.swml")
+@app.api_route("/voice.swml", methods=["GET", "POST"])
 async def voice_swml():
     swml = {
         "version": "1.0.0",
@@ -3275,8 +4154,8 @@ async def present_deck(kind: str, request: Request):
     slides = training_service.deck_slides(kind)
     return templates.TemplateResponse(request, "narrated_deck.html", {
         "kind": kind,
-        "slides": slides,
-        "deck_name": "New Worker Orientation" if kind == "worker" else "Host & Lead Onboarding",
+        "label": "New Worker Orientation" if kind == "worker" else "Host & Lead Onboarding",
+        "decks_json": json.dumps(slides),
     })
 
 @app.get("/present/{kind}/audio/{idx}.mp3")
@@ -3405,6 +4284,12 @@ async def partners_page(request: Request, db=Depends(get_db)):
         cur.execute("SELECT * FROM partners ORDER BY created_at DESC;")
         partners = cur.fetchall()
         cur.execute("""
+            SELECT referral_code, COUNT(*)::int AS cnt,
+                   COUNT(*) FILTER (WHERE funding_needed = TRUE)::int AS funding_cnt
+            FROM leads WHERE referral_code IS NOT NULL GROUP BY referral_code;
+        """)
+        referral_activity = {r["referral_code"]: r for r in cur.fetchall()}
+        cur.execute("""
             SELECT l.*, p.name AS partner_name FROM leads l
             LEFT JOIN partners p ON p.id = l.partner_id
             WHERE l.funding_needed = TRUE ORDER BY l.created_at DESC;
@@ -3414,6 +4299,7 @@ async def partners_page(request: Request, db=Depends(get_db)):
         "user": {"email": user_email},
         "partners": partners,
         "funding_leads": funding_leads,
+        "referral_activity": referral_activity,
     })
 
 @app.post("/api/partners")
@@ -3425,8 +4311,28 @@ async def add_partner(request: Request, name: str = Form(...), kind: str = Form(
         cur.execute("INSERT INTO partners (name, kind, contact_email, contact_phone, website, notes) VALUES (%s, %s, NULLIF(%s,''), NULLIF(%s,''), NULLIF(%s,''), NULLIF(%s,'')) RETURNING id;",
                     (name, kind, contact_email, contact_phone, website, notes))
         partner_id = cur.fetchone()["id"]
+        code = _gen_referral_code("partner")
+        cur.execute("INSERT INTO referral_codes (code, ref_type, ref_id, label) VALUES (%s, 'partner', %s, %s) ON CONFLICT (code) DO NOTHING;",
+                    (code, partner_id, name.strip()))
+        cur.execute("UPDATE partners SET referral_code = %s WHERE id = %s;", (code, partner_id))
         db.commit()
     return JSONResponse({"ok": True, "partner_id": partner_id})
+
+@app.post("/api/partners/{partner_id}/referral")
+async def create_partner_referral(partner_id: int, request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM partners WHERE id = %s;", (partner_id,))
+        partner = cur.fetchone()
+        if not partner:
+            raise HTTPException(status_code=404, detail="Partner not found.")
+        code = _gen_referral_code("partner")
+        cur.execute("INSERT INTO referral_codes (code, ref_type, ref_id, label) VALUES (%s, 'partner', %s, %s) ON CONFLICT (code) DO NOTHING;",
+                    (code, partner_id, partner["name"]))
+        cur.execute("UPDATE partners SET referral_code = %s WHERE id = %s;", (code, partner_id))
+        db.commit()
+    base = os.getenv("APP_BASE_URL", "https://bizstackperks.com")
+    return JSONResponse({"ok": True, "code": code, "url": f"{base}/?ref={urllib.parse.quote(code)}&src=referral"})
 
 @app.post("/api/leads/{lead_id}/funding")
 async def set_lead_funding(lead_id: int, request: Request, funding_needed: str = Form("on"), funding_amount: str = Form(""), funding_use: str = Form(""), partner_id: str = Form(""), db=Depends(get_db)):

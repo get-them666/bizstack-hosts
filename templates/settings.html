@@ -149,6 +149,7 @@
                         <h2 class="text-lg font-bold text-slate-900">Channel Manager Sync</h2>
                         <p class="text-xs text-slate-500">Import Airbnb / Vrbo / Booking.com reservations into your calendar so crew & hosts see them</p>
                     </div>
+                    <a href="/swagger" target="_blank" rel="noopener" class="ml-auto shrink-0 px-3 py-1.5 text-xs font-semibold text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg transition-all">Swagger API Docs</a>
                 </div>
 
                 {% if channel_error %}
@@ -169,6 +170,10 @@
                             <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Webhook Secret (optional)</label>
                             <input type="password" name="hospitable_webhook_secret" autocomplete="off" placeholder="Leave blank to keep current"
                                 class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500">
+                            <label class="flex items-center gap-2 mt-2 text-xs text-slate-500 cursor-pointer">
+                                <input type="checkbox" name="clear_hospitable_webhook_secret" value="1" class="rounded border-slate-300 text-sky-600 focus:ring-sky-500">
+                                Clear stored webhook secret (accept Hospitable webhooks without signature)
+                            </label>
                             <p class="text-xs text-slate-400 mt-1">Used to verify Hospitable webhook signatures.</p>
                         </div>
                     </div>

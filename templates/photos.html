@@ -1,0 +1,91 @@
+{% extends "base.html" %}{% block title %}Photos | BizStack Hosts{% endblock %}
+
+{% block content %}
+<section class="bg-gradient-to-b from-slate-50 to-white">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+            <div>
+                <p class="text-xs font-semibold text-indigo-600 uppercase tracking-wider">Photo Finish</p>
+                <h1 class="text-3xl font-extrabold tracking-tight text-slate-900">{% if actor['role'] == 'worker' %}My Photo Submissions{% else %}Cleaning & Inspection Photos{% endif %}</h1>
+                <p class="mt-2 text-slate-600">Photos sent by the crew during turnover clean — ready to review and export for Airbnb checkout handoff.</p>
+            </div>
+            {% if actor['role'] == 'admin' or actor['role'] == 'host' %}
+            <div class="flex items-center gap-2">
+                <span class="text-xs font-semibold text-slate-500 px-3 py-1 rounded-full bg-slate-100">{{ photos|length }} photo{% if photos|length != 1 %}s{% endif %}</span>
+            </div>
+            {% endif %}
+        </div>
+
+        {% if photos %}
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {% for p in photos %}
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden group">
+                <a href="/api/photos/{{ p['id'] }}/image" target="_blank" rel="noopener" class="block aspect-video bg-slate-100 overflow-hidden">
+                    <img src="/api/photos/{{ p['id'] }}/image" alt="{{ p['room'] or 'Room photo' }}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300">
+                </a>
+                <div class="p-4">
+                    <div class="flex items-center justify-between gap-2 mb-1">
+                        {% set cat = p['category'] or 'clean' %}
+                        {% if cat == 'clean' %}
+                        <span class="px-2 py-0.5 text-xs font-bold rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100">CLEAN</span>
+                        {% elif cat == 'damage' %}
+                        <span class="px-2 py-0.5 text-xs font-bold rounded-full bg-red-50 text-red-600 border border-red-100">DAMAGE</span>
+                        {% else %}
+                        <span class="px-2 py-0.5 text-xs font-bold rounded-full bg-amber-50 text-amber-600 border border-amber-100">PROBLEM</span>
+                        {% endif %}
+                        {% if p['verified'] %}
+                        <span class="px-2 py-0.5 text-xs font-bold rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100">✓ Verified</span>
+                        {% endif %}
+                    </div>
+                    <p class="text-sm font-bold text-slate-800">{{ p['room'] or 'Room' }}</p>
+                    {% if p['caption'] %}<p class="text-xs text-slate-500 mt-0.5">{{ p['caption'] }}</p>{% endif %}
+                    <div class="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-400 space-y-0.5">
+                        <p>{% if p['worker_name'] %}🧹 {{ p['worker_name'] }}{% endif %}</p>
+                        {% if p['customer_name'] %}<p>🏠 {{ p['customer_name'] }}{% if p['service_type'] %} · {{ p['service_type'] }}{% endif %}{% if p['start_time'] %} · {{ p['start_time'].strftime('%b %d') }}{% endif %}</p>{% endif %}
+                        <p>🕐 {{ p['created_at'].strftime('%b %d, %Y · %I:%M %p') }}</p>
+                    </div>
+                    {% if is_admin %}
+                    <form method="post" action="/api/photos/{{ p['id'] }}/verify" class="mt-3">
+                        <input type="hidden" name="verified" value="{{ 'false' if p['verified'] else 'true' }}">
+                        <button class="w-full px-3 py-2 text-xs font-bold rounded-lg {{ 'bg-slate-100 text-slate-500 hover:bg-slate-200' if p['verified'] else 'bg-indigo-600 text-white hover:bg-indigo-700' }}">
+                            {{ 'Unmark verified' if p['verified'] else '✓ Verify photo' }}
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        {% if actor['role'] == 'admin' or actor['role'] == 'host' %}
+        <div class="mt-8 bg-white rounded-2xl border border-slate-200 p-5">
+            <h2 class="text-sm font-bold text-slate-900 mb-1">Export for Airbnb checkout</h2>
+            <p class="text-xs text-slate-500 mb-3">Group photos by job and download a PDF report per property to attach to your checkout / next-guest handoff.</p>
+            <div class="flex flex-wrap gap-2">
+                {% set seen = [] %}
+                {% for p in photos %}
+                {% if p['event_id'] not in seen %}
+                {% set _ = seen.append(p['event_id']) %}
+                <a href="/photos/export/{{ p['event_id'] }}.pdf" target="_blank" rel="noopener" class="inline-flex items-center gap-1 px-4 py-2 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 rounded-xl transition-all">
+                    📄 {{ p['customer_name'] or ('Job #' ~ p['event_id']) }}{% if p['start_time'] %} · {{ p['start_time'].strftime('%b %d') }}{% endif %}
+                </a>
+                {% endif %}
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% else %}
+        <div class="bg-white rounded-3xl border border-slate-200 shadow-lg p-12 text-center">
+            <p class="text-4xl mb-3">📷</p>
+            <h2 class="text-lg font-bold text-slate-900 mb-1">No photos yet</h2>
+            {% if actor['role'] == 'worker' %}
+            <p class="text-sm text-slate-500">Go to <a href="/worker" class="text-indigo-600 font-semibold">My Jobs</a>, open a job and tap <b>📷 Photo Verify</b> to upload your finished-room photos.</p>
+            {% else %}
+            <p class="text-sm text-slate-500">Photo submissions from the crew will appear here as they complete turnover cleans.</p>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

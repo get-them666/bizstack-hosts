@@ -77,7 +77,7 @@
                                     <span class="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-semibold rounded-full">Paid ✓</span>
                                     {% else %}
                                     <span class="px-2 py-1 bg-amber-50 text-amber-700 text-[10px] font-semibold rounded-full">Unpaid</span>
-                                    <a href="#" data-event-id="{{ e['id'] }}" class="payment-link-btn px-2 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-semibold rounded-full hover:bg-indigo-100">Payment Link</a>
+                                    <a href="#" data-event-id="{{ e['id'] }}" class="payment-link-btn px-2 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-semibold rounded-full hover:bg-indigo-100">Send link to host</a>
                                     {% endif %}
                                 </div>
                             </div>
@@ -102,17 +102,19 @@
                         <div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 font-bold">🧼</div>
                         <div>
                             <h3 class="font-bold text-slate-900">Schedule a Turnover</h3>
-                            <p class="text-xs text-slate-500">Guest-funded via Stripe Checkout</p>
+                            <p class="text-xs text-slate-500">Book a job for a host's property — admin override tool</p>
                         </div>
                     </div>
+                    <p class="text-xs text-slate-500 mb-4 leading-relaxed">Turnovers are guest-funded by the stay itself. Deep cleans, linen restocks, and inspections are host jobs — the guest is never charged. The payment link below goes to the <span class="font-semibold text-slate-700">host</span>.</p>
                     <form action="/api/calendar/book" method="post" class="space-y-4">
                         <div>
-                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Customer Name</label>
-                            <input type="text" name="customer_name" required class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all" placeholder="John Doe">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Phone</label>
-                            <input type="tel" name="phone" required class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all" placeholder="(555) 000-0000">
+                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Host / Property</label>
+                            <select name="property_id" required class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+                                <option value="" disabled selected>Select host to book for…</option>
+                            {% for h in hosts %}
+                                <option value="host_{{ h['id'] }}">{{ h['name'] }}{% if h['property_name'] %} · {{ h['property_name'] }}{% endif %}</option>
+                            {% endfor %}
+                            </select>
                         </div>
                         <div>
                             <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Start Time</label>
@@ -127,17 +129,8 @@
                                 <option value="Inspection">Inspection</option>
                             </select>
                         </div>
-                        <div>
-                            <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Property (Host)</label>
-                            <select name="property_id" class="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
-                                <option value="0">— Unassigned —</option>
-                            {% for p in properties %}
-                                <option value="{{ p['id'] }}">{{ p['name'] }} · {{ p['host_name'] }}</option>
-                            {% endfor %}
-                            </select>
-                        </div>
                         <button type="submit" class="w-full py-3.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all shadow-md shadow-indigo-100 uppercase tracking-wider">
-                            Book & Send Payment Link
+                            Book Job
                         </button>
                     </form>
                 </div>
@@ -213,14 +206,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 const data = await res.json();
                 if (data.url) {
                     window.open(data.url, '_blank');
-                    this.textContent = 'Payment Link';
+                    this.textContent = 'Sent to host';
                 } else {
                     alert(data.error || 'Could not create payment link');
-                    this.textContent = 'Payment Link';
+                    this.textContent = 'Send link to host';
                 }
             } catch (err) {
                 alert('Could not create payment link');
-                this.textContent = 'Payment Link';
+                this.textContent = 'Send link to host';
             }
         });
     });
