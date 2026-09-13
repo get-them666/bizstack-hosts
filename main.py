@@ -919,6 +919,32 @@ def current_actor(request: Request):
     """Return {role, id, email, name} for a signed-in session, or None."""
     return auth_service.actor_from_token(request.cookies.get(auth_service.SESSION_COOKIE))
 
+def _worker_session_actor(request: Request) -> dict | None:
+    """Return a worker actor authenticated via the crew app's worker_session cookie."""
+    token = request.cookies.get("worker_session")
+    worker_id = request.cookies.get("worker_id")
+    if not token or not worker_id:
+        return None
+    conn = psycopg.connect(db_url, row_factory=dict_row)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, email FROM workers WHERE id = %s AND is_active = TRUE AND worker_token = %s;",
+                (int(worker_id), token),
+            )
+            row = cur.fetchone()
+    except Exception:
+        row = None
+    finally:
+        conn.close()
+    if not row:
+        return None
+    return {"role": "worker", "id": row["id"], "email": row.get("email"), "name": row.get("name")}
+
+def _session_actor(request: Request) -> dict | None:
+    """The signed-in session actor, or a worker authenticated via the crew app."""
+    return current_actor(request) or _worker_session_actor(request)
+
 def require_auth(request: Request):
     actor = current_actor(request)
     is_admin = bool(actor and actor.get("role") == "admin")
@@ -2532,7 +2558,7 @@ def _can_access_photo(request: Request, db, photo_id: int) -> dict:
         row = cur.fetchone()
     if not row:
         return None
-    actor = current_actor(request)
+    actor = _session_actor(request)
     if actor and actor.get("role") == "admin":
         return row
     if actor and actor.get("role") == "worker" and actor.get("id") == row["worker_id"]:
@@ -2639,7 +2665,7 @@ async def photo_image(photo_id: int, request: Request, db=Depends(get_db)):
 
 @app.get("/api/photos", response_class=JSONResponse)
 async def photos_list(request: Request, event_id: int | None = None, db=Depends(get_db)):
-    actor = current_actor(request)
+    actor = _session_actor(request)
     if not actor:
         raise HTTPException(status_code=401, detail="Login required")
     with db.cursor() as cur:
@@ -2656,7 +2682,15 @@ async def photos_list(request: Request, event_id: int | None = None, db=Depends(
                 WHERE e.host_id = %s ORDER BY jp.created_at DESC LIMIT 300;
             """, (actor["id"],))
         elif actor["role"] == "worker":
-            cur.execute("SELECT jp.*, w.name AS worker_name FROM job_photos jp LEFT JOIN workers w ON w.id = jp.worker_id WHERE jp.worker_id = %s ORDER BY jp.created_at DESC;", (actor["id"],))
+            if event_id:
+                cur.execute("""
+                    SELECT jp.*, w.name AS worker_name FROM job_photos jp
+                    LEFT JOIN workers w ON w.id = jp.worker_id
+                    JOIN calendar_events e ON e.id = jp.event_id
+                    WHERE jp.worker_id = %s AND e.id = %s ORDER BY jp.created_at DESC;
+                """, (actor["id"], event_id))
+            else:
+                cur.execute("SELECT jp.*, w.name AS worker_name FROM job_photos jp LEFT JOIN workers w ON w.id = jp.worker_id WHERE jp.worker_id = %s ORDER BY jp.created_at DESC;", (actor["id"],))
         else:
             raise HTTPException(status_code=403, detail="Access denied")
         rows = cur.fetchall()
@@ -2986,8 +3020,12 @@ async def devices_delete(device_id: int, request: Request, db=Depends(get_db)):
 # --- INTERNAL OFFICE MESSAGING ---
 
 @app.get("/messages", response_class=HTMLResponse)
+def _message_actor(request: Request):
+    """Current session actor, or a worker authenticated via the crew app's worker_session."""
+    return _session_actor(request)
+
 async def messages_page(request: Request, db=Depends(get_db)):
-    actor = current_actor(request)
+    actor = _message_actor(request)
     if not actor:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     return templates.TemplateResponse(request=request, name="messages.html", context={
@@ -2997,10 +3035,10 @@ async def messages_page(request: Request, db=Depends(get_db)):
 
 @app.get("/api/messages", response_class=JSONResponse)
 async def messages_list(request: Request, after: int = 0, db=Depends(get_db)):
-    actor = current_actor(request)
+    actor = _message_actor(request)
     if not actor:
         raise HTTPException(status_code=401, detail="Login required")
-    if not _device_session_ok(db, actor, request):
+    if actor.get("role") != "worker" and not _device_session_ok(db, actor, request):
         raise HTTPException(status_code=403, detail="Messaging is locked to this account's active device. Log in again on this device to take over.")
     with db.cursor() as cur:
         cur.execute("""
@@ -3023,11 +3061,13 @@ async def messages_list(request: Request, after: int = 0, db=Depends(get_db)):
 
 @app.post("/api/messages", response_class=JSONResponse)
 async def messages_send(request: Request, body: str = Form(...), audience: str = Form("office"), db=Depends(get_db)):
-    actor = current_actor(request)
+    actor = _message_actor(request)
     if not actor:
         raise HTTPException(status_code=401, detail="Login required")
-    if not _device_session_ok(db, actor, request):
+    if actor.get("role") != "worker" and not _device_session_ok(db, actor, request):
         raise HTTPException(status_code=403, detail="Messaging is locked to this account's active device. Log in again on this device to take over.")
+    if actor.get("role") == "worker":
+        audience = "office"
     if not body.strip():
         raise HTTPException(status_code=400, detail="Message is empty")
     if audience not in ("office", "workers", "hosts"):
@@ -3072,18 +3112,19 @@ msg_clients: set = set()
 
 @app.websocket("/ws/messages")
 async def ws_messages(websocket: WebSocket):
-    actor = current_actor(websocket)
+    actor = _message_actor(websocket)
     if not actor:
         await websocket.close(code=1008)
         return
-    conn = psycopg.connect(db_url, row_factory=dict_row)
-    try:
-        device_ok = _device_session_ok(conn, actor, websocket)
-    finally:
-        conn.close()
-    if not device_ok:
-        await websocket.close(code=1008)
-        return
+    if actor.get("role") != "worker":
+        conn = psycopg.connect(db_url, row_factory=dict_row)
+        try:
+            device_ok = _device_session_ok(conn, actor, websocket)
+        finally:
+            conn.close()
+        if not device_ok:
+            await websocket.close(code=1008)
+            return
     await websocket.accept()
     msg_clients.add(websocket)
     websocket.state.actor = actor

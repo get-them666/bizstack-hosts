@@ -114,23 +114,73 @@
 
             <div id="offline-banner" class="hidden bg-amber-500 text-white text-center text-xs font-bold px-4 py-2">OFFLINE — data may be stale</div>
 
-            <main id="home-body" class="flex-1 px-5 pb-10 -mt-4">
+            <main id="home-body" class="flex-1 px-5 pb-24 -mt-4">
                 <div id="clocked-banner" class="hidden bg-red-500 text-white rounded-2xl px-5 py-3 mb-4 shadow-lg shadow-red-200 flex items-center justify-between">
                     <span class="text-sm font-bold">● On the clock — location live to your manager</span>
                     <button id="banner-stop" class="px-3 py-1.5 text-xs font-bold bg-white text-red-500 rounded-lg">Clock Out</button>
                 </div>
 
-                <div class="mb-4 px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-100 text-xs text-indigo-700">
-                    🔍 <b>Privacy:</b> while you're <b>on the clock</b>, your live location is shared with your manager. The moment you clock out, tracking stops.
-                </div>
+                <section id="tab-clock">
+                    <p id="jobs-title" class="text-sm font-bold text-slate-900 mb-3">My Jobs</p>
+                    <div id="jobs-list" class="space-y-3"></div>
 
-                <p id="jobs-title" class="text-sm font-bold text-slate-900 mb-3">My Recent Jobs</p>
-                <div id="jobs-list" class="space-y-3"></div>
+                    <p id="pay-title" class="text-sm font-bold text-slate-900 mt-8 mb-3">My Paychecks</p>
+                    <div id="paychecks-list" class="space-y-3"></div>
+                </section>
 
-                <p id="pay-title" class="text-sm font-bold text-slate-900 mt-8 mb-3">My Paychecks</p>
-                <div id="paychecks-list" class="space-y-3"></div>
+                <section id="tab-map" class="hidden">
+                    <p id="map-title" class="text-sm font-bold text-slate-900 mb-3">Your Jobs on the Map</p>
+                    <div id="map-list" class="space-y-2 mb-3"></div>
+                    <div id="map-embed-wrap" class="hidden rounded-2xl overflow-hidden border border-slate-200">
+                        <iframe id="map-embed" class="w-full" style="height: 300px" frameborder="0" loading="lazy" allowfullscreen src="about:blank"></iframe>
+                        <a id="map-nav-btn" href="#" target="_blank" rel="noopener"
+                           class="block text-center py-3 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700">🧭 Get Directions</a>
+                    </div>
+                </section>
+
+                <section id="tab-schedule" class="hidden">
+                    <div class="flex items-center justify-between mb-3">
+                        <button id="cal-prev" type="button" class="px-3 py-1.5 text-xs font-bold text-slate-500 bg-white border border-slate-200 rounded-xl">‹ Prev</button>
+                        <p id="cal-title" class="text-sm font-extrabold text-slate-900"></p>
+                        <button id="cal-next" type="button" class="px-3 py-1.5 text-xs font-bold text-slate-500 bg-white border border-slate-200 rounded-xl">Next ›</button>
+                    </div>
+                    <div id="cal-grid" class="bg-white rounded-2xl border border-slate-200 p-2"></div>
+                    <p id="cal-day-title" class="text-sm font-bold text-slate-900 mt-4 mb-3 hidden"></p>
+                    <div id="cal-day-jobs" class="space-y-3"></div>
+                </section>
+
+                <section id="tab-chat" class="hidden flex flex-col" style="height: calc(100vh - 260px);">
+                    <div id="chat-list" class="flex-1 overflow-y-auto space-y-3 pr-1">
+                        <div class="text-center text-xs text-slate-400 py-6">Connecting…</div>
+                    </div>
+                    <form id="chat-form" class="flex items-end gap-2 mt-3">
+                        <textarea id="chat-input" rows="1" placeholder="Message the office…"
+                            class="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"></textarea>
+                        <button type="submit" class="shrink-0 px-5 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">Send</button>
+                    </form>
+                </section>
+
+                <section id="tab-photos" class="hidden">
+                    <p id="photos-title" class="text-sm font-bold text-slate-900 mb-3">Job Photos</p>
+                    <p class="text-xs text-slate-500 mb-3">Show the office the finished clean. 📷 One photo per room, plus shots of any damage or problems found.</p>
+                    <div id="photos-jobs" class="space-y-2 mb-4"></div>
+                    <div id="photos-gallery" class="hidden">
+                        <p class="text-sm font-bold text-slate-900 mb-2" id="photos-gallery-title"></p>
+                        <div id="photos-grid" class="grid grid-cols-2 gap-2"></div>
+                        <button id="photos-add" type="button"
+                            class="mt-4 w-full py-3 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">📷 Take a Photo</button>
+                    </div>
+                </section>
             </main>
         </div>
+
+        <nav id="tabbar" class="hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-200 safe-bottom flex justify-around">
+            <button id="tabbtn-clock" data-tab="clock" class="flex-1 py-3 text-sm font-bold text-indigo-600 border-t-2 border-indigo-500">🕐 Clock</button>
+            <button id="tabbtn-schedule" data-tab="schedule" class="flex-1 py-3 text-sm font-bold text-slate-400 border-t-2 border-transparent">📅 Schedule</button>
+            <button id="tabbtn-map" data-tab="map" class="flex-1 py-3 text-sm font-bold text-slate-400 border-t-2 border-transparent">🗺️ Map</button>
+            <button id="tabbtn-chat" data-tab="chat" class="flex-1 py-3 text-sm font-bold text-slate-400 border-t-2 border-transparent">💬 Chat<span id="chat-dot" class="hidden ml-1 inline-block w-2 h-2 rounded-full bg-red-500"></span></button>
+            <button id="tabbtn-photos" data-tab="photos" class="flex-1 py-3 text-sm font-bold text-slate-400 border-t-2 border-transparent">📷 Photos</button>
+        </nav>
     </div>
 
     <!-- Photo Verify Modal -->
@@ -166,7 +216,7 @@
 
     <script>
         const FENCE_M = 100.584;
-        const state = { worker: null, jobs: [], paychecks: [], features: {}, totals: { earned_cents: 0, jobs_done: 0 }, otpEmail: '', lastPos: null, updateTimer: null, sampling: false };
+        const state = { worker: null, jobs: [], paychecks: [], features: {}, totals: { earned_cents: 0, jobs_done: 0 }, otpEmail: '', lastPos: null, updateTimer: null, sampling: false, chatStarted: false, chatWs: null, chatLastId: 0, chatSeen: new Set(), chatLocked: false };
 
         const $ = id => document.getElementById(id);
 
@@ -224,6 +274,8 @@
             document.querySelector('#paychecks-list').classList.toggle('hidden', !state.features.pay);
             if (state.features.pay) renderPaychecks();
             renderJobs();
+            $('tabbar').classList.remove('hidden');
+            switchTab('clock');
         }
 
         function renderJobs() {
@@ -500,6 +552,270 @@
 
         function showGeo(show) { $('geo-banner').classList.toggle('hidden', !show); }
 
+        function switchTab(name) {
+            ['clock', 'schedule', 'map', 'chat', 'photos'].forEach(t => {
+                const panel = $('tab-' + t);
+                if (panel) panel.classList.toggle('hidden', t !== name);
+                const btn = $('tabbtn-' + t);
+                if (btn) {
+                    btn.classList.toggle('text-indigo-600', t === name);
+                    btn.classList.toggle('border-indigo-500', t === name);
+                    btn.classList.toggle('text-slate-400', t !== name);
+                    btn.classList.toggle('border-transparent', t !== name);
+                }
+            });
+            if (name === 'map') renderMap();
+            if (name === 'schedule') renderCalendar();
+            if (name === 'chat') { if (!state.chatStarted) startChat(); if (state.chatStarted) $('chat-dot').classList.add('hidden'); }
+            if (name === 'photos') renderPhotosJobs();
+        }
+
+        /* ---------- Schedule / calendar ---------- */
+        let calYear = 0, calMonth = 0, calSelected = '';
+        const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+        function jobOnDate(j, dateKey) {
+            if (!j.start_time) return false;
+            const d = new Date(j.start_time);
+            return (d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')) === dateKey;
+        }
+
+        function todayKey() {
+            const t = new Date();
+            return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0');
+        }
+
+        function renderCalendar() {
+            if (!calYear) { const t = new Date(); calYear = t.getFullYear(); calMonth = t.getMonth(); }
+            $('cal-title').textContent = MONTHS[calMonth] + ' ' + calYear;
+            const grid = $('cal-grid');
+            grid.innerHTML = '';
+            const first = new Date(calYear, calMonth, 1);
+            let cursor = new Date(calYear, calMonth, 1 - first.getDay());
+            const jobsByDate = {};
+            state.jobs.forEach(j => {
+                if (!j.start_time) return;
+                const d = new Date(j.start_time);
+                const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+                (jobsByDate[key] = jobsByDate[key] || []).push(j);
+            });
+            const today = todayKey();
+            const head = document.createElement('div');
+            head.className = 'grid grid-cols-7';
+            WEEKDAYS.forEach(w => {
+                const h = document.createElement('div');
+                h.className = 'text-center text-[10px] font-bold text-slate-400 py-1';
+                h.textContent = w;
+                head.appendChild(h);
+            });
+            grid.appendChild(head);
+            const body = document.createElement('div');
+            body.className = 'grid grid-cols-7 gap-1';
+            for (let i = 0; i < 42; i++) {
+                const cell = document.createElement('button');
+                cell.type = 'button';
+                const inMonth = cursor.getMonth() === calMonth;
+                const key = cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0') + '-' + String(cursor.getDate()).padStart(2, '0');
+                cell.className = 'relative rounded-lg py-2 text-sm font-semibold ' +
+                    (inMonth ? 'text-slate-800' : 'text-slate-300') +
+                    (key === today ? ' bg-indigo-50 text-indigo-700' : '') +
+                    (calSelected === key ? ' ring-2 ring-indigo-400' : '');
+                cell.textContent = cursor.getDate();
+                if (jobsByDate[key] && jobsByDate[key].length) {
+                    const dot = document.createElement('span');
+                    dot.className = 'absolute bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full ' +
+                        (jobsByDate[key].some(j => j.clocked_in) ? 'bg-red-500' : 'bg-indigo-500');
+                    cell.appendChild(dot);
+                }
+                cell.addEventListener('click', () => { calSelected = key; renderCalendar(); selectCalDay(key, jobsByDate[key] || []); });
+                body.appendChild(cell);
+                cursor.setDate(cursor.getDate() + 1);
+            }
+            grid.appendChild(body);
+            if (!calSelected) calSelected = today;
+            selectCalDay(calSelected, jobsByDate[calSelected] || []);
+        }
+
+        function selectCalDay(key, jobs) {
+            calSelected = key;
+            $('cal-day-title').classList.remove('hidden');
+            $('cal-day-title').textContent = 'Jobs — ' + key;
+            const list = $('cal-day-jobs');
+            list.innerHTML = '';
+            if (!jobs.length) {
+                list.innerHTML = '<p class="text-sm text-slate-400 bg-white rounded-2xl border border-slate-200 p-5">No jobs this day.</p>';
+                return;
+            }
+            [...jobs].sort((a, b) => new Date(a.start_time) - new Date(b.start_time)).forEach(j => {
+                list.appendChild(jobCard(j));
+            });
+        }
+
+        function renderMap() {
+            const jobs = state.jobs.filter(j => j.job_lat != null && j.job_lng != null);
+            const list = $('map-list');
+            list.innerHTML = '';
+            if (!jobs.length) {
+                list.innerHTML = '<p class="text-sm text-slate-400 bg-white rounded-2xl border border-slate-200 p-5">No job locations yet.</p>';
+                $('map-embed-wrap').classList.add('hidden');
+                return;
+            }
+            const sorted = [...jobs].sort((a, b) => (a.clocked_in ? 0 : 1) - (b.clocked_in ? 0 : 1));
+            sorted.forEach((j, i) => {
+                const row = document.createElement('button');
+                row.type = 'button';
+                row.className = 'w-full text-left bg-white rounded-xl border border-slate-200 p-3' + (i === 0 ? ' border-indigo-300 ring-2 ring-indigo-100' : '');
+                row.innerHTML = `
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm font-bold text-slate-800">${escapeHtml(j.customer_name)}</span>
+                        <span class="text-xs text-slate-400">${j.clocked_in ? '● On the clock' : fmtTime(j.start_time)}</span>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-0.5">${escapeHtml(j.service_type)}${j.job_address ? ' · ' + escapeHtml(j.job_address) : ''}</p>`;
+                row.addEventListener('click', () => {
+                    list.querySelectorAll('button').forEach(b => { b.classList.remove('border-indigo-300', 'ring-2', 'ring-indigo-100'); });
+                    row.classList.add('border-indigo-300', 'ring-2', 'ring-indigo-100');
+                    showJobMap(j);
+                });
+                list.appendChild(row);
+            });
+            showJobMap(sorted[0]);
+        }
+
+        function showJobMap(j) {
+            const wrap = $('map-embed-wrap');
+            if (!j) { wrap.classList.add('hidden'); return; }
+            wrap.classList.remove('hidden');
+            $('map-embed').src = 'https://www.google.com/maps?q=' + j.job_lat + ',' + j.job_lng + '&output=embed';
+            $('map-nav-btn').href = 'https://www.google.com/maps/dir/?api=1&destination=' + j.job_lat + ',' + j.job_lng;
+        }
+
+        /* ---------- Chat ---------- */
+        function startChat() {
+            state.chatStarted = true;
+            state.chatSeen.clear();
+            loadChatHistory();
+            connectChat();
+        }
+
+        function connectChat() {
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            const ws = new WebSocket(proto + '://' + location.host + '/ws/messages');
+            state.chatWs = ws;
+            ws.onopen = () => { ws.send(String(state.chatLastId)); };
+            ws.onmessage = ev => {
+                const m = JSON.parse(ev.data);
+                if (m.clear) { state.chatLastId = 0; $('chat-list').innerHTML = '<div class="text-center text-xs text-slate-400 py-6">Chat cleared by the office.</div>'; return; }
+                if (filterChat(m)) { appendChat(m); if ($('tab-chat').classList.contains('hidden')) $('chat-dot').classList.remove('hidden'); }
+            };
+            ws.onclose = ev => {
+                if (ev.code === 1008) { chatLocked(); return; }
+                if (state.chatWs === ws && state.chatStarted) setTimeout(connectChat, 3000);
+            };
+        }
+
+        function filterChat(m) {
+            if (!m.audience || m.audience === 'office') return true;
+            if (m.audience === 'workers') return true;
+            return false;
+        }
+
+        function appendChat(m) {
+            if (state.chatSeen.has(m.id)) return;
+            state.chatSeen.add(m.id);
+            const list = $('chat-list');
+            list.querySelector('.py-6')?.remove();
+            const isSelf = m.author_role === 'worker' && m.author_id === state.worker.id;
+            const time = m.created_at ? new Date(m.created_at + 'Z').toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+            const badge = { admin: 'Office', worker: 'Crew', host: 'Host' }[m.author_role] || (m.author_role || '').toUpperCase();
+            const el = document.createElement('div');
+            el.className = 'flex ' + (isSelf ? 'justify-end' : 'justify-start');
+            el.innerHTML = `
+                <div class="max-w-[75%] rounded-2xl px-4 py-2.5 text-sm ${isSelf ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-slate-100 text-slate-800 rounded-bl-sm'}">
+                    <div class="text-xs font-bold ${isSelf ? 'text-indigo-200' : 'text-indigo-600'}">${String(m.author_name || badge).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</div>
+                    <div class="whitespace-pre-wrap break-words mt-0.5">${String(m.body).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}</div>
+                    <div class="text-[10px] mt-1 opacity-60">${time}</div>
+                </div>`;
+            list.appendChild(el);
+            list.scrollTop = list.scrollHeight;
+            state.chatLastId = Math.max(state.chatLastId, m.id);
+        }
+
+        function chatLocked() {
+            $('chat-list').innerHTML =
+                '<div class="text-center text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl my-4 py-4 px-3">🔒 Chat is locked to this account\'s active device.<br>' +
+                '<span class="text-xs text-red-400 block mt-1">Log in again on this device to take over messaging.</span>' +
+                '<a href="/api/auth/logout" class="inline-block mt-2 text-xs font-bold text-red-700 underline">Log in again</a></div>';
+        }
+
+        async function loadChatHistory() {
+            try {
+                const { res, data } = await api('/api/messages?after=0');
+                if (!res.ok) { if (res.status === 403 || res.status === 401) { chatLocked(); return; } return; }
+                const list = $('chat-list');
+                const visible = (data.messages || []).filter(filterChat);
+                list.innerHTML = '';
+                visible.forEach(m => appendChat(m));
+                if (!visible.length) list.innerHTML = '<div class="text-center text-xs text-slate-400 py-6">No messages yet — say hi to the team 👋</div>';
+            } catch (e) {}
+        }
+
+        /* ---------- Photos ---------- */
+        function renderPhotosJobs() {
+            const list = $('photos-jobs');
+            list.innerHTML = '';
+            if (!state.jobs.length) {
+                list.innerHTML = '<p class="text-sm text-slate-400 bg-white rounded-2xl border border-slate-200 p-5">No jobs yet.</p>';
+                $('photos-gallery').classList.add('hidden');
+                return;
+            }
+            const sorted = [...state.jobs].sort((a, b) => new Date(b.start_time) - new Date(a.start_time));
+            sorted.forEach(j => {
+                const row = document.createElement('button');
+                row.type = 'button';
+                row.className = 'w-full text-left bg-white rounded-xl border border-slate-200 p-3';
+                row.innerHTML = `
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm font-bold text-slate-800">${escapeHtml(j.customer_name)}</span>
+                        <span class="text-xs text-slate-400">${fmtDate(j.start_time)}</span>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-0.5">${escapeHtml(j.service_type)}${j.job_address ? ' · ' + escapeHtml(j.job_address) : ''}</p>`;
+                row.addEventListener('click', () => renderPhotosGallery(j));
+                list.appendChild(row);
+            });
+            renderPhotosGallery(sorted[0]);
+        }
+
+        async function renderPhotosGallery(j) {
+            $('photos-gallery').classList.remove('hidden');
+            $('photos-gallery-title').textContent = j.customer_name + ' — ' + fmtDate(j.start_time);
+            $('photos-add').dataset.event = j.id;
+            $('photos-add').classList.remove('hidden');
+            const grid = $('photos-grid');
+            grid.innerHTML = '<div class="text-center text-xs text-slate-400 py-6 col-span-2">Loading…</div>';
+            try {
+                const { res, data } = await api('/api/photos?event_id=' + j.id);
+                grid.innerHTML = '';
+                if (!res.ok || !data.photos || !data.photos.length) {
+                    grid.innerHTML = '<div class="text-center text-xs text-slate-400 py-6 col-span-2">No photos yet for this job. Take the first!</div>';
+                    return;
+                }
+                data.photos.forEach(p => {
+                    const card = document.createElement('div');
+                    card.className = 'bg-white rounded-xl overflow-hidden border border-slate-200';
+                    card.innerHTML = `
+                        <img src="${p.url}" alt="room photo" loading="lazy" class="w-full h-28 object-cover">
+                        <div class="px-2 py-1.5">
+                            <p class="text-[11px] font-bold text-slate-700">${escapeHtml(p.room || 'Room')}${p.verified ? ' <span class="text-emerald-500">✓</span>' : ''}</p>
+                            <p class="text-[10px] text-slate-400 capitalize">${escapeHtml(p.category || '')}</p>
+                        </div>`;
+                    grid.appendChild(card);
+                });
+            } catch (e) {
+                grid.innerHTML = '<div class="text-center text-xs text-slate-400 py-6 col-span-2">Could not load photos.</div>';
+            }
+        }
+
         function probeGeo() {
             navigator.geolocation.getCurrentPosition(() => showGeo(false), () => showGeo(true), { timeout: 4000 });
         }
@@ -632,7 +948,10 @@
 
             $('logout-btn').addEventListener('click', async () => {
                 await api('/api/worker/app/logout', { method: 'POST' });
+                if (state.chatWs) { try { state.chatWs.close(); } catch (e) {} }
+                state.chatStarted = false; state.chatWs = null; state.chatLastId = 0; state.chatSeen.clear();
                 stopTracking();
+                $('tabbar').classList.add('hidden');
                 show('login');
             });
 
@@ -641,7 +960,37 @@
                 if (active) clockOut(active.id);
             });
 
-            $('jobs-list').addEventListener('click', async e => {
+            document.querySelectorAll('#tabbar [data-tab]').forEach(b => {
+                b.addEventListener('click', () => switchTab(b.dataset.tab));
+            });
+            $('cal-prev').addEventListener('click', () => { calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } renderCalendar(); });
+            $('cal-next').addEventListener('click', () => { calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } renderCalendar(); });
+            $('photos-add').addEventListener('click', () => {
+                const id = parseInt($('photos-add').dataset.event, 10);
+                if (id) openPhotoModal(id);
+            });
+
+            const chatForm = $('chat-form');
+            chatForm.addEventListener('submit', async e => {
+                e.preventDefault();
+                const input = $('chat-input');
+                const text = input.value.trim();
+                if (!text) return;
+                input.value = '';
+                try {
+                    const { res } = await api('/api/messages', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: new URLSearchParams({ body: text, audience: 'office' })
+                    });
+                    if (!res.ok) { input.value = text; alert('Message failed to send.'); }
+                } catch (err) { input.value = text; alert('Message failed to send.'); }
+            });
+            $('chat-input').addEventListener('keydown', e => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); chatForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); }
+            });
+
+            const jobActions = async e => {
                 const btn = e.target.closest('[data-act]');
                 if (!btn) return;
                 const id = parseInt(btn.dataset.event, 10);
@@ -649,7 +998,9 @@
                 else if (btn.dataset.act === 'out') await clockOut(id);
                 else if (btn.dataset.act === 'done') await markDone(id);
                 else if (btn.dataset.act === 'photo') openPhotoModal(id);
-            });
+            };
+            $('jobs-list').addEventListener('click', jobActions);
+            $('cal-day-jobs').addEventListener('click', jobActions);
 
             $('photo-close').addEventListener('click', closePhotoModal);
             $('photo-form').addEventListener('submit', submitPhoto);
