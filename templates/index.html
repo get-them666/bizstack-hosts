@@ -476,7 +476,23 @@
 
    
     <script>
+        function autoFormatPhone(value) {
+            let d = String(value || '').replace(/\D/g, '');
+            let prefix = '';
+            if (d.length > 10 && d[0] === '1') { d = d.slice(1); prefix = '+1 '; }
+            if (d.length <= 3) return prefix + d;
+            if (d.length <= 6) return prefix + '(' + d.slice(0, 3) + ') ' + d.slice(3);
+            return prefix + '(' + d.slice(0, 3) + ') ' + d.slice(3, 6) + '-' + d.slice(6, 10);
+        }
         document.addEventListener('DOMContentLoaded', function() {
+            // Phone auto-formatting
+            const phoneInput = document.getElementById('form-phone');
+            if (phoneInput) {
+                phoneInput.addEventListener('input', function() {
+                    phoneInput.value = autoFormatPhone(phoneInput.value);
+                });
+            }
+
             // Mobile Menu Controls
             const mobileMenuBtn = document.getElementById('mobile-menu-btn');
             const mobileMenu = document.getElementById('mobile-menu');
