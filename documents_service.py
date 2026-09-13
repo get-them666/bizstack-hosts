@@ -495,15 +495,39 @@ async def send_email(cfg: dict, to: str, subject: str, body: str, attachment: by
     host = cfg.get("SMTP_HOST", "")
     port = int(cfg.get("SMTP_PORT") or 587)
     tls = (cfg.get("SMTP_TLS") or "starttls").lower()
-    kwargs = dict(hostname=host, port=port, validate_certs=False)
-    if cfg.get("SMTP_USER"):
-        kwargs.update(username=cfg["SMTP_USER"], password=cfg.get("SMTP_PASS", ""))
 
-    if tls == "ssl":
-        await aiosmtplib.send(msg, use_tls=True, **kwargs)
-    elif tls == "none":
-        kwargs["start_tls"] = False
-        await aiosmtplib.send(msg, **kwargs)
-    else:
-        await aiosmtplib.send(msg, start_tls=True, **kwargs)
-    return True
+    # Build a retry ladder of (port, mode) candidates. Namecheap and other
+    # providers intermittently drop cloud-host egress, so we try STARTTLS,
+    # then implicit SSL, then plain submission with a short per-attempt timeout.
+    ladder = []
+    if port not in (25, 465, 587):
+        ladder.append((port, tls if tls in ("ssl", "starttls") else "starttls"))
+    for candidate in (
+        (587, "starttls"),
+        (465, "ssl"),
+        (25, "starttls"),
+    ):
+        if candidate not in ladder:
+            ladder.append(candidate)
+    tail = [x for x in ladder if x[0] == port]
+    if tail:
+        ladder.remove(tail[0])
+        ladder.insert(0, (port, tls if tls in ("ssl", "starttls") else "starttls"))
+
+    last_err = None
+    for smtp_port, mode in ladder:
+        kwargs = dict(hostname=host, port=smtp_port, validate_certs=False, timeout=15)
+        if cfg.get("SMTP_USER"):
+            kwargs.update(username=cfg["SMTP_USER"], password=cfg.get("SMTP_PASS", ""))
+        try:
+            if mode == "ssl":
+                await aiosmtplib.send(msg, use_tls=True, **kwargs)
+            elif mode == "starttls":
+                await aiosmtplib.send(msg, start_tls=True, **kwargs)
+            else:
+                await aiosmtplib.send(msg, start_tls=False, **kwargs)
+            return True
+        except Exception as e:
+            last_err = e
+            print(f"[EMAIL] SMTP {host}:{smtp_port}/{mode} failed: {e}")
+    raise last_err
