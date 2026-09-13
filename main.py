@@ -3055,6 +3055,19 @@ async def messages_send(request: Request, body: str = Form(...), audience: str =
             msg_clients.discard(ws)
     return JSONResponse(content={"ok": True})
 
+@app.post("/api/messages/clear", response_class=JSONResponse)
+async def messages_clear(request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM messages;")
+        db.commit()
+    for ws in list(msg_clients):
+        try:
+            await ws.send_json({"clear": True})
+        except Exception:
+            msg_clients.discard(ws)
+    return JSONResponse(content={"ok": True, "cleared": True})
+
 msg_clients: set = set()
 
 @app.websocket("/ws/messages")

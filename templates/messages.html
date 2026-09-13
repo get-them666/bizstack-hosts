@@ -3,10 +3,18 @@
 {% block content %}
 <section class="bg-gradient-to-b from-slate-50 to-white">
     <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div class="mb-8">
-            <p class="text-xs font-semibold text-indigo-600 uppercase tracking-wider">Team Talk</p>
-            <h1 class="text-3xl font-extrabold tracking-tight text-slate-900">Messages</h1>
-            <p class="mt-2 text-slate-600">Internal chat between the office, the crew and hosts — in real time.</p>
+        <div class="mb-8 flex items-start justify-between">
+            <div>
+                <p class="text-xs font-semibold text-indigo-600 uppercase tracking-wider">Team Talk</p>
+                <h1 class="text-3xl font-extrabold tracking-tight text-slate-900">Messages</h1>
+                <p class="mt-2 text-slate-600">Internal chat between the office, the crew and hosts — in real time.</p>
+            </div>
+            {% if actor['role'] == 'admin' %}
+            <button id="clear-chat-btn" type="button"
+                class="shrink-0 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 rounded-xl px-3 py-2 transition-all">
+                🗑 Clear Chat
+            </button>
+            {% endif %}
         </div>
 
         <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 flex flex-col" style="height: 60vh; min-height: 420px;">
@@ -83,6 +91,12 @@ function connect() {
     };
     ws.onmessage = ev => {
         const m = JSON.parse(ev.data);
+        if (m.clear) {
+            lastId = 0;
+            const list = document.getElementById('message-list');
+            list.innerHTML = '<div class="text-center text-xs text-slate-400 py-6">Chat cleared by admin.</div>';
+            return;
+        }
         if (filterAudience(m)) appendMessage(m);
     };
     ws.onclose = (ev) => { if (ev.code === 1008) { lockedError(); return; } setTimeout(connect, 3000); };
@@ -122,6 +136,23 @@ document.addEventListener('DOMContentLoaded', () => {
     input.addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('message-form').dispatchEvent(new Event('submit')); }
     });
+
+    const clearBtn = document.getElementById('clear-chat-btn');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', async () => {
+            if (!confirm('Delete ALL chat messages? This cannot be undone.')) return;
+            clearBtn.disabled = true;
+            clearBtn.textContent = 'Clearing…';
+            try {
+                const res = await fetch('/api/messages/clear', {method: 'POST', credentials: 'same-origin'});
+                if (!res.ok) { alert('Could not clear chat.'); clearBtn.disabled = false; clearBtn.textContent = '🗑 Clear Chat'; return; }
+                lastId = 0;
+                document.getElementById('message-list').innerHTML = '<div class="text-center text-xs text-slate-400 py-6">Chat cleared by admin.</div>';
+            } catch (err) { alert('Could not clear chat.'); }
+            clearBtn.disabled = false;
+            clearBtn.textContent = '🗑 Clear Chat';
+        });
+    }
 });
 </script>
 {% endblock %}
