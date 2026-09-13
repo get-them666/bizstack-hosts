@@ -533,6 +533,7 @@
                 const qs = new URLSearchParams(window.location.search);
                 urlEncodedData.append('source', qs.get('src') || '');
                 urlEncodedData.append('ref', qs.get('ref') || '');
+                urlEncodedData.append('campaign', qs.get('camp') || '');
 
                 fetch('/submit-lead', {
                     method: 'POST',

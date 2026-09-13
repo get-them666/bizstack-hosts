@@ -689,6 +689,7 @@ async def lifecycle(app: FastAPI):
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS analysis_json TEXT;")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS source VARCHAR(100) DEFAULT 'website';")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS referral_code VARCHAR(50);")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS campaign VARCHAR(100);")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS worker_id INTEGER;")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS worker_pay_cents INTEGER;")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS worker_status VARCHAR(50) DEFAULT 'assigned';")
@@ -1193,6 +1194,7 @@ async def submit_lead(
     funding_use: str = Form(""),
     source: str = Form(""),
     ref: str = Form(""),
+    campaign: str = Form(""),
     db=Depends(get_db)
 ):
     result = rental_analysis.analyze(url) if url else {"ok": False, "error": "No property address provided."}
@@ -1203,6 +1205,7 @@ async def submit_lead(
 
     src = (source or "").strip().lower() or "website"
     ref_code = (ref or "").strip().lower()
+    campaign_name = (campaign or "").strip().lower()[:100]
 
     partner_id = None
     with db.cursor() as cur:
@@ -1223,8 +1226,8 @@ async def submit_lead(
 
     with db.cursor() as cur:
         cur.execute(
-            "INSERT INTO leads (name, email, phone, listing_url, status, zip, analysis_json, funding_needed, funding_use, source, referral_code, partner_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NULLIF(%s,''), %s, NULLIF(%s,''), %s) RETURNING id",
-            (name, email, phone, url, status_value, zip_code, analysis_json, needed, funding_use, src, ref_code, partner_id)
+            "INSERT INTO leads (name, email, phone, listing_url, status, zip, analysis_json, funding_needed, funding_use, source, referral_code, partner_id, campaign) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NULLIF(%s,''), %s, NULLIF(%s,''), %s, NULLIF(%s,'')) RETURNING id",
+            (name, email, phone, url, status_value, zip_code, analysis_json, needed, funding_use, src, ref_code, partner_id, campaign_name)
         )
         lead_id = cur.fetchone()["id"]
         db.commit()

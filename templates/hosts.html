@@ -349,6 +349,7 @@
                                 <td class="px-6 py-4 text-slate-600">{{ lead['phone'] }}</td>
                                 <td class="px-6 py-4">
                                     <span class="px-2 py-1 bg-slate-100 text-slate-700 text-[10px] font-semibold rounded-full">{{ lead['source'] or 'website' }}</span>
+                                    {% if lead['campaign'] %}<span class="ml-1 px-2 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-mono font-semibold rounded-full">{{ lead['campaign'] }}</span>{% endif %}
                                     {% if lead['referral_code'] %}<a href="/hosts?source=referral" class="ml-1 text-[10px] font-mono text-indigo-600 hover:underline">@{{ lead['referral_code'] }}</a>{% endif %}
                                 </td>
                                 <td class="px-6 py-4 text-slate-500 max-w-[150px] truncate">{{ lead['listing_url'] or '—' }}</td>
