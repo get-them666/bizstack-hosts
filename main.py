@@ -1444,6 +1444,14 @@ async def link_host_booking(host_id: int, event_id: int = Form(...), db=Depends(
         db.commit()
     return RedirectResponse(url="/hosts", status_code=303)
 
+@app.post("/api/leads/{lead_id}/delete")
+async def delete_lead(lead_id: int, request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM leads WHERE id = %s;", (lead_id,))
+        db.commit()
+    return RedirectResponse(url="/hosts", status_code=303)
+
 @app.post("/api/customers")
 async def create_customer(name: str = Form(...), email: str = Form(""), phone: str = Form(""), source: str = Form("manual"), db=Depends(get_db)):
     with db.cursor() as cur:
@@ -1668,6 +1676,17 @@ async def deactivate_host(host_id: int, db=Depends(get_db)):
         cur.execute("UPDATE hosts SET status = 'inactive', login_token = NULL WHERE id = %s;", (host_id,))
         db.commit()
     return RedirectResponse(url="/portfolio", status_code=303)
+
+@app.post("/api/hosts/{host_id}/delete")
+async def delete_host(host_id: int, request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute("UPDATE calendar_events SET host_id = NULL, property_id = NULL WHERE host_id = %s;", (host_id,))
+        cur.execute("DELETE FROM devices WHERE host_id = %s OR property_id IN (SELECT id FROM properties WHERE host_id = %s);", (host_id, host_id))
+        cur.execute("DELETE FROM properties WHERE host_id = %s;", (host_id,))
+        cur.execute("DELETE FROM hosts WHERE id = %s;", (host_id,))
+        db.commit()
+    return RedirectResponse(url="/hosts", status_code=303)
 
 @app.post("/api/events/{event_id}/link-property")
 async def link_event_property(event_id: int, property_id: int = Form(...), db=Depends(get_db)):
@@ -1986,6 +2005,19 @@ async def reset_worker_pin(worker_id: int, db=Depends(get_db)):
 async def deactivate_worker(worker_id: int, db=Depends(get_db)):
     with db.cursor() as cur:
         cur.execute("UPDATE workers SET is_active = FALSE, worker_token = NULL WHERE id = %s;", (worker_id,))
+        db.commit()
+    return RedirectResponse(url="/crew", status_code=303)
+
+@app.post("/api/workers/{worker_id}/delete")
+async def delete_worker(worker_id: int, request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM worker_paychecks WHERE worker_id = %s;", (worker_id,))
+        cur.execute("DELETE FROM worker_timeclocks WHERE worker_id = %s;", (worker_id,))
+        cur.execute("DELETE FROM worker_quiz_results WHERE worker_id = %s;", (worker_id,))
+        cur.execute("UPDATE job_photos SET worker_id = NULL WHERE worker_id = %s;", (worker_id,))
+        cur.execute("UPDATE calendar_events SET worker_id = NULL WHERE worker_id = %s;", (worker_id,))
+        cur.execute("DELETE FROM workers WHERE id = %s;", (worker_id,))
         db.commit()
     return RedirectResponse(url="/crew", status_code=303)
 

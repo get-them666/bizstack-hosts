@@ -90,6 +90,9 @@
                                     <button class="text-xs font-semibold text-slate-400 hover:text-slate-600 ml-2">Disable</button>
                                 </form>
                                 {% endif %}
+                                <form method="post" action="/api/workers/{{ w['id'] }}/delete" onsubmit="return confirm('Delete {{ w['name'] }} and all their pay/time records?');" class="inline ml-2">
+                                    <button class="text-xs font-semibold text-red-500 hover:text-red-700">Remove</button>
+                                </form>
                             </td>
                         </tr>
                         {% else %}
