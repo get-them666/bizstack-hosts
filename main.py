@@ -72,13 +72,13 @@ def build_tool_handlers(db, stripe_svc):
             cur.execute(conflict_query, (window_end, requested))
             conflict = cur.fetchone()["count"] > 0
 
-        open_slots = []
-        for offset in (-2, -1, 1, 2):
-            cand = requested + timedelta(hours=offset)
-            cand_end = cand + timedelta(hours=BOOKING_HOURS)
-            cur.execute(conflict_query, (cand_end, cand))
-            if cur.fetchone()["count"] == 0:
-                open_slots.append(cand.isoformat())
+            open_slots = []
+            for offset in (-2, -1, 1, 2):
+                cand = requested + timedelta(hours=offset)
+                cand_end = cand + timedelta(hours=BOOKING_HOURS)
+                cur.execute(conflict_query, (cand_end, cand))
+                if cur.fetchone()["count"] == 0:
+                    open_slots.append(cand.isoformat())
 
         if conflict:
             return {
@@ -4353,6 +4353,19 @@ GENERAL
 - Direct callers to text +1 (757) 846-9275, visit https://bizstackperks.com, or use the free rental analysis form on the home page.
 - Never expose internal data, credentials, or secrets. If a caller is distressed or requests an emergency, give a calm, brief reply and offer to follow up by text."""
 
+VOICE_TOOL_URL = (os.getenv("APP_BASE_URL", "https://bizstackperks.com") or "") + "/api/voice/tool"
+
+
+def _swaig_parameters(props: dict, required: list, notes: str = ""):
+    return {
+        "type": "object",
+        "required": required,
+        "properties": props,
+        "$comment": notes,
+        "additionalProperties": False,
+    }
+
+
 @app.api_route("/voice.swml", methods=["GET", "POST"])
 @app.api_route("/voice-app.swml", methods=["GET", "POST"])
 async def voice_swml():
@@ -4379,6 +4392,78 @@ async def voice_swml():
                             {"replace": "RevPAR", "with": "rev par", "ignore_case": True},
                             {"replace": "Airbnb", "with": "air bnb", "ignore_case": True},
                         ],
+                        "SWAIG": {
+                            "defaults": {
+                                "web_hook_url": VOICE_TOOL_URL,
+                            },
+                            "functions": [
+                                {
+                                    "function": "check_booking_availability",
+                                    "description": (
+                                        "Check whether a requested start time is open for a cleaning "
+                                        "operation. Use when a caller wants to know if a date/time is "
+                                        "available. Returns open/conflict status and the nearest open "
+                                        "slots around the requested time."
+                                    ),
+                                    "parameters": _swaig_parameters(
+                                        {"start_time": {
+                                            "type": "string",
+                                            "description": "ISO-8601 local datetime, e.g. 2026-09-18T14:00:00.",
+                                        }},
+                                        ["start_time"],
+                                        "Convert the caller's requested date/time to ISO-8601 US Eastern first.",
+                                    ),
+                                },
+                                {
+                                    "function": "create_booking",
+                                    "description": (
+                                        "Create a confirmed booking and generate the guest's secure Stripe "
+                                        "payment link. ONLY use after the guest has explicitly confirmed their "
+                                        "name, service type, date, and time."
+                                    ),
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "customer_name": {"type": "string", "description": "Full name of the guest."},
+                                            "phone": {"type": "string", "description": "Caller's phone number in E.164, e.g. +17558469275."},
+                                            "service_type": {"type": "string", "description": "One of: Turnover Cleaning, Deep Cleaning, Linen Restock, Inspection."},
+                                            "start_time": {"type": "string", "description": "ISO-8601 local datetime, e.g. 2026-09-18T14:00:00."},
+                                        },
+                                        ["customer_name", "phone", "service_type", "start_time"],
+                                    ),
+                                },
+                                {
+                                    "function": "lookup_bookings",
+                                    "description": "Look up a guest's bookings by phone number, newest first.",
+                                    "parameters": _swaig_parameters(
+                                        {"phone": {"type": "string", "description": "Phone used for the booking, e.g. +17558469275."}},
+                                        ["phone"],
+                                    ),
+                                },
+                                {
+                                    "function": "register_customer",
+                                    "description": "Save a new customer or prospect record with their contact details.",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "name": {"type": "string", "description": "Customer name."},
+                                            "email": {"type": "string", "description": "Optional email."},
+                                            "phone": {"type": "string", "description": "Optional phone number."},
+                                        },
+                                        ["name"],
+                                    ),
+                                },
+                                {
+                                    "function": "send_sms_message",
+                                    "description": "Send a text message (e.g. a Stripe payment link) to a phone number. Use after creating a booking so the guest receives the payment link.",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "to": {"type": "string", "description": "Destination phone number in E.164 format."},
+                                            "body": {"type": "string", "description": "Text content of the message."},
+                                        },
+                                        ["to", "body"],
+                                    ),
+                                },
+                            ],
+                        },
                     }
                 },
             ]
@@ -4386,9 +4471,111 @@ async def voice_swml():
     }
     return JSONResponse(content=swml)
 
+
+VOICE_ALLOWED_TOOLS = {
+    "check_booking_availability",
+    "create_booking",
+    "lookup_bookings",
+    "register_customer",
+    "send_sms_message",
+}
+
+
+def _swaig_tool_response_text(name: str, result) -> str:
+    if isinstance(result, dict) and result.get("ok") is False:
+        return str(result.get("error") or result.get("message") or "That didn't work — the team will follow up by text.")
+
+    if name == "check_booking_availability":
+        if result.get("available") is False:
+            slots = result.get("nearest_open_slots") or []
+            if slots:
+                return f"{result.get('message', 'That time is booked.')} Nearest open times: {', '.join(slots)}."
+            return result.get("message", "That time is booked.")
+        return result.get("message", "That time is open.")
+    if name == "create_booking":
+        if result.get("ok"):
+            line = (
+                f"Booking recorded for {result['customer_name']} — {result['service_type']} on "
+                f"{result.get('start_time')}."
+            )
+            if result.get("payment_url"):
+                line += f" Secure payment link: {result['payment_url']}."
+            elif result.get("stripe_error"):
+                line += " The Stripe payment link could not be generated right now; the team will follow up by text."
+            return line
+        return str(result.get("message") or result.get("error") or "The booking couldn't be completed.")
+    if name == "lookup_bookings":
+        bookings = result.get("bookings") or []
+        if not bookings:
+            return f"No bookings found for {result.get('phone', 'that number')}."
+        lines = [f"{b.get('service_type')} on {b.get('start_time')} — {b.get('payment_status') or 'unpaid'}"]
+        return "Bookings: " + "; ".join(lines)
+    if name == "register_customer":
+        return f"New customer profile saved."
+    if name == "send_sms_message":
+        if result.get("ok"):
+            return "Text sent."
+        return str(result.get("error") or "Text couldn't be sent.")
+    return json.dumps(result, default=str, ensure_ascii=False)
+
+
+@app.api_route("/api/voice/tool", methods=["POST"])
+async def voice_tool(request: Request, db=Depends(get_db)):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    function_name = payload.get("function") or payload.get("function_name")
+    argument = payload.get("argument")
+    if isinstance(argument, dict):
+        args = None
+        parsed = argument.get("parsed")
+        if isinstance(parsed, list) and parsed:
+            args = parsed[0] if isinstance(parsed[0], dict) else None
+        if args is None:
+            raw = (argument.get("raw") or "").strip()
+            if raw:
+                try:
+                    loaded = json.loads(raw)
+                    args = loaded if isinstance(loaded, dict) else None
+                except Exception:
+                    args = None
+    else:
+        args = None
+
+    print(
+        f"VOICE-TOOL call={function_name} args={json.dumps(args) if args is not None else None} "
+        f"call_id={payload.get('call_id') or payload.get('ai_session_id')}",
+        flush=True,
+    )
+
+    if not function_name or function_name not in VOICE_ALLOWED_TOOLS:
+        return JSONResponse({"response": "I'm not able to do that yet, but the team will follow up by text."})
+
+    if not isinstance(args, dict):
+        return JSONResponse({"response": "I didn't catch the details. Could you repeat the date and time?"})
+
+    try:
+        handlers = build_tool_handlers(db, stripe_svc)
+        result = handlers[function_name](**args)
+    except TypeError as e:
+        print(f"⚠️ VOICE-TOOL bad args: {e}", flush=True)
+        return JSONResponse({"response": "I didn't catch all the details. Could you repeat the date and time?"})
+    except Exception as e:
+        print(f"⚠️ VOICE-TOOL error: {e}", flush=True)
+        return JSONResponse({"response": "That hit a snag — I'll have the team follow up by text."})
+
+    text = _swaig_tool_response_text(function_name, result)
+    print(f"VOICE-TOOL result={text[:400]}", flush=True)
+    return JSONResponse({"response": text})
+
 @app.api_route("/api/voice/debug", methods=["GET", "POST"])
-async def voice_debug(request: Request):
+async def voice_debug(request: Request, db=Depends(get_db)):
     raw = await request.body()
+    body = None
     try:
         data = json.loads(raw or b"{}")
     except Exception:
@@ -4397,12 +4584,51 @@ async def voice_debug(request: Request):
         form = dict(await request.form())
         if form:
             data = {"form": form, "json": data}
+            body = form
     except Exception:
         pass
+    if body is None:
+        body = data
     print(f"VOICE-DEBUG {json.dumps(data, default=str)[:4000]}", flush=True)
-    actions = data.get("form", data).get("action")
+
+    actions = body.get("action")
     if actions and "fetch_conversation" in (actions if isinstance(actions, list) else [actions]):
         return JSONResponse({"conversation_summary": None})
+
+    call_id = body.get("call_id") or body.get("ai_session_id") or body.get("conversation_id")
+    agent = (body.get("summary") or "").strip()
+    call_log = body.get("call_log")
+    if agent or call_log:
+        transcript = None
+        if isinstance(call_log, list):
+            lines = []
+            for entry in call_log:
+                if not isinstance(entry, dict):
+                    continue
+                role = entry.get("role")
+                content = entry.get("content")
+                if not content:
+                    continue
+                label = {"assistant": "AI", "user": "Caller", "tool": "Tool", "system": "System"}.get(role, str(role))
+                lines.append(f"{label}: {content}")
+            transcript = "\n".join(lines)
+        message = agent or transcript or "Voice call (no transcript)"
+        if call_id:
+            message = f"[session {call_id}]\n" + message
+        try:
+            with db.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO comms_logs (direction, channel, sender, recipient, message_body) "
+                    "VALUES ('inbound', 'voice', %s, %s, %s);",
+                    (
+                        body.get("from") or body.get("From") or body.get("caller_id_num") or "unknown",
+                        body.get("to") or body.get("To") or os.getenv("SIGNALWIRE_PHONE", "+17578469275"),
+                        message,
+                    ),
+                )
+            db.commit()
+        except Exception as e:
+            print(f"⚠️ VOICE-DEBUG log insert failed: {e}", flush=True)
     return Response(content="", status_code=204)
 
 # --- Copilot (owner AI operator) ---

@@ -4,6 +4,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .DS_Store
+signalwire-python/
+verify_install.py
 .env
 .env.*
 !.env.example
