@@ -59,6 +59,38 @@
 
     <div class="mt-6 text-center text-xs text-slate-500">Tip: use ← → arrow keys, or the spacebar to play/pause.</div>
 </div>
+
+{% if kind == 'worker' and questions %}
+<div class="mt-10 rounded-3xl border border-slate-200 bg-white shadow-lg p-6 sm:p-8">
+    <h2 class="text-xl font-bold text-slate-900">📝 Quick quiz</h2>
+    <p class="text-sm text-slate-600 mt-1 mb-6">10 easy questions from the deck you just watched. 70% or higher passes — your score is saved to your profile.</p>
+    <form id="quiz-form" class="space-y-5">
+        <div class="grid sm:grid-cols-2 gap-4">
+            <input name="worker_name" required placeholder="Your name" value="{{ worker_name }}" class="rounded-xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <input name="email" placeholder="Email (optional)" value="{{ worker_email }}" class="rounded-xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        </div>
+        {% set ns = namespace(i=0) %}
+        {% for q in questions %}
+        <fieldset>
+            <p class="font-medium text-slate-800">{{ loop.index }}. {{ q.q }}</p>
+            <div class="mt-2 space-y-1.5">
+                {% for opt in q.options %}
+                <label class="flex items-start gap-2 text-sm text-slate-700 cursor-pointer">
+                    <input type="radio" name="q{{ ns.i }}" value="{{ loop.index0 }}" required class="mt-1">
+                    <span>{{ opt }}</span>
+                </label>
+                {% endfor %}
+            </div>
+        </fieldset>
+        {% set ns.i = ns.i + 1 %}
+        {% endfor %}
+        <div class="flex items-center gap-3">
+            <button type="submit" class="inline-flex items-center justify-center px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">Submit Answers</button>
+            <span id="quiz-result" class="text-sm font-semibold"></span>
+        </div>
+    </form>
+</div>
+{% endif %}
 {% endblock %}
 {% block scripts %}
 <script>
@@ -146,4 +178,31 @@
         render(0);
     })();
 </script>
+{% if kind == 'worker' and questions %}
+<script>
+    document.getElementById('quiz-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const answers = [];
+        for (let i = 0; i < {{ questions | length }}; i++) {
+            const v = fd.get('q' + i);
+            if (v === null) return alert('Answer every question.');
+            answers.push(parseInt(v, 10));
+        }
+        const body = new FormData();
+        body.append('worker_name', fd.get('worker_name'));
+        body.append('email', fd.get('email'));
+        body.append('answers', JSON.stringify(answers));
+        const res = await fetch('/api/training/quiz', { method: 'POST', body });
+        const data = await res.json();
+        const el = document.getElementById('quiz-result');
+        if (!data.ok) { el.textContent = data.error || 'Something went wrong.'; }
+        else {
+            el.textContent = data.correct + '/' + data.total + ' (' + data.percent + '%) — ' +
+                (data.passed ? 'Passed! Nice work.' : 'Not quite (need 70%). Review the deck and retake.');
+            el.className = 'text-sm font-semibold ' + (data.passed ? 'text-emerald-600' : 'text-amber-600');
+        }
+    });
+</script>
+{% endif %}
 {% endblock %}

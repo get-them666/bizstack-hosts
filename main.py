@@ -1020,8 +1020,29 @@ def _log_alert(db, kind: str, severity: str, message: str, details: str = "") ->
         db.commit()
     return alert_id
 
+def _is_private_egress_ip(host: str) -> bool:
+    """Skip new-device alerts for private/egress IPs (loopback, RFC1918, CGNAT 100.64.0.0/10)."""
+    if not host:
+        return True
+    try:
+        parts = host.split(".")
+        if len(parts) != 4:
+            return False
+        a, b = int(parts[0]), int(parts[1])
+        if a == 100 and 64 <= b <= 127:
+            return True
+        if a == 10 or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168) or a == 127 or a == 0:
+            return True
+    except Exception:
+        return False
+    return False
+
 async def _notify_new_device(actor: dict, new_device_id: str, old_device_id: str, request: Request):
     """Record + push a new-device login alert to the admin console, email, and SMS."""
+    ip = request.client.host if request.client else ""
+    if _is_private_egress_ip(ip):
+        print(f"[SECURITY] new-device alert suppressed for private/egress IP {ip or '(none)'}")
+        return
     conn = psycopg.connect(db_url, row_factory=dict_row)
     try:
         with conn.cursor() as cur:
@@ -1032,7 +1053,7 @@ async def _notify_new_device(actor: dict, new_device_id: str, old_device_id: str
                     json.dumps({
                         "role": actor.get("role"), "name": actor.get("name"), "email": actor.get("email"),
                         "new_device": new_device_id, "previous_device": old_device_id,
-                        "ip": request.client.host if request.client else "",
+                        "ip": ip,
                         "ua": (request.headers.get("user-agent") or "")[:300],
                         "time": datetime.now(APP_TZ).isoformat(),
                     }),
@@ -1048,7 +1069,7 @@ async def _notify_new_device(actor: dict, new_device_id: str, old_device_id: str
             f"{actor.get('name') or actor.get('email') or '?'}.\n\n"
             f"Role: {actor.get('role')}\nEmail: {actor.get('email')}\n"
             f"Device ID: {new_device_id}\nPrevious device: {old_device_id or 'none'}\n"
-            f"IP: {(request.client.host if request.client else 'unknown')}\n"
+            f"IP: {ip or 'unknown'}\n"
             f"Time: {datetime.now(APP_TZ).strftime('%b %d, %Y %I:%M %p %Z')}\n\n"
             f"If this wasn't you, change the login credentials and review active sessions."
         )
@@ -2109,6 +2130,11 @@ async def crew_page(request: Request, db=Depends(get_db)):
             ORDER BY tc.worker_id, tc.event_id, tc.created_at DESC;
         """)
         on_clock_rows = [r for r in cur.fetchall() if r["action"] in ("in", "update")]
+        cur.execute("""
+            SELECT DISTINCT ON (worker_id) worker_id, score, total, passed, created_at
+            FROM worker_quiz_results ORDER BY worker_id, created_at DESC;
+        """)
+        quiz_map = {r["worker_id"]: r for r in cur.fetchall()}
 
     clock_rows = []
     for tc in timeclocks:
@@ -2145,6 +2171,7 @@ async def crew_page(request: Request, db=Depends(get_db)):
             "default_pay_cents": 5000,
             "worker_choices": [{"id": w["id"], "name": w["name"]} for w in workers],
             "worker_rates": {w["id"]: w["pay_rate_cents"] for w in workers},
+            "quiz_map": quiz_map,
         },
     )
 
@@ -2393,6 +2420,11 @@ async def worker_portal(request: Request, db=Depends(get_db)):
         paychecks = cur.fetchall()
         if not features.get("pay"):
             paychecks = []
+        cur.execute("""
+            SELECT score, total, passed, created_at
+            FROM worker_quiz_results WHERE worker_id = %s ORDER BY created_at DESC LIMIT 1;
+        """, (worker["id"],))
+        quiz = cur.fetchone()
 
     return templates.TemplateResponse(
         request=request,
@@ -2403,6 +2435,7 @@ async def worker_portal(request: Request, db=Depends(get_db)):
             "jobs": jobs,
             "totals": totals,
             "paychecks": paychecks,
+            "quiz": quiz,
             "features": features,
             "job_coords_map": {
                 j["id"]: {"lat": j["job_lat"], "lng": j["job_lng"]} for j in jobs if j["job_lat"] is not None and j["job_lng"] is not None
@@ -4700,10 +4733,15 @@ async def present_deck(kind: str, request: Request):
     if kind not in ("worker", "host"):
         raise HTTPException(status_code=404, detail="Deck not found")
     slides = training_service.deck_slides(kind)
+    actor = current_actor(request)
     return templates.TemplateResponse(request, "narrated_deck.html", {
         "kind": kind,
         "label": "New Worker Orientation" if kind == "worker" else "Host & Lead Onboarding",
         "decks_json": json.dumps(slides),
+        "questions": training_service.QUIZ if kind == "worker" else [],
+        "actor": actor,
+        "worker_name": (actor.get("name") if actor and actor.get("role") == "worker" else "") or "",
+        "worker_email": (actor.get("email") if actor and actor.get("role") == "worker" else "") or "",
     })
 
 @app.get("/present/{kind}/audio/{idx}.mp3")

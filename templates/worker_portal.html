@@ -99,6 +99,23 @@
                 </div>
             </div>
 
+            <!-- Training & Quiz -->
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8 mb-8">
+                <h2 class="text-lg font-bold text-slate-900 mb-1">🎓 Training &amp; Quiz</h2>
+                <p class="text-xs text-slate-500 mb-4">Watch the orientation, then take the short quiz. 70% or higher passes.</p>
+                <a href="/present/worker" class="inline-flex items-center justify-center px-4 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl">▶ Watch orientation</a>
+                {% if quiz %}
+                <div class="mt-4 px-4 py-3 rounded-2xl bg-slate-50 border border-slate-100">
+                    <p class="text-sm font-semibold text-slate-800">Quiz: <span class="text-emerald-600">{{ quiz['score'] }}/{{ quiz['total'] }} ({{ (quiz['score'] / quiz['total'] * 100) | round(0) | int }}%)</span></p>
+                    <p class="text-xs text-slate-500 mt-0.5">
+                        {% if quiz['passed'] %}<span class="text-emerald-600 font-semibold">Passed ✓</span>{% else %}<span class="text-amber-600 font-semibold">Needs retake</span>{% endif %} · {{ quiz['created_at'].strftime('%b %d, %Y') }}
+                    </p>
+                </div>
+                {% else %}
+                <p class="text-xs text-slate-400 mt-4">You haven't taken the quiz yet — watch the orientation and take it below.</p>
+                {% endif %}
+            </div>
+
             <!-- Paychecks -->
             {% if features.get('pay') %}
             <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8 h-fit">
@@ -196,7 +213,7 @@ function updateDistance(eventId, coords) {
 
 function startWatch(jobId) {
     if (watchers[jobId]) return;
-    if (!navigator.geolocation) { alert('Your phone doesn't support location.'); return; }
+    if (!navigator.geolocation) { alert("Your phone doesn't support location."); return; }
     watchers[jobId] = navigator.geolocation.watchPosition(
         pos => {
             const c = {latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy};

@@ -66,6 +66,7 @@
                             <th class="py-3 pr-4">Assigned</th>
                             <th class="py-3 pr-4">Done</th>
                             <th class="py-3 pr-4">Earned</th>
+                            <th class="py-3 pr-4">Test</th>
                             <th class="py-3 pr-4">Status</th>
                             <th class="py-3">Actions</th>
                         </tr>
@@ -79,6 +80,17 @@
                             <td class="py-3 pr-4">{{ w['jobs_assigned'] or 0 }}</td>
                             <td class="py-3 pr-4">{{ w['jobs_done'] or 0 }}</td>
                             <td class="py-3 pr-4 font-semibold text-emerald-600">${{ '%.2f'|format((w['earned_cents'] or 0) / 100) }}</td>
+                            <td class="py-3 pr-4">
+                                {% set qz = quiz_map.get(w['id']) %}
+                                {% if qz %}
+                                <span class="px-2 py-1 text-xs font-semibold rounded-full {% if qz['passed'] %}bg-emerald-50 text-emerald-600 border border-emerald-100{% else %}bg-amber-50 text-amber-600 border border-amber-100{% endif %}">
+                                    {{ qz['score'] }}/{{ qz['total'] }}
+                                </span>
+                                <p class="text-xs text-slate-400 mt-0.5">{% if qz['passed'] %}Passed{% else %}Retake{% endif %} · {{ qz['created_at'].strftime('%b %d') }}</p>
+                                {% else %}
+                                <span class="text-xs text-slate-400">Not taken</span>
+                                {% endif %}
+                            </td>
                             <td class="py-3 pr-4">
                                 {% if w['is_active'] %}<span class="px-2 py-1 text-xs font-semibold rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100">Active</span>
                                 {% else %}<span class="px-2 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-500 border border-slate-200">Inactive</span>{% endif %}
@@ -352,21 +364,31 @@ document.querySelectorAll('.reset-pin').forEach(btn => {
     });
 });
 
-function pickWorker(form, ev) {
-    if (!workerOptions.length) { alert('Add a cleaner first.'); return false; }
-    const choice = prompt('Assign to which cleaner?\n' + workerOptions.map(id => `${id}: ${names[id]}`).join('\n'));
-    if (!choice) return false;
-    const wid = parseInt(choice, 10);
-    if (!names[wid]) { alert('Invalid choice.'); return false; }
+function doAssign(form, wid) {
     form.querySelector('input[name="worker_id"]').value = wid;
     form.action = `/api/workers/${wid}/assign`;
+    form.submit();
+}
+
+function pickWorker(form) {
+    if (!workerOptions.length) { alert('Add a cleaner first.'); return false; }
+    let wid;
+    if (workerOptions.length === 1) {
+        wid = workerOptions[0].id;
+    } else {
+        const choice = prompt('Assign to which cleaner?\n' + workerOptions.map(o => `${o.id}: ${o.name}`).join('\n'));
+        if (!choice) return false;
+        wid = parseInt(choice, 10);
+        if (!names[wid]) { alert('Invalid choice.'); return false; }
+    }
+    doAssign(form, wid);
     return true;
 }
 
 document.querySelectorAll('.assign-form').forEach(form => {
-    const ev = form.dataset.event;
     form.addEventListener('submit', function(e) {
-        if (!pickWorker(form, ev)) { e.preventDefault(); }
+        e.preventDefault();
+        pickWorker(form);
     });
 });
 
@@ -385,7 +407,7 @@ document.querySelectorAll('.assign-form').forEach(form => {
 document.querySelectorAll('.assign-btn').forEach(btn => {
     btn.addEventListener('click', function() {
         const form = document.querySelector(`.assign-form[data-event="${this.dataset.event}"]`);
-        if (form) form.requestSubmit();
+        if (form) pickWorker(form);
     });
 });
 
