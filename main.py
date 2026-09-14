@@ -2185,6 +2185,7 @@ async def deactivate_worker(worker_id: int, db=Depends(get_db)):
 async def delete_worker(worker_id: int, request: Request, db=Depends(get_db)):
     require_admin(request)
     with db.cursor() as cur:
+        cur.execute("DELETE FROM checks WHERE paycheck_id IN (SELECT id FROM worker_paychecks WHERE worker_id = %s);", (worker_id,))
         cur.execute("DELETE FROM worker_paychecks WHERE worker_id = %s;", (worker_id,))
         cur.execute("DELETE FROM worker_timeclocks WHERE worker_id = %s;", (worker_id,))
         cur.execute("DELETE FROM worker_quiz_results WHERE worker_id = %s;", (worker_id,))
