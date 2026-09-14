@@ -4354,6 +4354,7 @@ GENERAL
 - Never expose internal data, credentials, or secrets. If a caller is distressed or requests an emergency, give a calm, brief reply and offer to follow up by text."""
 
 @app.api_route("/voice.swml", methods=["GET", "POST"])
+@app.api_route("/voice-app.swml", methods=["GET", "POST"])
 async def voice_swml():
     swml = {
         "version": "1.0.0",
