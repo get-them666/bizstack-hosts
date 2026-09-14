@@ -720,8 +720,8 @@
             return false;
         }
 
-        function appendChat(m) {
-            if (state.chatSeen.has(m.id)) return;
+        function appendChat(m, force = false) {
+            if (!force && state.chatSeen.has(m.id)) return;
             state.chatSeen.add(m.id);
             const list = $('chat-list');
             list.querySelector('.py-6')?.remove();
@@ -755,7 +755,7 @@
                 const list = $('chat-list');
                 const visible = (data.messages || []).filter(filterChat);
                 list.innerHTML = '';
-                visible.forEach(m => appendChat(m));
+                visible.forEach(m => appendChat(m, true));
                 if (!visible.length) list.innerHTML = '<div class="text-center text-xs text-slate-400 py-6">No messages yet — say hi to the team 👋</div>';
             } catch (e) {}
         }

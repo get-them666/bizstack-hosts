@@ -1711,7 +1711,7 @@ async def read_host_login(request: Request):
     return templates.TemplateResponse(request=request, name="host_login.html", context={"error": error, "user": None})
 
 @app.post("/api/host/auth/login")
-async def host_login(email: str = Form(...), password: str = Form(...), db=Depends(get_db)):
+async def host_login(email: str = Form(...), password: str = Form(...), request: Request = None, db=Depends(get_db)):
     with db.cursor() as cur:
         cur.execute("SELECT * FROM hosts WHERE email ILIKE %s AND status = 'active' AND password_hash IS NOT NULL;", (email.strip(),))
         host = cur.fetchone()
@@ -2290,7 +2290,7 @@ async def read_worker_login(request: Request):
     return templates.TemplateResponse(request=request, name="worker_login.html", context={"error": error, "user": None})
 
 @app.post("/api/worker/auth/login")
-async def worker_login(phone: str = Form(...), pin: str = Form(...), db=Depends(get_db)):
+async def worker_login(phone: str = Form(...), pin: str = Form(...), request: Request = None, db=Depends(get_db)):
     phone_digits = _digits(phone)
     with db.cursor() as cur:
         cur.execute("SELECT * FROM workers WHERE is_active = TRUE;")
@@ -2754,7 +2754,7 @@ async def photos_export_pdf(event_id: int, request: Request, db=Depends(get_db))
         except Exception as e:
             pdf.set_font("Helvetica", "", 9)
             pdf.cell(0, 6, f"(Image could not be embedded: {e})", new_x="LMARGIN", new_y="NEXT")
-    pdf_bytes = pdf.output()
+    pdf_bytes = bytes(pdf.output())
     return Response(content=pdf_bytes, media_type="application/pdf",
                     headers={"Content-Disposition": f"inline; filename=\"photos-{event_id}.pdf\""})
 
@@ -3019,13 +3019,13 @@ async def devices_delete(device_id: int, request: Request, db=Depends(get_db)):
 
 # --- INTERNAL OFFICE MESSAGING ---
 
-@app.get("/messages", response_class=HTMLResponse)
 def _message_actor(request: Request):
     """Current session actor, or a worker authenticated via the crew app's worker_session."""
     return _session_actor(request)
 
+@app.get("/messages", response_class=HTMLResponse)
 async def messages_page(request: Request, db=Depends(get_db)):
-    actor = _message_actor(request)
+    actor = current_actor(request)
     if not actor:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     return templates.TemplateResponse(request=request, name="messages.html", context={
