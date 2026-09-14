@@ -96,4 +96,4 @@ class StripeService:
         return stripe.Webhook.construct_event(payload, signature, self.webhook_secret)
 
     def _base_url(self) -> str:
-        return os.getenv("APP_BASE_URL", "https://divine-intuition-production-ff7e.up.railway.app").rstrip("/")
+        return (os.getenv("APP_BASE_URL", "https://bizstackperks.com") or "").rstrip("/")

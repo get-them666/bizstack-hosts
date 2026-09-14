@@ -216,7 +216,7 @@
 
     <script>
         const FENCE_M = 100.584;
-        const state = { worker: null, jobs: [], paychecks: [], features: {}, totals: { earned_cents: 0, jobs_done: 0 }, otpEmail: '', lastPos: null, updateTimer: null, sampling: false, chatStarted: false, chatWs: null, chatLastId: 0, chatSeen: new Set(), chatLocked: false };
+        const state = { worker: null, jobs: [], paychecks: [], features: {}, totals: { earned_cents: 0, jobs_done: 0 }, otpEmail: '', lastPos: null, updateTimer: null, sampling: false, chatStarted: false, chatRetry: 0, chatWs: null, chatLastId: 0, chatSeen: new Set(), chatLocked: false };
 
         const $ = id => document.getElementById(id);
 
@@ -699,10 +699,13 @@
         }
 
         function connectChat() {
+            if (!state.chatStarted) return;
+            if (document.hidden && !state.chatRetry) { state.chatWs = null; return; }
             const proto = location.protocol === 'https:' ? 'wss' : 'ws';
             const ws = new WebSocket(proto + '://' + location.host + '/ws/messages');
             state.chatWs = ws;
-            ws.onopen = () => { ws.send(String(state.chatLastId)); };
+            state.chatRetry = 0;
+            ws.onopen = () => { state.chatRetry = 0; ws.send(String(state.chatLastId)); };
             ws.onmessage = ev => {
                 const m = JSON.parse(ev.data);
                 if (m.clear) { state.chatLastId = 0; $('chat-list').innerHTML = '<div class="text-center text-xs text-slate-400 py-6">Chat cleared by the office.</div>'; return; }
@@ -710,7 +713,11 @@
             };
             ws.onclose = ev => {
                 if (ev.code === 1008) { chatLocked(); return; }
-                if (state.chatWs === ws && state.chatStarted) setTimeout(connectChat, 3000);
+                if (state.chatWs === ws && state.chatStarted) {
+                    state.chatRetry = Math.min(state.chatRetry + 1, 20);
+                    const delay = state.chatRetry * 3000;
+                    setTimeout(() => { if (state.chatStarted && state.chatWs === ws) connectChat(); }, delay);
+                }
             };
         }
 
@@ -878,6 +885,18 @@
 
             window.addEventListener('online', () => $('offline-banner').classList.add('hidden'));
             window.addEventListener('offline', () => $('offline-banner').classList.remove('hidden'));
+
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) {
+                    state.chatRetry = 1;
+                    if (state.chatWs) { try { state.chatWs.close(); } catch (e) {} state.chatWs = null; }
+                    stopTracking();
+                } else {
+                    if (state.chatStarted) { state.chatRetry = 0; connectChat(); }
+                    const active = state.jobs.find(j => j.clocked_in);
+                    if (active) startTracking();
+                }
+            });
 
             $('login-form').addEventListener('submit', async e => {
                 e.preventDefault();

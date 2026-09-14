@@ -527,22 +527,16 @@ async def send_email(cfg: dict, to: str, subject: str, body: str, attachment: by
         else:
             await aiosmtplib.send(msg, start_tls=False, **kwargs)
 
-    # Race the candidates so the first reachable port wins; cancel the rest.
-    tasks = [asyncio.ensure_future(_try(p, m)) for p, m in ladder]
-    try:
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
-        for t in pending:
-            t.cancel()
-        for t in done:
-            if not t.exception():
-                return True
-        for t in done:
-            e = t.exception()
-            print(f"[EMAIL] SMTP {host} attempt failed: {e}")
-        raise t.exception()
-    except asyncio.CancelledError:
-        raise
-    finally:
-        for t in tasks:
-            if not t.done():
-                t.cancel()
+    # Try the candidates in priority order and stop at the first success.
+    # Racing with FIRST_EXCEPTION was unreliable: a fast refusal (e.g. closed
+    # port 25) cancelled the in-flight attempt that would have succeeded on
+    # STARTTLS, so email appeared broken even with a valid SMTP config.
+    last_error: Exception | None = None
+    for port, mode in ladder:
+        try:
+            await _try(port, mode)
+            return True
+        except Exception as e:
+            last_error = e
+            print(f"[EMAIL] SMTP {host}:{port}/{mode} attempt failed: {e}")
+    raise last_error or RuntimeError(f"SMTP {host} is unreachable (no candidates left to try).")

@@ -3313,7 +3313,6 @@ async def worker_app_resend(request: Request, db=Depends(get_db)):
     if not ok:
         return JSONResponse(status_code=500, content={"status": "error", "message": err})
     return JSONResponse(content={"status": "ok"})
-    return resp
 
 @app.post("/api/worker/app/logout")
 async def worker_app_logout():
