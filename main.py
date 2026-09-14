@@ -4364,6 +4364,15 @@ async def voice_swml():
                 {
                     "ai": {
                         "prompt": {"text": VOICE_AGENT_PROMPT},
+                        "languages": [
+                            {
+                                "name": "English",
+                                "code": "en-US",
+                                "voice": "elevenlabs.rachel",
+                                "speech_fillers": ["one moment please,", "hmm...", "let's see,"],
+                            }
+                        ],
+                        "post_prompt_url": (os.getenv("APP_BASE_URL", "https://bizstackperks.com") or "") + "/api/voice/debug",
                         "pronounce": [
                             {"replace": "BizStack", "with": "biz stack", "ignore_case": True},
                             {"replace": "Vrbo", "with": "virbo", "ignore_case": True},
@@ -4376,6 +4385,25 @@ async def voice_swml():
         },
     }
     return JSONResponse(content=swml)
+
+@app.api_route("/api/voice/debug", methods=["GET", "POST"])
+async def voice_debug(request: Request):
+    raw = await request.body()
+    try:
+        data = json.loads(raw or b"{}")
+    except Exception:
+        data = {"raw": raw.decode("utf-8", "replace")[:4000]}
+    try:
+        form = dict(await request.form())
+        if form:
+            data = {"form": form, "json": data}
+    except Exception:
+        pass
+    print(f"VOICE-DEBUG {json.dumps(data, default=str)[:4000]}", flush=True)
+    actions = data.get("form", data).get("action")
+    if actions and "fetch_conversation" in (actions if isinstance(actions, list) else [actions]):
+        return JSONResponse({"conversation_summary": None})
+    return Response(content="", status_code=204)
 
 # --- Copilot (owner AI operator) ---
 
