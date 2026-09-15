@@ -312,9 +312,10 @@ def build_tool_handlers(db, stripe_svc):
             w = cur.fetchone()
             if not w:
                 return {"ok": False, "error": "Worker not found."}
+            job_site_address, job_site_lat, job_site_lng = _resolve_job_site(db, event_id)
             cur.execute(
-                "UPDATE calendar_events SET worker_id = %s, worker_pay_cents = %s, worker_status = 'assigned' WHERE id = %s RETURNING id;",
-                (worker_id, w["pay_rate_cents"], event_id),
+                "UPDATE calendar_events SET worker_id = %s, worker_pay_cents = %s, worker_status = 'assigned', job_address = %s, job_lat = %s, job_lng = %s WHERE id = %s RETURNING id;",
+                (worker_id, w["pay_rate_cents"], job_site_address or None, job_site_lat, job_site_lng, event_id),
             )
             ev = cur.fetchone()
             db.commit()
@@ -2214,6 +2215,47 @@ def _event_job_location(cur, event_id: int):
 def _map_embed_url(lat: float, lng: float, zoom: int = 16) -> str:
     return f"https://maps.google.com/maps?q={lat},{lng}&z={zoom}&output=embed"
 
+def _resolve_job_site(db, event_id: int, provided_address: str = ""):
+    """Resolve a cleaner's job site for an event. Precedence:
+    submitted address → linked property address → host's first property.
+    Returns (address, lat, lng)."""
+    address = (provided_address or "").strip()
+    lat, lng = None, None
+    if address:
+        with db.cursor() as cur:
+            cur.execute("SELECT lat, lng FROM properties WHERE address = %s LIMIT 1;", (address,))
+            row = cur.fetchone()
+        if row and row["lat"] is not None:
+            return address, row["lat"], row["lng"]
+        coords = _geocode(address)
+        if coords:
+            lat, lng = coords[0], coords[1]
+        return address, lat, lng
+    with db.cursor() as cur:
+        cur.execute(
+            """SELECT ce.property_id, p.address AS paddr, p.lat AS plat, p.lng AS plng, h.name AS hname
+               FROM calendar_events ce
+               LEFT JOIN properties p ON p.id = ce.property_id
+               LEFT JOIN hosts h ON h.id = ce.host_id
+               WHERE ce.id = %s;""",
+            (event_id,),
+        )
+        ev = cur.fetchone()
+    if not ev:
+        return "", None, None
+    if ev["paddr"]:
+        return ev["paddr"], ev["plat"], ev["plng"]
+    if ev["hname"]:
+        with db.cursor() as cur:
+            cur.execute(
+                "SELECT address, lat, lng FROM properties WHERE host_id = (SELECT id FROM hosts WHERE name = %s LIMIT 1) ORDER BY id LIMIT 1;",
+                (ev["hname"],),
+            )
+            pr = cur.fetchone()
+        if pr:
+            return pr["address"], pr["lat"], pr["lng"]
+    return "", None, None
+
 def _hash_pin(pin: str) -> str:
     return hashlib.sha256(f"{pin}:{os.getenv('APP_SECRET', 'bizstack')}".encode()).hexdigest()
 
@@ -2291,17 +2333,45 @@ async def crew_page(request: Request, db=Depends(get_db)):
             ORDER BY w.created_at DESC;
         """)
         workers = cur.fetchall()
+        # Precompute each host's default property address (fallback when an event
+        # isn't explicitly linked to a property).
         cur.execute("""
-            SELECT id, customer_name, start_time, service_type, amount_cents, worker_pay_cents
-            FROM calendar_events
-            WHERE worker_id IS NULL AND start_time >= NOW() - INTERVAL '60 days'
-            ORDER BY start_time ASC;
+            SELECT h.name, p.address, p.lat, p.lng
+            FROM hosts h
+            JOIN properties p ON p.host_id = h.id
+            ORDER BY h.name;
+        """)
+        host_props = {}
+        for r in cur.fetchall():
+            key = (r["name"] or "").strip().lower()
+            host_props.setdefault(key, (r["address"], r["lat"], r["lng"]))
+        # Unassigned cleaning jobs only — Full-Service Management isn't a cleaner task.
+        cur.execute("""
+            SELECT ce.id, ce.customer_name, ce.start_time, ce.service_type, ce.amount_cents, ce.worker_pay_cents,
+                   ce.property_id, ce.job_address, ce.job_lat, ce.job_lng,
+                   p.address AS property_address, p.lat AS property_lat, p.lng AS property_lng
+            FROM calendar_events ce
+            LEFT JOIN properties p ON p.id = ce.property_id
+            WHERE ce.worker_id IS NULL AND ce.start_time >= NOW() - INTERVAL '60 days'
+              AND ce.service_type IN ('Turnover Cleaning','Deep Cleaning','Linen Restock','Inspection')
+            ORDER BY ce.start_time ASC;
         """)
         unassigned = []
         for ev in cur.fetchall():
+            # Auto-fill the job site from the host's (unique) property when possible.
+            site_addr = ev["property_address"] or ev["job_address"] or ""
+            site_lat = ev["property_lat"] or ev["job_lat"]
+            site_lng = ev["property_lng"] or ev["job_lng"]
+            if not site_addr:
+                hp = host_props.get((ev["customer_name"] or "").strip().lower())
+                if hp:
+                    site_addr, site_lat, site_lng = hp[0], hp[1], hp[2]
             unassigned.append({
                 **ev,
                 "default_pay_cents": int(round(ev["amount_cents"] / 2)) if ev["amount_cents"] else 5000,
+                "job_site_address": site_addr or "",
+                "job_site_lat": site_lat,
+                "job_site_lng": site_lng,
             })
         cur.execute("""
             SELECT ce.id, ce.customer_name, ce.start_time, ce.service_type, ce.worker_status, ce.worker_pay_cents,
@@ -2444,14 +2514,11 @@ async def assign_worker_job(worker_id: int, event_id: int = Form(...), pay_rate:
             pay_cents = int(round(float(pay_rate.strip()) * 100))
         else:
             pay_cents = worker["pay_rate_cents"]
-        job_lat, job_lng = None, None
-        if (job_address or "").strip():
-            coords = _geocode(job_address)
-            if coords:
-                job_lat, job_lng = coords[0], coords[1]
+        # Auto-resolve the job site address from the host's property if left blank.
+        job_site_address, job_lat, job_lng = _resolve_job_site(db, event_id, job_address)
         cur.execute(
             "UPDATE calendar_events SET worker_id = %s, worker_pay_cents = %s, worker_status = 'assigned', job_address = %s, job_lat = %s, job_lng = %s WHERE id = %s;",
-            (worker_id, pay_cents, job_address, job_lat, job_lng, event_id),
+            (worker_id, pay_cents, job_site_address or None, job_lat, job_lng, event_id),
         )
         db.commit()
     return RedirectResponse(url="/crew", status_code=303)
@@ -4479,6 +4546,11 @@ async def create_payment_link(event_id: int, db=Depends(get_db)):
             discount_coupon=_first_clean_coupon(db, event["id"], event["customer_name"], event["phone"]),
         )
         return JSONResponse(content={"url": checkout_url})
+    except ValueError as e:
+        return JSONResponse(
+            content={"error": f'No price is set for "{event["service_type"]}" yet — add it in Settings › Prices before sending a payment link.'},
+            status_code=400,
+        )
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
 

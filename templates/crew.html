@@ -121,7 +121,7 @@
         <!-- Assign Jobs -->
         <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-8 mb-10">
             <h2 class="text-lg font-bold text-slate-900 mb-1">Assign Jobs</h2>
-            <p class="text-xs text-slate-500 mb-6">Add the job site address so the cleaner can clock in with the 1/16-mile geofence. Pay auto-fills from the cleaner's rate.</p>
+            <p class="text-xs text-slate-500 mb-6">Job site address auto-fills from the host's property — just pick a cleaner and assign. Pay auto-defaults to 50% of the job, editable below. Full-Service Management isn't a cleaner task, so it stays out of this list.</p>
             <div class="overflow-x-auto">
                 <table class="w-full text-sm">
                     <thead>
@@ -144,8 +144,9 @@
                                 <form method="post" action="/api/workers/{{ workers[0]['id'] if workers else 0 }}/assign" class="assign-form" data-event="{{ ev['id'] }}" data-amount="{{ ev['amount_cents'] or 0 }}">
                                     <input type="hidden" name="event_id" value="{{ ev['id'] }}">
                                     <input type="hidden" name="worker_id" value="">
-                                    <input name="job_address" type="text" placeholder="Job site address for geofence"
-                                        class="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                    <input name="job_address" type="text" value="{{ ev['job_site_address'] }}"
+                                        class="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        data-job-address>
                                     <div class="flex gap-2 mt-2">
                                         <input name="pay_rate" type="number" step="0.01" min="0" value="{{ ev['default_pay_cents'] / 100 }}" data-pay-rate class="w-24 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
                                         <button type="submit" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg" {% if not workers %}disabled{% endif %}>Assign</button>
