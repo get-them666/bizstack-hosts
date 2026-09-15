@@ -21,6 +21,7 @@ from fastapi.templating import Jinja2Templates
 
 from ai_agent import BusinessAIAgent
 from analysis_service import RentalAnalysisService
+from reddit_radar import outreach_draft, scan_reddit
 from stripe_service import StripeService
 from signalwire_service import SignalWireService
 import channel_sync
@@ -691,6 +692,15 @@ async def lifecycle(app: FastAPI):
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS source VARCHAR(100) DEFAULT 'website';")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS referral_code VARCHAR(50);")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS campaign VARCHAR(100);")
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS lead_posts (
+                    post_id VARCHAR(32) PRIMARY KEY,
+                    subreddit VARCHAR(100),
+                    created_utc BIGINT,
+                    lead_id INTEGER,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS worker_id INTEGER;")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS worker_pay_cents INTEGER;")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS worker_status VARCHAR(50) DEFAULT 'assigned';")
@@ -1457,6 +1467,99 @@ async def view_analysis(lead_id: int, request: Request, db=Depends(get_db)):
             "analysis_ok": bool(analysis.get("ok") and data),
             "error": analysis.get("error") if not analysis.get("ok") else "",
         },
+    )
+
+# --- HOST LEAD RADAR ---
+
+@app.get("/radar", response_class=HTMLResponse)
+async def host_lead_radar(request: Request, db=Depends(get_db)):
+    is_authed, user_email = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM leads WHERE source = 'reddit' ORDER BY created_at DESC LIMIT 200;")
+        rows = cur.fetchall()
+    leads = []
+    for l in rows:
+        meta = {}
+        try:
+            meta = json.loads(l.get("analysis_json") or "{}")
+        except (TypeError, ValueError):
+            pass
+        author = (l.get("name") or "").split("·", 1)[-1].strip() or "reddit user"
+        mins = None
+        try:
+            mins = int((datetime.utcnow() - l["created_at"]).total_seconds() // 60)
+        except Exception:
+            pass
+        leads.append({
+            "id": l["id"],
+            "author": author,
+            "subreddit": meta.get("subreddit", ""),
+            "title": meta.get("title", ""),
+            "permalink": l.get("listing_url", ""),
+            "funding": bool(l.get("funding_needed")),
+            "minutes_ago": mins,
+            "status": l.get("status", "new"),
+            "draft": outreach_draft({
+                "author": author,
+                "subreddit": meta.get("subreddit", ""),
+                "title": meta.get("title", ""),
+                "funding": bool(l.get("funding_needed")),
+            }),
+        })
+    return templates.TemplateResponse(
+        request=request,
+        name="radar.html",
+        context={
+            "user": {"email": user_email},
+            "leads": leads,
+            "scanned": request.query_params.get("scanned"),
+            "seen": request.query_params.get("seen"),
+            "errors": request.query_params.get("errors", ""),
+        },
+    )
+
+@app.post("/radar/scan")
+async def radar_run_scan(request: Request, db=Depends(get_db)):
+    is_authed, user_email = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    result = scan_reddit(limit=100)
+    created = 0
+    seen = 0
+    with db.cursor() as cur:
+        for m in result["matches"]:
+            cur.execute("SELECT 1 FROM lead_posts WHERE post_id = %s;", (m["post_id"],))
+            if cur.fetchone():
+                seen += 1
+                continue
+            meta = json.dumps({"title": m["title"], "subreddit": m["subreddit"]})
+            cur.execute(
+                "INSERT INTO leads (name, email, listing_url, status, source, funding_needed, funding_use, referral_code, campaign, analysis_json) "
+                "VALUES (%s, %s, %s, 'new', 'reddit', %s, %s, %s, 'host-lead-radar', %s) RETURNING id;",
+                (
+                    f"Reddit · {m['author']}",
+                    f"reddit-{m['post_id']}@lead.local",
+                    m["permalink"],
+                    m["funding"],
+                    (m.get("funding_use") or "")[:500],
+                    m["post_id"],
+                    meta,
+                ),
+            )
+            lead_id = cur.fetchone()["id"]
+            cur.execute(
+                "INSERT INTO lead_posts (post_id, subreddit, created_utc, lead_id) VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (post_id) DO NOTHING;",
+                (m["post_id"], m["subreddit"], m["created_utc"], lead_id),
+            )
+            created += 1
+        db.commit()
+    err = "; ".join(result["errors"])[:300]
+    return RedirectResponse(
+        url=f"/radar?scanned={created}&seen={seen}&errors={urllib.parse.quote(err)}",
+        status_code=status.HTTP_303_SEE_OTHER,
     )
 
 # --- DASHBOARD ---

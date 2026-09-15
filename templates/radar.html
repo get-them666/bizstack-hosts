@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Host Lead Radar | BizStack Hosts{% endblock %}
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 py-8">
+    <div class="flex flex-wrap items-center justify-between gap-4">
+        <div>
+            <h1 class="text-2xl font-extrabold tracking-tight text-slate-900">Host Lead Radar</h1>
+            <p class="mt-1 text-sm text-slate-500">Finds people posting about converting a home to short-term rentals who may need funding.</p>
+        </div>
+        <form method="post" action="/radar/scan">
+            <button type="submit" class="px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-sm">Scan Reddit Now</button>
+        </form>
+    </div>
+
+    {% if scanned or seen or errors %}
+    <div class="mt-4 rounded-xl border p-4 text-sm {% if errors %}bg-amber-50 border-amber-200 text-amber-800{% else %}bg-emerald-50 border-emerald-200 text-emerald-800{% endif %}">
+        {% if scanned %}Found <b>{{ scanned }}</b> new lead(s){% endif %}{% if seen %} · <b>{{ seen }}</b> already captured{% endif %}{% if errors %} · scanner notes: {{ errors }}{% endif %}
+    </div>
+    {% endif %}
+
+    <div class="mt-6 bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        {% if leads %}
+        <table class="w-full text-sm">
+            <thead class="bg-slate-50 border-b border-slate-200 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                <tr>
+                    <th class="py-3 px-4">Lead</th>
+                    <th class="py-3 px-4">Source</th>
+                    <th class="py-3 px-4">Funding</th>
+                    <th class="py-3 px-4">Age</th>
+                    <th class="py-3 px-4">Status</th>
+                    <th class="py-3 px-4">Outreach</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+                {% for l in leads %}
+                <tr class="align-top">
+                    <td class="py-3 px-4 max-w-md">
+                        <p class="font-semibold text-slate-800">u/{{ l['author'] }}</p>
+                        <p class="text-slate-500 line-clamp-2">{{ l['title'] }}</p>
+                        {% if l['permalink'] %}<a href="{{ l['permalink'] }}" target="_blank" class="text-xs font-semibold text-indigo-600 hover:text-indigo-700">View post →</a>{% endif %}
+                    </td>
+                    <td class="py-3 px-4 text-slate-500">r/{{ l['subreddit'] }}</td>
+                    <td class="py-3 px-4">
+                        {% if l['funding'] %}<span class="px-2 py-1 text-xs font-semibold rounded-full bg-amber-50 text-amber-700 border border-amber-100">Needs funding</span>
+                        {% else %}<span class="text-slate-400">—</span>{% endif %}
+                    </td>
+                    <td class="py-3 px-4 text-slate-500">{% if l['minutes_ago'] is not none %}{{ l['minutes_ago'] }}m ago{% else %}—{% endif %}</td>
+                    <td class="py-3 px-4"><span class="px-2 py-1 text-xs font-semibold rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100">{{ l['status']|capitalize }}</span></td>
+                    <td class="py-3 px-4">
+                        <button class="copy-draft text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg" data-draft="{{ l['draft']|e }}">Copy outreach</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="py-12 text-center text-slate-400">
+            <p class="font-semibold">No leads yet</p>
+            <p class="text-sm mt-1">Hit "Scan Reddit Now" to sweep r/airbnb_hosts, r/realestateinvesting, and local VA/NC subs.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <p class="mt-4 text-xs text-slate-400">Speed wins on Reddit — copy the outreach, send a DM or reply within the hour. Public posts only; no account scraping.</p>
+</div>
+
+<script>
+document.querySelectorAll('.copy-draft').forEach(btn => {
+    btn.addEventListener('click', async function() {
+        try {
+            await navigator.clipboard.writeText(this.dataset.draft);
+            const prev = this.textContent;
+            this.textContent = 'Copied ✓';
+            this.classList.remove('bg-indigo-600');
+            this.classList.add('bg-emerald-600');
+            setTimeout(() => { this.textContent = prev; this.classList.add('bg-indigo-600'); this.classList.remove('bg-emerald-600'); }, 2000);
+        } catch (e) {
+            prompt('Copy manually:', this.dataset.draft);
+        }
+    });
+});
+</script>
+{% endblock %}
