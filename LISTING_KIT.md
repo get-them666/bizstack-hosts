@@ -6,7 +6,7 @@
 | Business name | **BizStack Hosts** |
 | Phone | **+1 (757) 846-9275** |
 | Website | **https://bizstackperks.com** |
-| Service area | Hampton Roads, VA (Virginia Beach · Norfolk · Chesapeake · Newport News · Portsmouth · Suffolk · Hampton) |
+| Service area | Williamsburg–Hampton Roads, VA · Currituck County & Elizabeth City, NC (Virginia Beach · Norfolk · Chesapeake · Newport News · Portsmouth · Suffolk · Hampton · Williamsburg) |
 | Category | Cleaning Service / Short-Term Rental Cleaning / Property Management |
 | Hours | Open 24 hours (AI phone assistant 24/7) |
 | Founded | 2026 |
@@ -32,7 +32,7 @@
 > - **True co-hosting, not lock-in.** Pick standalone turnovers, digital co-hosting (10–15% of gross), or full-service management (20–30%). No all-or-nothing contracts — unbundle exactly what you need and keep control of your listing.
 > - **24/7 AI phone coverage.** Guests and owners can call or text anytime; our AI assistant answers questions, handles early check-outs, and can send secure check-in links mid-call.
 >
-> Serving Airbnb, Vrbo, and direct-booking hosts across Virginia Beach, Norfolk, Chesapeake, Newport News, and the greater Hampton Roads region. Call or text us today: (757) 846-9275, or start at bizstackperks.com.
+> Serving Airbnb, Vrbo, and direct-booking hosts across Williamsburg–Hampton Roads, VA (Virginia Beach, Norfolk, Chesapeake, Newport News), plus Currituck County and Elizabeth City, NC. Call or text us today: (757) 846-9275, or start at bizstackperks.com.
 
 ### 1-line taglines (footer blurbs / short fields)
 - "5-star STR turnover cleaning, guest-funded."
