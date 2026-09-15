@@ -128,6 +128,8 @@
                             <a href="/copilot" class="nav-dropdown-item">Copilot</a>
                             <a href="/training" class="nav-dropdown-item">Training</a>
                             <a href="/access" class="nav-dropdown-item">Access</a>
+                            <a href="/radar" class="nav-dropdown-item">Lead Radar</a>
+                            <a href="/acquisition" class="nav-dropdown-item">Acquisition</a>
                             <a href="/appearance" class="nav-dropdown-item">Appearance &amp; Promos</a>
                             <a href="/settings" class="nav-dropdown-item">Settings</a>
                         </div>
@@ -363,6 +365,7 @@
         });
     </script>
     {% block scripts %}{% endblock %}
+    {{ site_theme_state().decor | safe }}
     {% if site_theme_state().emoji %}
     <div aria-hidden="true" style="position:fixed;right:18px;bottom:14px;font-size:2rem;opacity:.35;pointer-events:none;z-index:40;transform:rotate(-8deg);">{{ site_theme_state().emoji }}</div>
     {% endif %}

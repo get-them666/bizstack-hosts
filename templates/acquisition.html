@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}Acquisition · BizStack Hosts{% endblock %}
+{% block content %}
+{% if scanned != None or seen != None %}
+<div class="bg-white border border-emerald-200 text-emerald-800 rounded-xl px-4 py-3 mb-6 text-sm shadow-sm">
+    Radar scan done: <strong>{{ scanned }}</strong> new lead{% if scanned != '1' %}s{% endif %}
+    {% if seen and seen != '0' %}({{ seen }} already seen){% endif %}
+    {% if errors %} · <span class="text-amber-700">{{ errors }}</span>{% endif %}
+</div>
+{% endif %}
+
+<div class="grid lg:grid-cols-12 gap-6">
+    <!-- LEFT: Reddit Lead Radar -->
+    <div class="lg:col-span-7 space-y-6">
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                <div>
+                    <h2 class="text-base font-bold text-slate-900">🔭 Reddit Lead Radar</h2>
+                    <p class="text-xs text-slate-500 mt-0.5">Owners converting homes to STRs, plus Hampton Roads / OBX locals.</p>
+                </div>
+                <form method="post" action="/radar/scan">
+                    <button type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all">Scan Reddit Now</button>
+                </form>
+            </div>
+            <div class="divide-y divide-slate-50">
+                {% for l in radar_leads %}
+                <div class="px-5 py-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <div class="text-sm font-semibold text-slate-800">
+                                r/{{ l.subreddit or '—' }} · <span class="text-slate-500 font-normal">{{ l.author }}</span>
+                            </div>
+                            <a href="{{ l.permalink }}" target="_blank" rel="noopener" class="text-sm text-indigo-600 hover:text-indigo-800">{{ l.title or '(no title)' }} ↗</a>
+                            <div class="mt-1 flex flex-wrap gap-1.5">
+                                {% if l.funding %}<span class="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">💲 funding angle</span>{% endif %}
+                                <span class="text-[10px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5">status: {{ l.status }}</span>
+                            </div>
+                        </div>
+                        <button class="copy-draft shrink-0 px-3 py-1.5 text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg" data-draft="{{ l.draft }}">Copy outreach</button>
+                    </div>
+                </div>
+                {% else %}
+                <div class="px-5 py-8 text-center text-sm text-slate-400">No radar leads yet — hit <strong>Scan Reddit Now</strong>.</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Recent leads with funnel controls -->
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100">
+                <h2 class="text-base font-bold text-slate-900">📥 Recent Inbound</h2>
+                <p class="text-xs text-slate-500 mt-0.5">Every source — website, referrals, radar — in one pipeline.</p>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-left text-xs uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                            <th class="px-5 py-3">Lead</th><th class="px-3 py-3">Source</th><th class="px-3 py-3">Status</th><th class="px-5 py-3"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for l in recent_leads %}
+                        <tr class="border-b border-slate-50 align-middle">
+                            <td class="px-5 py-3">
+                                <div class="font-semibold text-slate-800">{{ l['name'] }}</div>
+                                <div class="text-xs text-slate-500">{{ l['email'] or '' }}{% if l['campaign'] %} · {{ l['campaign'] }}{% endif %}</div>
+                            </td>
+                            <td class="px-3 py-3"><span class="text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5">{{ l['source'] or 'website' }}</span></td>
+                            <td class="px-3 py-3"><span class="lead-status text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">{{ l['status'] }}</span></td>
+                            <td class="px-5 py-3 text-right">
+                                <select onchange="setLeadStatus({{ l['id'] }}, this.value)" class="text-xs rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                                    {% for s in ['new','contacted','quote','host','archive'] %}
+                                    <option value="{{ s }}" {% if l['status'] == s %}selected{% endif %}>{{ s }}</option>
+                                    {% endfor %}
+                                </select>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="4" class="px-5 py-8 text-center text-sm text-slate-400">No leads yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- RIGHT: Partners + referrals + funnel -->
+    <div class="lg:col-span-5 space-y-6">
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100">
+                <h2 class="text-base font-bold text-slate-900">👥 Partners &amp; Referrals</h2>
+                <p class="text-xs text-slate-500 mt-0.5">Each partner gets a code; every lead that uses it is tracked back to them.</p>
+            </div>
+            <div class="divide-y divide-slate-50">
+                {% for p in partners %}
+                {% set ac = referral_activity.get(p['referral_code']) %}
+                <div class="px-5 py-3.5">
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm font-semibold text-slate-800">{{ p['name'] }}</span>
+                        <code class="text-xs font-mono text-indigo-600 bg-indigo-50 rounded-lg px-2 py-1">{{ p['referral_code'] }}</code>
+                    </div>
+                    <div class="text-xs text-slate-500 mt-1">Leads: <strong>{{ ac[1] if ac else 0 }}</strong> · Funding-flagged: <strong>{{ ac[2] if ac else 0 }}</strong></div>
+                </div>
+                {% else %}
+                <div class="px-5 py-8 text-center text-sm text-slate-400">No partners yet — add them on the Partners page.</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100">
+                <h2 class="text-base font-bold text-slate-900">🎟️ Referral Codes</h2>
+                <p class="text-xs text-slate-500 mt-0.5">Share an invite link with <code class="font-mono text-indigo-600">?ref=</code> and track it.</p>
+            </div>
+            <div class="divide-y divide-slate-50">
+                {% for c in codes %}
+                <div class="px-5 py-3 flex items-center justify-between">
+                    <div>
+                        <code class="text-sm font-mono text-slate-800">{{ c['code'] }}</code>
+                        <div class="text-xs text-slate-500">{{ c['label'] or c['ref_type'] }}</div>
+                    </div>
+                    <span class="text-xs font-semibold text-slate-600 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5">{{ c['cnt'] }} lead{{ 's' if c['cnt'] != 1 }}</span>
+                </div>
+                {% else %}
+                <div class="px-5 py-8 text-center text-sm text-slate-400">No referral codes yet.</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="px-5 py-4 border-b border-slate-100">
+                <h2 class="text-base font-bold text-slate-900">📈 Funnel by Source</h2>
+            </div>
+            <div class="p-5 space-y-3">
+                {% for channel, stats in funnel.items() %}
+                <div>
+                    <div class="flex items-center justify-between text-sm">
+                        <span class="font-semibold text-slate-700 capitalize">{{ channel }}</span>
+                        <span class="text-xs text-slate-500">{{ stats.total }} total · {{ stats.host }} converted</span>
+                    </div>
+                    <div class="mt-1.5 h-2 rounded-full bg-slate-100 overflow-hidden">
+                        <div class="h-full rounded-full bg-indigo-500" style="width:{{ (stats.host / stats.total * 100) if stats.total else 0 }}%"></div>
+                    </div>
+                </div>
+                {% else %}
+                <div class="text-sm text-slate-400 text-center py-4">No lead volume yet.</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.querySelectorAll('.copy-draft').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(btn.dataset.draft);
+            const old = btn.textContent;
+            btn.textContent = 'Copied ✓';
+            setTimeout(() => btn.textContent = old, 1500);
+        } catch (e) { alert('Could not copy — select the text manually.'); }
+    });
+});
+async function setLeadStatus(id, status) {
+    const fd = new FormData(); fd.append('status_val', status);
+    const res = await fetch('/api/leads/' + id + '/status', { method: 'POST', body: fd });
+    if (!res.ok) { alert('Status update failed'); return; }
+}
+</script>
+{% endblock %}

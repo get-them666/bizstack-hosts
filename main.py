@@ -1653,7 +1653,7 @@ async def radar_run_scan(request: Request, db=Depends(get_db)):
         db.commit()
     err = "; ".join(result["errors"])[:300]
     return RedirectResponse(
-        url=f"/radar?scanned={created}&seen={seen}&errors={urllib.parse.quote(err)}",
+        url=f"/acquisition?scanned={created}&seen={seen}&errors={urllib.parse.quote(err)}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
 
@@ -5217,6 +5217,101 @@ async def present_slide_audio(kind: str, idx: int):
     )
 
 # --- Bank / funding partners ---
+
+@app.get("/acquisition", response_class=HTMLResponse)
+async def acquisition_page(request: Request, db=Depends(get_db)):
+    is_authed, user_email = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
+    # Radar leads (Reddit)
+    radar_leads = []
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM leads WHERE source = 'reddit' ORDER BY created_at DESC LIMIT 20;")
+        for l in cur.fetchall():
+            meta = {}
+            try:
+                meta = json.loads(l.get("analysis_json") or "{}")
+            except (TypeError, ValueError):
+                pass
+            author = (l.get("name") or "").split("·", 1)[-1].strip() or "reddit user"
+            radar_leads.append({
+                "id": l["id"],
+                "author": author,
+                "subreddit": meta.get("subreddit", ""),
+                "title": meta.get("title", ""),
+                "permalink": l.get("listing_url", ""),
+                "funding": bool(l.get("funding_needed")),
+                "status": l.get("status", "new"),
+                "draft": outreach_draft({
+                    "author": author,
+                    "subreddit": meta.get("subreddit", ""),
+                    "title": meta.get("title", ""),
+                    "funding": bool(l.get("funding_needed")),
+                }),
+            })
+        cur.execute("SELECT * FROM partners ORDER BY created_at DESC;")
+        partners = cur.fetchall()
+        cur.execute("""
+            SELECT referral_code, COUNT(*), COUNT(*) FILTER (WHERE funding_needed = TRUE)
+            FROM leads WHERE referral_code IS NOT NULL GROUP BY referral_code;
+        """)
+        referral_activity = {r["referral_code"]: r for r in cur.fetchall()}
+        cur.execute("""
+            SELECT rc.code, rc.label, rc.ref_type, rc.created_at, COUNT(l.id)::int AS cnt
+            FROM referral_codes rc
+            LEFT JOIN leads l ON l.referral_code = rc.code
+            GROUP BY rc.id ORDER BY rc.created_at DESC LIMIT 20;
+        """)
+        codes = cur.fetchall()
+        cur.execute("""
+            SELECT COALESCE(NULLIF(source,''),'website') AS channel, status, COUNT(*)::int AS cnt
+            FROM leads GROUP BY channel, status ORDER BY channel, status;
+        """)
+        funnel_raw = cur.fetchall()
+        cur.execute("""
+            SELECT id, name, email, source, status, funding_needed, campaign, created_at
+            FROM leads ORDER BY created_at DESC LIMIT 25;
+        """)
+        recent_leads = cur.fetchall()
+
+    funnel = {}
+    for r in funnel_raw:
+        funnel.setdefault(r["channel"], {"total": 0, "host": 0})["total"] += r["cnt"]
+        if r["status"] == "host":
+            funnel[r["channel"]]["host"] += r["cnt"]
+
+    return templates.TemplateResponse(
+        request=request,
+        name="acquisition.html",
+        context={
+            "user": {"email": user_email},
+            "radar_leads": radar_leads,
+            "scanned": request.query_params.get("scanned"),
+            "seen": request.query_params.get("seen"),
+            "errors": request.query_params.get("errors", ""),
+            "partners": partners,
+            "referral_activity": referral_activity,
+            "codes": codes,
+            "funnel": funnel,
+            "recent_leads": recent_leads,
+        },
+    )
+
+
+@app.post("/api/leads/{lead_id}/status")
+async def update_lead_status(lead_id: int, request: Request, status_val: str = Form("new"), db=Depends(get_db)):
+    require_admin(request)
+    allowed = {"new", "contacted", "quote", "host", "archive"}
+    if status_val not in allowed:
+        return JSONResponse({"ok": False, "error": "Invalid status"}, status_code=400)
+    with db.cursor() as cur:
+        cur.execute("UPDATE leads SET status = %s WHERE id = %s RETURNING id;", (status_val, lead_id))
+        row = cur.fetchone()
+        db.commit()
+    if not row:
+        return JSONResponse({"ok": False, "error": "Lead not found"}, status_code=404)
+    return JSONResponse({"ok": True, "lead_id": lead_id, "status": status_val})
 
 @app.get("/partners", response_class=HTMLResponse)
 async def partners_page(request: Request, db=Depends(get_db)):
