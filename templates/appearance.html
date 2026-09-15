@@ -31,7 +31,7 @@
 
         <div>
             <h3 class="text-sm font-semibold text-slate-700 mb-3">Seasonal Skins</h3>
-            <p class="text-xs text-slate-500 mb-4">With auto on: 🍂 Sep 1–30 · 🎃 Oct 1–31 · 🎄 Dec 15–Jan 5 · 💗 Feb 1–14 · 🌸 Mar 1–May 31 · 🏖️ Jun 1–Aug 31. Pick any below to pin it manually.</p>
+            <p class="text-xs text-slate-500 mb-4">Click any skin to <strong>apply it instantly</strong> (it pins that look — auto turns off). With auto on: 🍂 Sep 1–30 · 🎃 Oct 1–31 · 🎄 Dec 15–Jan 5 · 💗 Feb 1–14 · 🌸 Mar 1–May 31 · 🏖️ Jun 1–Aug 31.</p>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {% for key, p in presets.items() %}
                 <button type="button" data-skin="{{ key }}" data-bg="{{ p.bg }}" data-accent="{{ p.accent }}" data-font="{{ p.font }}" data-emoji="{{ p.emoji }}"
@@ -133,7 +133,7 @@
     const em = document.getElementById("emoji"), fSel = document.getElementById("font_select");
 
     document.querySelectorAll(".skin-card").forEach(card => {
-        card.addEventListener("click", () => {
+        card.addEventListener("click", (e) => {
             document.querySelectorAll(".skin-card").forEach(c => c.classList.remove("border-indigo-600", "ring-2", "ring-indigo-200"));
             card.classList.add("border-indigo-600", "ring-2", "ring-indigo-200");
             const autoBox = document.getElementById("auto_season");
@@ -144,6 +144,12 @@
             em.value = card.dataset.emoji;
             fSel.value = card.dataset.font;
             fontField.value = card.dataset.font;
+            e.preventDefault();
+            const f = card.closest("form");
+            if (f && !card.dataset.applying) {
+                card.dataset.applying = "1";
+                f.requestSubmit();
+            }
         });
     });
     fSel.addEventListener("change", () => fontField.value = fSel.value);
