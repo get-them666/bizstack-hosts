@@ -13,9 +13,25 @@
         <input type="hidden" name="skin" id="skin" value="{{ state.skin }}">
         <input type="hidden" name="font" id="font" value="{{ state.font_name }}">
 
+        <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+            <label class="flex items-center gap-3 cursor-pointer select-none">
+                <input type="checkbox" name="auto" value="on" id="auto_season" class="h-5 w-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" {% if state.auto %}checked{% endif %}>
+                <span class="text-sm font-semibold text-slate-700">Auto-swap skins by season</span>
+            </label>
+            <div class="text-xs text-slate-500">
+                {% if state.auto and state.auto_season %}
+                <span class="font-semibold text-indigo-600">Weather: {{ presets[state.auto_season]['label'] }} active today</span> — it changes itself.
+                {% elif state.auto %}
+                Manual override: anything you pick here pins that skin (uncheck auto).
+                {% else %}
+                Auto is off — the skin below is pinned until you flip it back.
+                {% endif %}
+            </div>
+        </div>
+
         <div>
             <h3 class="text-sm font-semibold text-slate-700 mb-3">Seasonal Skins</h3>
-            <p class="text-xs text-slate-500 mb-4">One click swaps the public site's look for the season. Apply, then tweak colors below.</p>
+            <p class="text-xs text-slate-500 mb-4">With auto on: 🍂 Sep 1–30 · 🎃 Oct 1–31 · 🎄 Dec 15–Jan 5 · 💗 Feb 1–14 · 🌸 Mar 1–May 31 · 🏖️ Jun 1–Aug 31. Pick any below to pin it manually.</p>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {% for key, p in presets.items() %}
                 <button type="button" data-skin="{{ key }}" data-bg="{{ p.bg }}" data-accent="{{ p.accent }}" data-font="{{ p.font }}" data-emoji="{{ p.emoji }}"
@@ -77,6 +93,7 @@
         <input type="hidden" name="accent_color" value="{{ state.accent }}">
         <input type="hidden" name="font" value="{{ state.font_name }}">
         <input type="hidden" name="emoji" value="{{ state.emoji }}">
+        <input type="hidden" name="auto" value="{{ 'on' if state.auto else 'off' }}">
         <div>
             <h3 class="text-sm font-semibold text-slate-700">First Clean Free — Staged Coupon</h3>
             <p class="text-xs text-slate-500 mt-1 max-w-2xl">
@@ -119,6 +136,8 @@
         card.addEventListener("click", () => {
             document.querySelectorAll(".skin-card").forEach(c => c.classList.remove("border-indigo-600", "ring-2", "ring-indigo-200"));
             card.classList.add("border-indigo-600", "ring-2", "ring-indigo-200");
+            const autoBox = document.getElementById("auto_season");
+            if (autoBox && autoBox.checked) autoBox.checked = false;
             skinField.value = card.dataset.skin;
             bgC.value = bgH.value = card.dataset.bg;
             aC.value = aH.value = card.dataset.accent;

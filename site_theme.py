@@ -2,6 +2,7 @@ import json
 import os
 import threading
 import time
+from datetime import date
 
 import psycopg
 from psycopg.rows import dict_row
@@ -16,6 +17,32 @@ FONTS = {
     "rounded": "'Avenir Next Rounded', 'Nunito Sans', ui-rounded, 'Segoe UI', system-ui, sans-serif",
     "mono": "'Courier New', ui-monospace, monospace",
 }
+
+# (skin, start_month_day, end_month_day) — ranges can wrap a year boundary.
+SEASON_SCHEDULE = [
+    ("autumn", (9, 1), (9, 30)),
+    ("halloween", (10, 1), (10, 31)),
+    ("holiday", (12, 15), (1, 5)),
+    ("valentine", (2, 1), (2, 14)),
+    ("spring", (3, 1), (5, 31)),
+    ("summer", (6, 1), (8, 31)),
+]
+
+
+def active_season(today=None):
+    """Return the scheduled seasonal skin key active today, or '' outside a window."""
+    if today is None:
+        today = date.today()
+    md = (today.month, today.day)
+    for skin, (sm, sd), (em, ed) in SEASON_SCHEDULE:
+        s, e = (sm, sd), (em, ed)
+        if s <= e:
+            if s <= md <= e:
+                return skin
+        else:
+            if md >= s or md <= e:
+                return skin
+    return ""
 
 PRESETS = {
     "default": {"label": "Default", "bg": "#f8fafc", "accent": "#4f46e5", "font": "modern", "emoji": "", "mood": ""},
@@ -204,7 +231,7 @@ def state(force=False):
             cached = _cache["state"]
             if cached:
                 return cached
-            return {"skin": "default", "css": "", "emoji": "", "decor": "", "promo_on": False}
+            return {"skin": "default", "css": "", "emoji": "", "decor": "", "promo_on": False, "auto": True, "auto_season": ""}
         try:
             settings = _read_settings(conn)
             theme = {}
@@ -212,16 +239,24 @@ def state(force=False):
                 theme = json.loads(settings.get("theme") or "{}")
             except (TypeError, ValueError):
                 theme = {}
-            skin_name = str(theme.get("skin") or "default")
-            base = dict(PRESETS.get(skin_name, PRESETS["default"]))
-            if "bg" in theme:
-                base["bg"] = theme["bg"]
-            if "accent" in theme:
-                base["accent"] = theme["accent"]
-            if "font" in theme:
-                base["font"] = str(theme["font"])
-            if "emoji" in theme and theme.get("emoji") is not None:
-                base["emoji"] = str(theme["emoji"])
+            auto = bool(theme.get("auto", True))
+            if auto:
+                # Seasonal schedule drives the public look automatically.
+                season_now = active_season()
+                skin_name = season_now or "default"
+                base = dict(PRESETS.get(skin_name, PRESETS["default"]))
+            else:
+                season_now = ""
+                skin_name = str(theme.get("skin") or "default")
+                base = dict(PRESETS.get(skin_name, PRESETS["default"]))
+                if "bg" in theme:
+                    base["bg"] = theme["bg"]
+                if "accent" in theme:
+                    base["accent"] = theme["accent"]
+                if "font" in theme:
+                    base["font"] = str(theme["font"])
+                if "emoji" in theme and theme.get("emoji") is not None:
+                    base["emoji"] = str(theme["emoji"])
             state = {
                 "skin": skin_name,
                 "label": base.get("label") or skin_name,
@@ -232,6 +267,8 @@ def state(force=False):
                 "promo_on": settings.get("promo_first_clean") == "on",
                 "decor": _build_decor(base.get("mood") or ""),
                 "css": css(base["bg"], base["accent"], base["font"]),
+                "auto": auto,
+                "auto_season": season_now,
             }
             _cache["state"] = state
             _cache["at"] = now
@@ -240,7 +277,7 @@ def state(force=False):
         return _cache["state"]
 
 
-def save_theme(db, skin=None, bg=None, accent=None, font=None, emoji=None):
+def save_theme(db, skin=None, bg=None, accent=None, font=None, emoji=None, auto=None):
     with db.cursor() as cur:
         cur.execute("SELECT value FROM app_settings WHERE key = 'theme';")
         row = cur.fetchone()
@@ -249,16 +286,19 @@ def save_theme(db, skin=None, bg=None, accent=None, font=None, emoji=None):
             theme = json.loads((row or {}).get("value") or "{}")
         except (TypeError, ValueError):
             theme = {}
-        if skin is not None:
-            theme["skin"] = skin
-        if bg is not None:
-            theme["bg"] = bg
-        if accent is not None:
-            theme["accent"] = accent
-        if font is not None:
-            theme["font"] = font
-        if emoji is not None:
-            theme["emoji"] = emoji
+        if auto is not None:
+            theme["auto"] = bool(auto)
+        if not theme.get("auto", True):
+            if skin is not None:
+                theme["skin"] = skin
+            if bg is not None:
+                theme["bg"] = bg
+            if accent is not None:
+                theme["accent"] = accent
+            if font is not None:
+                theme["font"] = font
+            if emoji is not None:
+                theme["emoji"] = emoji
         cur.execute(
             "INSERT INTO app_settings (key, value, updated_at) VALUES ('theme', %s, NOW()) "
             "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();",

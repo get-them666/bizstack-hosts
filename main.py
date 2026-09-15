@@ -3842,6 +3842,10 @@ async def appearance_page(request: Request):
     if not is_authed:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     state = site_theme.state(force=True)
+    schedule = []
+    for skin, (sm, sd), (em, ed) in site_theme.SEASON_SCHEDULE:
+        label = site_theme.PRESETS.get(skin, {}).get("label", skin)
+        schedule.append((label, f"{sm:02d}-{sd:02d}", f"{em:02d}-{ed:02d}"))
     return templates.TemplateResponse(
         request=request,
         name="appearance.html",
@@ -3849,6 +3853,7 @@ async def appearance_page(request: Request):
             "user": {"email": user_email},
             "state": state,
             "presets": site_theme.PRESETS,
+            "schedule": schedule,
             "fonts": [("modern", "Modern (Inter)"), ("serif", "Serif (Georgia)"), ("rounded", "Rounded"), ("mono", "Monospace")],
             "promo_code": "FIRSTCLEAN",
         },
@@ -3863,18 +3868,26 @@ async def appearance_save(
     accent_color: str = Form(""),
     font: str = Form(""),
     emoji: str = Form(""),
+    auto: str = Form("on"),
     promo_first_clean: str = Form("off"),
     db=Depends(get_db),
 ):
     is_authed, _ = require_auth(request)
     if not is_authed:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    skin = str(skin or "").strip() or None
-    bg = str(bg_color or "").strip() or None
-    accent = str(accent_color or "").strip() or None
-    fnt = str(font or "").strip() or None
-    em = str(emoji or "").strip() or None
-    site_theme.save_theme(db, skin=skin, bg=bg, accent=accent, font=fnt, emoji=em)
+    auto_on = auto == "on"
+    if auto_on:
+        site_theme.save_theme(db, auto=True)
+    else:
+        site_theme.save_theme(
+            db,
+            skin=str(skin or "").strip() or None,
+            bg=str(bg_color or "").strip() or None,
+            accent=str(accent_color or "").strip() or None,
+            font=str(font or "").strip() or None,
+            emoji=str(emoji or "").strip() or None,
+            auto=False,
+        )
     site_theme.set_promo(db, promo_first_clean == "on")
     return RedirectResponse(url="/appearance?saved=1", status_code=status.HTTP_303_SEE_OTHER)
 
