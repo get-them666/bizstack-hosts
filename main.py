@@ -3868,7 +3868,7 @@ async def appearance_save(
     accent_color: str = Form(""),
     font: str = Form(""),
     emoji: str = Form(""),
-    auto: str = Form("on"),
+    auto: str = Form("off"),
     promo_first_clean: str = Form("off"),
     db=Depends(get_db),
 ):

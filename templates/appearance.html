@@ -153,6 +153,21 @@
         });
     });
     fSel.addEventListener("change", () => fontField.value = fSel.value);
+
+    // An unticked checkbox sends nothing — make sure "auto=off" actually posts.
+    const autoForm = document.getElementById("auto_season").closest("form");
+    if (autoForm) {
+        autoForm.addEventListener("submit", (ev) => {
+            const cb = document.getElementById("auto_season");
+            if (cb && !cb.checked) {
+                ev.preventDefault();
+                const fd = new FormData(autoForm);
+                fd.set("auto", "off");
+                fetch(autoForm.getAttribute("action"), { method: "POST", body: fd, credentials: "same-origin" })
+                    .then(() => location.assign(autoForm.getAttribute("action") + "?saved=1"));
+            }
+        });
+    }
 })();
 </script>
 {% endblock %}
