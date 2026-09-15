@@ -367,6 +367,14 @@ document.querySelectorAll('.reset-pin').forEach(btn => {
 function doAssign(form, wid) {
     form.querySelector('input[name="worker_id"]').value = wid;
     form.action = `/api/workers/${wid}/assign`;
+    const rate = workerRates[wid];
+    if (rate) {
+        const ri = form.querySelector('input[name="pay_rate"]');
+        const cell = form.closest('tr') ? form.closest('tr').querySelector('[data-pay-display]') : null;
+        const val = (rate / 100).toFixed(2);
+        if (ri) ri.value = val;
+        if (cell) cell.textContent = '$' + val;
+    }
     form.submit();
 }
 
