@@ -76,7 +76,10 @@
                         <tr class="border-b border-slate-50">
                             <td class="py-3 pr-4 font-semibold text-slate-800">{{ w['name'] }}</td>
                             <td class="py-3 pr-4 text-slate-500">{{ w['phone'] or '—' }}</td>
-                            <td class="py-3 pr-4">${{ '%.2f'|format(w['pay_rate_cents'] / 100) }}</td>
+                            <td class="py-3 pr-4">
+                                <span class="rate-display" data-id="{{ w['id'] }}">${{ '%.2f'|format(w['pay_rate_cents'] / 100) }}</span>
+                                <button class="edit-rate text-xs font-semibold text-indigo-600 hover:text-indigo-700 ml-1" data-id="{{ w['id'] }}" data-name="{{ w['name'] }}" data-rate="{{ w['pay_rate_cents'] / 100 }}">Edit</button>
+                            </td>
                             <td class="py-3 pr-4">{{ w['jobs_assigned'] or 0 }}</td>
                             <td class="py-3 pr-4">{{ w['jobs_done'] or 0 }}</td>
                             <td class="py-3 pr-4 font-semibold text-emerald-600">${{ '%.2f'|format((w['earned_cents'] or 0) / 100) }}</td>
@@ -361,6 +364,27 @@ document.querySelectorAll('.reset-pin').forEach(btn => {
         const res = await fetch(`/api/workers/${this.dataset.id}/reset-pin`, {method: 'POST'});
         const data = await res.json();
         alert(`New PIN for this cleaner: ${data.pin}`);
+    });
+});
+
+document.querySelectorAll('.edit-rate').forEach(btn => {
+    btn.addEventListener('click', async function() {
+        const entered = prompt(`Fair pay rate for ${this.dataset.name}?`, this.dataset.rate);
+        if (entered === null) return;
+        const val = parseFloat(entered);
+        if (isNaN(val) || val < 0) { alert('Enter a valid dollar amount.'); return; }
+        const res = await fetch(`/api/workers/${this.dataset.id}/rate`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: `pay_rate=${encodeURIComponent(val)}`
+        });
+        const data = await res.json();
+        if (data.status !== 'success') { alert('Failed to save rate.'); return; }
+        const row = this.closest('tr');
+        row.querySelector('.rate-display').textContent = '$' + (data.pay_rate_cents / 100).toFixed(2);
+        this.dataset.rate = (data.pay_rate_cents / 100).toFixed(2);
+        workerRates[this.dataset.id] = data.pay_rate_cents;
+        alert(`${this.dataset.name}'s rate is now $${(data.pay_rate_cents / 100).toFixed(2)}/job. Future assignments default to this.`);
     });
 });
 

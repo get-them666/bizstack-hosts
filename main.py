@@ -2193,6 +2193,15 @@ async def create_worker(
         db.commit()
     return JSONResponse(content={"status": "success", "worker_id": worker_id, "pin": pin})
 
+@app.post("/api/workers/{worker_id}/rate")
+async def set_worker_rate(worker_id: int, pay_rate: float = Form(...), db=Depends(get_db)):
+    if pay_rate < 0:
+        raise HTTPException(status_code=400, detail="Pay rate cannot be negative")
+    with db.cursor() as cur:
+        cur.execute("UPDATE workers SET pay_rate_cents = %s WHERE id = %s;", (int(round(pay_rate * 100)), worker_id))
+        db.commit()
+    return JSONResponse(content={"status": "success", "pay_rate_cents": int(round(pay_rate * 100))})
+
 @app.post("/api/workers/{worker_id}/reset-pin")
 async def reset_worker_pin(worker_id: int, db=Depends(get_db)):
     pin = f"{secrets.randbelow(10000):04d}"
