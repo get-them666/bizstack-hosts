@@ -1171,6 +1171,7 @@ async def sitemap_xml(request: Request):
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
         f"  <url><loc>{base}/</loc><lastmod>{today}</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>\n"
+        f"  <url><loc>{base}/book</loc><lastmod>{today}</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>\n"
         f"  <url><loc>{base}/host-login</loc><lastmod>{today}</lastmod><changefreq>monthly</changefreq><priority>0.3</priority></url>\n"
         f"  <url><loc>{base}/login</loc><lastmod>{today}</lastmod><changefreq>monthly</changefreq><priority>0.2</priority></url>\n"
         "</urlset>\n"
@@ -1468,6 +1469,93 @@ async def view_analysis(lead_id: int, request: Request, db=Depends(get_db)):
             "error": analysis.get("error") if not analysis.get("ok") else "",
         },
     )
+
+# --- PUBLIC BOOKING ---
+
+@app.get("/book", response_class=HTMLResponse)
+async def public_book_page(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="book.html",
+        context={
+            "today": date.today().isoformat(),
+            "error": "",
+            "payment_link": "",
+            "customer_name": "",
+            "phone": "",
+            "email": "",
+            "service_type": "Turnover Cleaning",
+            "date": "",
+            "time": "",
+            "job_address": "",
+        },
+    )
+
+@app.post("/book", response_class=HTMLResponse)
+async def public_book_submit(
+    request: Request,
+    customer_name: str = Form(...),
+    phone: str = Form(...),
+    email: str = Form(...),
+    service_type: str = Form(...),
+    date: str = Form(...),
+    time: str = Form(...),
+    job_address: str = Form(""),
+    db=Depends(get_db),
+):
+    ctx = {
+        "today": date.today().isoformat(),
+        "error": "",
+        "payment_link": "",
+        "customer_name": customer_name,
+        "phone": phone,
+        "email": email,
+        "service_type": service_type,
+        "date": date,
+        "time": time,
+        "job_address": job_address,
+        "service_name": service_type,
+    }
+    try:
+        parsed_start = datetime.fromisoformat(f"{date}T{time}")
+    except ValueError:
+        ctx["error"] = "Please pick a valid date and time."
+        return templates.TemplateResponse(request=request, name="book.html", context=ctx)
+
+    duration_min = {
+        "Turnover Cleaning": 150,
+        "Deep Cleaning": 240,
+        "Linen Restock": 60,
+        "Inspection": 60,
+    }.get(service_type, 60)
+    parsed_end = parsed_start + timedelta(minutes=duration_min)
+
+    with db.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM calendar_events WHERE start_time < %s AND end_time > %s;", (parsed_end, parsed_start))
+        if cur.fetchone()["count"] > 0:
+            ctx["error"] = "That time just got taken — pick another slot and try again."
+            return templates.TemplateResponse(request=request, name="book.html", context=ctx)
+        cur.execute(
+            "INSERT INTO calendar_events (customer_name, phone, start_time, end_time, service_type, job_address) "
+            "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;",
+            (customer_name.strip(), phone.strip(), parsed_start, parsed_end, service_type, job_address.strip() or None),
+        )
+        event_id = cur.fetchone()["id"]
+        amount_cents = stripe_svc.get_price(service_type)
+        cur.execute("UPDATE calendar_events SET amount_cents = %s WHERE id = %s;", (amount_cents, event_id))
+        db.commit()
+
+    ctx["booking_date"] = parsed_start.strftime("%B %d, %Y")
+    ctx["booking_time"] = parsed_start.strftime("%I:%M %p")
+    ctx["amount_usd"] = f"{amount_cents / 100:.2f}"
+    try:
+        ctx["payment_link"] = stripe_svc.create_checkout_session(
+            event_id, customer_name, email, service_type, parsed_start
+        )
+    except Exception:
+        ctx["payment_link"] = ""
+        ctx["payment_note"] = "Payment link could not be generated right now — we'll text you a secure checkout link shortly."
+    return templates.TemplateResponse(request=request, name="book.html", context=ctx)
 
 # --- HOST LEAD RADAR ---
 
