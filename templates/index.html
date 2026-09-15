@@ -117,6 +117,10 @@
             max-height: 500px;
         }
     </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    {{ site_theme_state().css | safe }}
 </head>
 <body class="bg-slate-50 text-slate-900 antialiased selection:bg-indigo-500 selection:text-white">
 
@@ -186,6 +190,11 @@
                         <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
                         Zero Upfront Loans Needed for Cleaning Operations
                     </div>
+                    {% if site_theme_state().promo_on %}
+                    <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold mb-2">
+                        🎁 First clean is on us — new customers check out at $0 (code {{ promo_code() }})
+                    </div>
+                    {% endif %}
                     <h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-slate-900 leading-none">
                         Maximize Your Vacation Rental Revenue. <br class="hidden sm:inline" />
                         <span class="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-violet-600">Zero Financial Risk.</span>
@@ -623,5 +632,6 @@
             });
         });
     </script>
+<div aria-hidden="true" style="position:fixed;right:18px;bottom:14px;font-size:2rem;opacity:.35;pointer-events:none;z-index:40;transform:rotate(-8deg);">{{ site_theme_state().emoji }}</div>
 </body>
 </html>

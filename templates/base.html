@@ -69,6 +69,7 @@
         }
         .nav-dropdown-item:hover { color: #4f46e5; background-color: #f1f5f9; }
     </style>
+    {{ site_theme_state().css | safe }}
 </head>
 <body class="bg-slate-50 text-slate-900 antialiased selection:bg-indigo-500 selection:text-white">
     {% set actor_role = (current_actor(request).role if current_actor(request) else none) %}
@@ -127,6 +128,7 @@
                             <a href="/copilot" class="nav-dropdown-item">Copilot</a>
                             <a href="/training" class="nav-dropdown-item">Training</a>
                             <a href="/access" class="nav-dropdown-item">Access</a>
+                            <a href="/appearance" class="nav-dropdown-item">Appearance &amp; Promos</a>
                             <a href="/settings" class="nav-dropdown-item">Settings</a>
                         </div>
                     </div>
@@ -228,6 +230,7 @@
             <a href="/labor" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Labor</a>
             <a href="/devices" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Devices</a>
             <a href="/access" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Access</a>
+            <a href="/appearance" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Appearance &amp; Promos</a>
             <a href="/settings" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Settings</a>
             <div class="pt-4 border-t border-slate-100 flex flex-col gap-3">
                 <a href="/api/auth/logout" class="text-center px-4 py-3 text-base font-semibold text-white bg-indigo-600 rounded-xl shadow-sm">Log Out</a>
@@ -360,5 +363,8 @@
         });
     </script>
     {% block scripts %}{% endblock %}
+    {% if site_theme_state().emoji %}
+    <div aria-hidden="true" style="position:fixed;right:18px;bottom:14px;font-size:2rem;opacity:.35;pointer-events:none;z-index:40;transform:rotate(-8deg);">{{ site_theme_state().emoji }}</div>
+    {% endif %}
 </body>
 </html>

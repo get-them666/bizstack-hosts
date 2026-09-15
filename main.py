@@ -19,10 +19,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+import ai_agent
 from ai_agent import BusinessAIAgent
 from analysis_service import RentalAnalysisService
 from reddit_radar import outreach_draft, scan_reddit
 from stripe_service import StripeService
+import stripe
+import site_theme
 from signalwire_service import SignalWireService
 import channel_sync
 import legal_forms
@@ -1126,6 +1129,8 @@ def _template_features(request: Request):
 
 templates.env.globals["current_actor"] = _template_actor
 templates.env.globals["current_features"] = _template_features
+templates.env.globals["site_theme_state"] = lambda: site_theme.state()
+templates.env.globals["promo_code"] = lambda: "FIRSTCLEAN"
 
 # --- PUBLIC LANDING & AUTH ---
 
@@ -1550,7 +1555,8 @@ async def public_book_submit(
     ctx["amount_usd"] = f"{amount_cents / 100:.2f}"
     try:
         ctx["payment_link"] = stripe_svc.create_checkout_session(
-            event_id, customer_name, email, service_type, parsed_start
+            event_id, customer_name, email, service_type, parsed_start,
+            discount_coupon=_first_clean_coupon(db, event_id, customer_name.strip(), phone.strip()),
         )
     except Exception:
         ctx["payment_link"] = ""
@@ -3763,6 +3769,49 @@ async def settings_page(request: Request, db=Depends(get_db)):
     )
 
 
+@app.get("/appearance", response_class=HTMLResponse)
+async def appearance_page(request: Request):
+    is_authed, user_email = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    state = site_theme.state(force=True)
+    return templates.TemplateResponse(
+        request=request,
+        name="appearance.html",
+        context={
+            "user": {"email": user_email},
+            "state": state,
+            "presets": site_theme.PRESETS,
+            "fonts": [("modern", "Modern (Inter)"), ("serif", "Serif (Georgia)"), ("rounded", "Rounded"), ("mono", "Monospace")],
+            "promo_code": "FIRSTCLEAN",
+        },
+    )
+
+
+@app.post("/appearance", response_class=HTMLResponse)
+async def appearance_save(
+    request: Request,
+    skin: str = Form(""),
+    bg_color: str = Form(""),
+    accent_color: str = Form(""),
+    font: str = Form(""),
+    emoji: str = Form(""),
+    promo_first_clean: str = Form("off"),
+    db=Depends(get_db),
+):
+    is_authed, _ = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    skin = str(skin or "").strip() or None
+    bg = str(bg_color or "").strip() or None
+    accent = str(accent_color or "").strip() or None
+    fnt = str(font or "").strip() or None
+    em = str(emoji or "").strip() or None
+    site_theme.save_theme(db, skin=skin, bg=bg, accent=accent, font=fnt, emoji=em)
+    site_theme.set_promo(db, promo_first_clean == "on")
+    return RedirectResponse(url="/appearance?saved=1", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @app.get("/labor", response_class=HTMLResponse)
 async def labor_page(request: Request):
     is_authed, user_email = require_auth(request)
@@ -4372,6 +4421,36 @@ async def create_manual_booking(
 
     return RedirectResponse(url="/dashboard?booked=1", status_code=303)
 
+def _first_clean_coupon(db, event_id, customer_name, phone):
+    """When the FIRSTCLEAN promo is armed and this is the customer's first-ever
+    booking, return a 100%-off Stripe coupon id. Returns None otherwise."""
+    if not site_theme.state().get("promo_on"):
+        return None
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM calendar_events WHERE payment_status = 'paid' "
+            "AND id <> %s AND (customer_name = %s OR phone = %s);",
+            (event_id, customer_name, phone),
+        )
+        if cur.fetchone()["n"] > 0:
+            return None
+        cur.execute("SELECT value FROM app_settings WHERE key = 'stripe_coupon_first_clean';")
+        row = cur.fetchone()
+    if row:
+        return row["value"]
+    try:
+        coupon = stripe.Coupon.create(name="First Clean Free", percent_off=100, duration="once")
+    except Exception:
+        return None
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO app_settings (key, value, updated_at) VALUES ('stripe_coupon_first_clean', %s, NOW()) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;",
+            (coupon.id,),
+        )
+        db.commit()
+    return coupon.id
+
 @app.get("/api/payments/create-link/{event_id}")
 async def create_payment_link(event_id: int, db=Depends(get_db)):
     """Create (or re-create) a Stripe Checkout link for an unpaid booking."""
@@ -4397,6 +4476,7 @@ async def create_payment_link(event_id: int, db=Depends(get_db)):
             customer_email=customer_email,
             service_type=event["service_type"],
             start_time=event["start_time"],
+            discount_coupon=_first_clean_coupon(db, event["id"], event["customer_name"], event["phone"]),
         )
         return JSONResponse(content={"url": checkout_url})
     except Exception as e:

@@ -49,6 +49,7 @@ class StripeService:
         customer_email: str,
         service_type: str,
         start_time: datetime,
+        discount_coupon: str = None,
     ) -> str:
         """Create a Stripe Checkout Session for a single booking. Returns the checkout URL."""
         if not self.is_configured():
@@ -83,6 +84,7 @@ class StripeService:
                 "customer_name": customer_name,
                 "scheduled_start": start_time.isoformat(),
             },
+            discounts=[{"coupon": discount_coupon}] if discount_coupon else None,
             customer_email=customer_email or None,
             success_url=self._base_url() + "/payments/success?session_id={CHECKOUT_SESSION_ID}",
             cancel_url=self._base_url() + "/payments/cancel",
