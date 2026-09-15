@@ -6,10 +6,10 @@ from datetime import datetime
 
 
 DEFAULT_PRICES = {
-    "Turnover Cleaning": 12000,
-    "Deep Cleaning": 20000,
-    "Linen Restock": 5000,
-    "Inspection": 7500,
+    "Turnover Cleaning": 16000,
+    "Deep Cleaning": 27500,
+    "Linen Restock": 7000,
+    "Inspection": 9500,
 }
 
 ENV_PRICE_MAP = {
