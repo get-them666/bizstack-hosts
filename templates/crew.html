@@ -141,18 +141,18 @@
                             <td class="py-3 pr-4 font-semibold text-slate-800">{{ ev['customer_name'] }}</td>
                             <td class="py-3 pr-4 text-slate-500">{{ ev['service_type'] }}</td>
                             <td class="py-3 pr-4">
-                                <form method="post" action="/api/workers/{{ workers[0]['id'] if workers else 0 }}/assign" class="assign-form" data-event="{{ ev['id'] }}">
+                                <form method="post" action="/api/workers/{{ workers[0]['id'] if workers else 0 }}/assign" class="assign-form" data-event="{{ ev['id'] }}" data-amount="{{ ev['amount_cents'] or 0 }}">
                                     <input type="hidden" name="event_id" value="{{ ev['id'] }}">
                                     <input type="hidden" name="worker_id" value="">
                                     <input name="job_address" type="text" placeholder="Job site address for geofence"
                                         class="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
                                     <div class="flex gap-2 mt-2">
-                                        <input name="pay_rate" type="number" step="0.01" min="0" value="{{ default_pay_cents / 100 }}" data-pay-rate class="w-24 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                        <input name="pay_rate" type="number" step="0.01" min="0" value="{{ ev['default_pay_cents'] / 100 }}" data-pay-rate class="w-24 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
                                         <button type="submit" class="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg" {% if not workers %}disabled{% endif %}>Assign</button>
                                     </div>
                                 </form>
                             </td>
-                            <td class="py-3 pr-4 text-slate-500" data-pay-display>${{ '%.2f'|format((ev['worker_pay_cents'] or default_pay_cents) / 100) }}</td>
+                            <td class="py-3 pr-4 text-slate-500" data-pay-display>${{ '%.2f'|format(ev['default_pay_cents'] / 100) }}</td>
                             <td class="py-3">
                                 <button class="assign-btn px-4 py-2 text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg" data-event="{{ ev['id'] }}" {% if not workers %}disabled{% endif %}>⚡ Auto-Assign</button>
                             </td>
@@ -384,19 +384,22 @@ document.querySelectorAll('.edit-rate').forEach(btn => {
         row.querySelector('.rate-display').textContent = '$' + (data.pay_rate_cents / 100).toFixed(2);
         this.dataset.rate = (data.pay_rate_cents / 100).toFixed(2);
         workerRates[this.dataset.id] = data.pay_rate_cents;
-        alert(`${this.dataset.name}'s rate is now $${(data.pay_rate_cents / 100).toFixed(2)}/job. Future assignments default to this.`);
+        alert(`${this.dataset.name}'s rate is now $${(data.pay_rate_cents / 100).toFixed(2)}/job. Assignments auto-default to 50% of each job's fee; this rate is the fallback for fee-less jobs.`);
     });
 });
 
 function doAssign(form, wid) {
     form.querySelector('input[name="worker_id"]').value = wid;
     form.action = `/api/workers/${wid}/assign`;
-    const rate = workerRates[wid];
-    if (rate) {
-        const ri = form.querySelector('input[name="pay_rate"]');
-        const cell = form.closest('tr') ? form.closest('tr').querySelector('[data-pay-display]') : null;
-        const val = (rate / 100).toFixed(2);
-        if (ri) ri.value = val;
+    const amt = parseInt(form.dataset.amount || '0', 10);
+    const ri = form.querySelector('input[name="pay_rate"]');
+    const cell = form.closest('tr') ? form.closest('tr').querySelector('[data-pay-display]') : null;
+    let payCents;
+    if (amt > 0) payCents = Math.round(amt / 2);
+    else if (workerRates[wid]) payCents = workerRates[wid];
+    if (payCents && ri) {
+        const val = (payCents / 100).toFixed(2);
+        ri.value = val;
         if (cell) cell.textContent = '$' + val;
     }
     form.submit();

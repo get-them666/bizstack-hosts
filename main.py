@@ -2100,7 +2100,12 @@ async def crew_page(request: Request, db=Depends(get_db)):
             WHERE worker_id IS NULL AND start_time >= NOW() - INTERVAL '60 days'
             ORDER BY start_time ASC;
         """)
-        unassigned = cur.fetchall()
+        unassigned = []
+        for ev in cur.fetchall():
+            unassigned.append({
+                **ev,
+                "default_pay_cents": int(round(ev["amount_cents"] / 2)) if ev["amount_cents"] else 5000,
+            })
         cur.execute("""
             SELECT ce.id, ce.customer_name, ce.start_time, ce.service_type, ce.worker_status, ce.worker_pay_cents,
                    w.id AS worker_id, w.name AS worker_name
