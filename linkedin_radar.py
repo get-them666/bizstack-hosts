@@ -15,6 +15,17 @@ SEARCH_QUERIES = [
 ]
 
 
+def _run_field(run, camel_key):
+    """Read a field off an Apify run, which may be a plain dict (client < 3)
+    or a Run model object (client >= 3) exposing snake_case attributes."""
+    if run is None:
+        return None
+    if isinstance(run, dict):
+        return run.get(camel_key)
+    snake = re.sub(r"(?<!^)(?=[A-Z])", "_", camel_key).lower()
+    return getattr(run, snake, None) or getattr(run, camel_key, None)
+
+
 def scan_linkedin(max_posts=25):
     """Search LinkedIn posts via Apify and return matching leads."""
     token = os.getenv("APIFY_TOKEN") or os.getenv("APIFY_TOKEN_ID")
@@ -41,7 +52,7 @@ def scan_linkedin(max_posts=25):
             errors.append(f"query '{query}': {exc}"[:200])
             continue
 
-        dataset_id = run["defaultDatasetId"] if run else None
+        dataset_id = _run_field(run, "defaultDatasetId") if run else None
         if not dataset_id:
             errors.append(f"query '{query}': no dataset returned")
             continue
