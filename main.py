@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, date, timezone
 from zoneinfo import ZoneInfo
 from contextlib import asynccontextmanager
 from pathlib import Path
+import threading
 import psycopg
 from psycopg.rows import dict_row
 from fastapi import FastAPI, Request, Form, Response, Depends, HTTPException, status, File, UploadFile, WebSocket, WebSocketDisconnect
@@ -1567,6 +1568,75 @@ async def public_book_submit(
 
 # --- HOST LEAD RADAR ---
 
+_radar_jobs: dict = {}
+_radar_jobs_lock = threading.Lock()
+
+
+def _radar_status(source: str) -> dict:
+    with _radar_jobs_lock:
+        return dict(_radar_jobs.get(source, {}))
+
+
+def _run_radar_scan(source: str, scan_fn):
+    """Run a radar scan in a background thread. Returns True if a scan was started,
+    False if one is already running for this source."""
+    with _radar_jobs_lock:
+        if _radar_jobs.get(source, {}).get("running"):
+            return False
+        _radar_jobs[source] = {"running": True, "started_at": datetime.utcnow(), "created": 0, "seen": 0, "errors": ""}
+    threading.Thread(target=_radar_worker, args=(source, scan_fn), daemon=True).start()
+    return True
+
+
+def _radar_worker(source: str, scan_fn):
+    """Scan + ingest in a background thread so user-facing requests stay fast
+    (Cloudflare drops requests that run past ~100s)."""
+    created = 0
+    seen = 0
+    errors = []
+    try:
+        result = scan_fn()
+        with psycopg.connect(db_url, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                for m in result.get("matches", []):
+                    cur.execute("SELECT 1 FROM lead_posts WHERE post_id = %s;", (m["post_id"],))
+                    if cur.fetchone():
+                        seen += 1
+                        continue
+                    meta = json.dumps({"title": m["title"], "subreddit": m["subreddit"]})
+                    cur.execute(
+                        "INSERT INTO leads (name, email, listing_url, status, source, funding_needed, funding_use, referral_code, campaign, analysis_json) "
+                        "VALUES (%s, %s, %s, 'new', %s, %s, %s, %s, 'host-lead-radar', %s) RETURNING id;",
+                        (
+                            f"{source.title()} · {m['author']}",
+                            f"{source}-{m['post_id']}@lead.local",
+                            m["permalink"],
+                            source,
+                            m["funding"],
+                            (m.get("funding_use") or "")[:500],
+                            m["post_id"],
+                            meta,
+                        ),
+                    )
+                    lead_id = cur.fetchone()["id"]
+                    cur.execute(
+                        "INSERT INTO lead_posts (post_id, subreddit, created_utc, lead_id) VALUES (%s, %s, %s, %s) "
+                        "ON CONFLICT (post_id) DO NOTHING;",
+                        (m["post_id"], m["subreddit"], m["created_utc"], lead_id),
+                    )
+                    created += 1
+                conn.commit()
+        errors = list(result.get("errors", []))
+    except Exception as exc:
+        errors.append(f"scan failed: {exc}"[:280])
+    with _radar_jobs_lock:
+        _radar_jobs[source] = {
+            "running": False,
+            "created": created,
+            "seen": seen,
+            "errors": "; ".join(errors)[:300],
+        }
+
 @app.get("/radar", response_class=HTMLResponse)
 async def host_lead_radar(request: Request, db=Depends(get_db)):
     is_authed, user_email = require_auth(request)
@@ -1616,67 +1686,32 @@ async def host_lead_radar(request: Request, db=Depends(get_db)):
             "scanned": request.query_params.get("scanned"),
             "seen": request.query_params.get("seen"),
             "errors": request.query_params.get("errors", ""),
+            "scan_started": request.query_params.get("scan_started"),
+            "scan_running": request.query_params.get("scan_running"),
+            "radar_status": {
+                "reddit": _radar_status("reddit"),
+                "linkedin": _radar_status("linkedin"),
+            },
         },
     )
 
 @app.post("/radar/scan")
-async def radar_run_scan(request: Request, db=Depends(get_db)):
-    return await _radar_ingest(request, db, source="reddit", scan_fn=scan_reddit)
+async def radar_run_scan(request: Request):
+    return await _radar_start(request, source="reddit", scan_fn=scan_reddit)
 
 
 @app.post("/radar/scan/linkedin")
-async def radar_run_linkedin_scan(request: Request, db=Depends(get_db)):
-    return await _radar_ingest(request, db, source="linkedin", scan_fn=scan_linkedin)
+async def radar_run_linkedin_scan(request: Request):
+    return await _radar_start(request, source="linkedin", scan_fn=scan_linkedin)
 
 
-async def _radar_ingest(request, db, source, scan_fn):
+async def _radar_start(request, source, scan_fn):
     is_authed, user_email = require_auth(request)
     if not is_authed:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    try:
-        result = scan_fn()
-    except Exception as exc:
-        err = f"scan failed: {exc}"[:300]
-        return RedirectResponse(
-            url=f"/acquisition?scanned=0&seen=0&errors={urllib.parse.quote(err)}",
-            status_code=status.HTTP_303_SEE_OTHER,
-        )
-    created = 0
-    seen = 0
-    with db.cursor() as cur:
-        for m in result["matches"]:
-            cur.execute("SELECT 1 FROM lead_posts WHERE post_id = %s;", (m["post_id"],))
-            if cur.fetchone():
-                seen += 1
-                continue
-            meta = json.dumps({"title": m["title"], "subreddit": m["subreddit"]})
-            cur.execute(
-                "INSERT INTO leads (name, email, listing_url, status, source, funding_needed, funding_use, referral_code, campaign, analysis_json) "
-                "VALUES (%s, %s, %s, 'new', %s, %s, %s, %s, 'host-lead-radar', %s) RETURNING id;",
-                (
-                    f"{source.title()} · {m['author']}",
-                    f"{source}-{m['post_id']}@lead.local",
-                    m["permalink"],
-                    source,
-                    m["funding"],
-                    (m.get("funding_use") or "")[:500],
-                    m["post_id"],
-                    meta,
-                ),
-            )
-            lead_id = cur.fetchone()["id"]
-            cur.execute(
-                "INSERT INTO lead_posts (post_id, subreddit, created_utc, lead_id) VALUES (%s, %s, %s, %s) "
-                "ON CONFLICT (post_id) DO NOTHING;",
-                (m["post_id"], m["subreddit"], m["created_utc"], lead_id),
-            )
-            created += 1
-        db.commit()
-    err = "; ".join(result["errors"])[:300]
-    return RedirectResponse(
-        url=f"/acquisition?scanned={created}&seen={seen}&errors={urllib.parse.quote(err)}",
-        status_code=status.HTTP_303_SEE_OTHER,
-    )
+    if not _run_radar_scan(source, scan_fn):
+        return RedirectResponse(url=f"/radar?scan_running={source}", status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(url=f"/radar?scan_started={source}", status_code=status.HTTP_303_SEE_OTHER)
 
 # --- DASHBOARD ---
 
@@ -5327,6 +5362,12 @@ async def acquisition_page(request: Request, db=Depends(get_db)):
             "scanned": request.query_params.get("scanned"),
             "seen": request.query_params.get("seen"),
             "errors": request.query_params.get("errors", ""),
+            "scan_started": request.query_params.get("scan_started"),
+            "scan_running": request.query_params.get("scan_running"),
+            "radar_status": {
+                "reddit": _radar_status("reddit"),
+                "linkedin": _radar_status("linkedin"),
+            },
             "partners": partners,
             "referral_activity": referral_activity,
             "codes": codes,

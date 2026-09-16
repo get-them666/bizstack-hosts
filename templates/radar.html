@@ -15,6 +15,28 @@
         </form>
     </div>
 
+    {% if scan_started or scan_running %}
+    <div class="mt-4 rounded-xl border p-4 text-sm bg-sky-50 border-sky-200 text-sky-800">
+        <b>{{ 'Scan started' if scan_started else 'Scan in progress' }}</b> — it runs in the background, so it can't hit Cloudflare's timeout. This page refreshes every 15s until it finishes.
+    </div>
+    {% endif %}
+
+    {% if radar_status.reddit.running %}
+    <div class="mt-4 rounded-xl border p-4 text-sm bg-sky-50 border-sky-200 text-sky-800">🔄 Reddit scan running in the background…</div>
+    {% elif radar_status.reddit.get('created') is not none %}
+    <div class="mt-4 rounded-xl border p-4 text-sm {% if radar_status.reddit.errors %}bg-amber-50 border-amber-200 text-amber-800{% else %}bg-emerald-50 border-emerald-200 text-emerald-800{% endif %}">
+        Reddit scan done: <b>{{ radar_status.reddit.created }}</b> new lead(s){% if radar_status.reddit.seen %} · <b>{{ radar_status.reddit.seen }}</b> already captured{% endif %}{% if radar_status.reddit.errors %} · {{ radar_status.reddit.errors }}{% endif %}
+    </div>
+    {% endif %}
+
+    {% if radar_status.linkedin.running %}
+    <div class="mt-4 rounded-xl border p-4 text-sm bg-sky-50 border-sky-200 text-sky-800">🔄 LinkedIn scan running in the background…</div>
+    {% elif radar_status.linkedin.get('created') is not none %}
+    <div class="mt-4 rounded-xl border p-4 text-sm {% if radar_status.linkedin.errors %}bg-amber-50 border-amber-200 text-amber-800{% else %}bg-emerald-50 border-emerald-200 text-emerald-800{% endif %}">
+        LinkedIn scan done: <b>{{ radar_status.linkedin.created }}</b> new lead(s){% if radar_status.linkedin.seen %} · <b>{{ radar_status.linkedin.seen }}</b> already captured{% endif %}{% if radar_status.linkedin.errors %} · {{ radar_status.linkedin.errors }}{% endif %}
+    </div>
+    {% endif %}
+
     {% if scanned or seen or errors %}
     <div class="mt-4 rounded-xl border p-4 text-sm {% if errors %}bg-amber-50 border-amber-200 text-amber-800{% else %}bg-emerald-50 border-emerald-200 text-emerald-800{% endif %}">
         {% if scanned %}Found <b>{{ scanned }}</b> new lead(s){% endif %}{% if seen %} · <b>{{ seen }}</b> already captured{% endif %}{% if errors %} · scanner notes: {{ errors }}{% endif %}
@@ -71,6 +93,9 @@
 </div>
 
 <script>
+{% if radar_status.reddit.running or radar_status.linkedin.running or scan_running %}
+setTimeout(() => location.reload(), 15000);
+{% endif %}
 document.querySelectorAll('.copy-draft').forEach(btn => {
     btn.addEventListener('click', async function() {
         try {
