@@ -167,7 +167,7 @@ def outreach_draft(match):
     return (
         f"Hey u/{match.get('author', '')} — saw your post in r/{match.get('subreddit', '')} about "
         f"'{match.get('title', '')[:120]}'. I run an STR operations company in the Hampton Roads/OBX area "
-        f"(BizStack Hosts) that handles turnover cleaning, guest communication, and co-hosting for owners "
+        f"(Broom Service) that handles turnover cleaning, guest communication, and co-hosting for owners "
         f"converting homes to short-term rentals — guests fund the cleaning so there's zero out-of-pocket cost."
         f"{funding_note} Happy to share what similar conversions have earned and answer any questions. "
         f"No pressure at all."

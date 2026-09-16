@@ -3,7 +3,7 @@
 Two decks are built here with python-pptx:
 - ``worker`` deck: how to use the phone app and website, expected behavior in hosts'
   homes, ethics, sexual harassment policy, and other new-hire orientation items.
-- ``host`` deck: how BizStack Hosts works, services & pricing, the host portal, and
+- ``host`` deck: how Broom Service works, services & pricing, the host portal, and
   funding/capital partners for leads.
 
 Each deck is returned as in-memory ``.pptx`` bytes for storage in the document
@@ -163,7 +163,7 @@ def _add_bullets_slide(prs, doc_title, bullets):
 def _slides_content(kind: str) -> list[tuple[str, list[str]]]:
     if kind == "worker":
         return [
-            ("Welcome to BizStack Hosts!", [
+            ("Welcome to Broom Service!", [
                 "Thank you for joining our cleaning & co-hosting crew",
                 "Today: your app, your job, your pay, and how we act",
                 "Short quiz at the end — easy if you pay attention",
@@ -235,7 +235,7 @@ def _slides_content(kind: str) -> list[tuple[str, list[str]]]:
             ]),
         ]
     return [
-        ("Welcome to BizStack Hosts", [
+        ("Welcome to Broom Service", [
             "Short-term rental cleaning + co-hosting, powered by automation",
             "You're the kind of host we love — a property with potential",
             "This deck shows services, pricing, your portal, and growth options",
@@ -274,7 +274,7 @@ def _slides_content(kind: str) -> list[tuple[str, list[str]]]:
         ]),
         ("Growing With Financing", [
             "Need capital to furnish, stage, or convert your property?",
-            "BizStack connects eligible leads with bank/financing partners",
+            "Broom Service connects eligible leads with bank/financing partners",
             "Funding is handled directly with the partner bank — we just connect you",
         ]),
         ("What Makes a 5-Star Host", [
@@ -294,8 +294,8 @@ def deck_slides(kind: str) -> list[dict]:
     """Deck slides as {title, bullets, voice} — voice is the bot's narration text."""
     parsed = "host" if kind != "worker" else "worker"
     phrases = {
-        "Welcome to BizStack Hosts!": "Welcome to BizStack Hosts.",
-        "Welcome to BizStack Hosts": "Welcome to BizStack Hosts.",
+        "Welcome to Broom Service!": "Welcome to Broom Service.",
+        "Welcome to Broom Service": "Welcome to Broom Service.",
         "About Our Company": "About our company.",
     }
     out = []
@@ -320,7 +320,7 @@ def build_deck(kind: str) -> bytes:
         subtitle = "Your app, your job, your pay, and how we do it — plus your quick quiz."
     else:
         doc_title = "Host & Lead Onboarding"
-        subtitle = "Welcome to BizStack Hosts — how we help your property earn."
+        subtitle = "Welcome to Broom Service — how we help your property earn."
 
     _add_title_slide(prs, doc_title, subtitle)
     for title, bullets in _slides_content(kind):

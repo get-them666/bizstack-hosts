@@ -1,6 +1,6 @@
-# BizStack Hosts — Employee Orientation & Time Clock Guide
+# Broom Service — Employee Orientation & Time Clock Guide
 
-Welcome to the team! This guide walks you through how BizStack Hosts works, how to
+Welcome to the team! This guide walks you through how Broom Service works, how to
 use your cleaner portal, and — most importantly — how the time clock works, so
 everyone gets paid correctly and on time.
 
@@ -8,12 +8,12 @@ everyone gets paid correctly and on time.
 
 ## 1. Our Business in 30 Seconds
 
-BizStack Hosts runs **short-term rental (STR) cleaning and co-hosting**. In plain English:
+Broom Service runs **short-term rental (STR) cleaning and co-hosting**. In plain English:
 
 - Homeowners rent out their properties on Airbnb / Vrbo (these are "short-term rentals").
 - Between guests, the property must be **turned over** — cleaned and reset to 5-star standard.
 - That turnover cleaning is the job you do. Co-hosting is the whole package (guest
-  messaging, check-in, cleaning, maintenance) run through BizStack Hosts.
+  messaging, check-in, cleaning, maintenance) run through Broom Service.
 
 Your job = show up on time, do a great turnover, and clock in and out honestly.
 

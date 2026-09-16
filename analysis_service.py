@@ -166,7 +166,7 @@ class RentalAnalysisService:
 
         # Existing Airbnb, self-managed: national-average STR occupancy.
         occupancy_base = 0.55
-        # With BizStack co-hosting: dynamic pricing + automated ops typically add
+        # With Broom Service co-hosting: dynamic pricing + automated ops typically add
         # ~15-20% occupancy (the site's stated uplift). Capped at a realistic ceiling.
         occupancy_boosted = min(occupancy_base * 1.18, 0.85)
 
@@ -176,9 +176,9 @@ class RentalAnalysisService:
         # Operating costs ~28% of revenue when self-managing (cleaning, supplies,
         # utilities, maintenance, insurance).
         opex_pct = 0.28
-        non_cleaning_opex_pct = 0.18  # with BizStack, cleaning is guest-funded
+        non_cleaning_opex_pct = 0.18  # with Broom Service, cleaning is guest-funded
 
-        cohost_pct = 0.12  # BizStack Digital Co-Hosting fee (12% of gross)
+        cohost_pct = 0.12  # Broom Service Digital Co-Hosting fee (12% of gross)
 
         net_self = gross_base * (1 - opex_pct)
         net_bizstack = gross_boosted * (1 - non_cleaning_opex_pct - cohost_pct)

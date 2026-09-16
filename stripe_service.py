@@ -68,7 +68,7 @@ class StripeService:
                         "currency": "usd",
                         "unit_amount": amount_cents,
                         "product_data": {
-                            "name": f"BizStack Hosts – {service_type}",
+                            "name": f"Broom Service – {service_type}",
                             "description": (
                                 f"Booking #{event_id} · {customer_name} · "
                                 f"{start_time.strftime('%B %d, %Y at %I:%M %p')}"

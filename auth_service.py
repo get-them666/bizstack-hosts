@@ -1,4 +1,4 @@
-"""Authentication, OTP, roles and feature permissions for BizStack Hosts.
+"""Authentication, OTP, roles and feature permissions for Broom Service.
 
 Sessions are stateless HMAC-signed tokens (no dependency on itsdangerous).
 Every role — admin, worker, host — logs in with a password/PIN and then must

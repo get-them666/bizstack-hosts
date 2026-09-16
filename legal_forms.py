@@ -1,4 +1,4 @@
-"""Prefab document definitions for the BizStack documents & forms library.
+"""Prefab document definitions for the Broom Service documents & forms library.
 
 Each definition is data-driven: a title, category, fillable fields grouped
 into sections, optional agreement clauses, and signature blocks. The same
@@ -96,7 +96,7 @@ REALTY_FORMS = [
                 "heading": "1. Engagement",
                 "fields": [
                     {"key": "owner", "label": "Owner", "type": "text", "required": True},
-                    {"key": "manager", "label": "Manager (BizStack Hosts)", "type": "text", "required": True},
+                    {"key": "manager", "label": "Manager (Broom Service)", "type": "text", "required": True},
                     {"key": "property", "label": "Property address", "type": "text", "required": True},
                     {"key": "begin", "label": "Effective date", "type": "date", "required": True},
                 ],
@@ -209,13 +209,13 @@ LEGAL_FORMS = [
         "key": "contractor",
         "title": "Independent Contractor Agreement (Cleaning)",
         "category": "Legal",
-        "blurb": "Agreement between BizStack Hosts and a cleaning contractor.",
+        "blurb": "Agreement between Broom Service and a cleaning contractor.",
         "sections": [
             {
                 "heading": "1. Engagement",
                 "fields": [
                     {"key": "contractor", "label": "Contractor name", "type": "text", "required": True},
-                    {"key": "company", "label": "Company (BizStack Hosts)", "type": "text", "required": True},
+                    {"key": "company", "label": "Company (Broom Service)", "type": "text", "required": True},
                     {"key": "date", "label": "Agreement date", "type": "date", "required": True},
                     {"key": "services", "label": "Services (turnover cleaning, staging, linen)", "type": "textarea", "required": True},
                     {"key": "rate", "label": "Pay rate / job", "type": "text", "required": True},

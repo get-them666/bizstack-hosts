@@ -1,6 +1,6 @@
-# BizStack Hosts
+# Broom Service
 
-FastAPI + PostgreSQL web app for BizStack Hosts — short-term rental turnover cleaning and co-hosting management.
+FastAPI + PostgreSQL web app for Broom Service — short-term rental turnover cleaning and co-hosting management.
 
 ## Features
 
@@ -21,7 +21,7 @@ FastAPI + PostgreSQL web app for BizStack Hosts — short-term rental turnover c
   - `/payments/success` + `/payments/cancel` confirmation pages
 - **OpenAI AI agent** (`ai_agent.py`) — processes inbound SMS/voice text, falls back gracefully if no API key
 - **AI assistant runs the business** (`bot_knowledge.md`) — the bot knows the company, services, pricing, site navigation, and hospitality/STR industry. Via OpenAI tool calling it can check availability, **create bookings**, generate **Stripe payment links**, look up bookings by phone, register customers, and report business stats. Reply style is tuned to sound like a real human.
-- **Free Rental Revenue Analysis** (`analysis_service.py`) — submitting a property address on the landing page generates a live report at `/analysis/<id>` with a map, home value, income, rents, nightly rate, and a realistic Airbnb earnings comparison (self-managed vs. BizStack co-hosting). Powered by realestateapi.com (set `REALESTATE_API_KEY`; free key at https://www.realestateapi.com).
+- **Free Rental Revenue Analysis** (`analysis_service.py`) — submitting a property address on the landing page generates a live report at `/analysis/<id>` with a map, home value, income, rents, nightly rate, and a realistic Airbnb earnings comparison (self-managed vs. Broom Service co-hosting). Powered by realestateapi.com (set `REALESTATE_API_KEY`; free key at https://www.realestateapi.com).
 
 ## Railway variables
 

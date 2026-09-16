@@ -1,4 +1,4 @@
-# LinkedIn Ads — Setup Runbook (BizStack Hosts)
+# LinkedIn Ads — Setup Runbook (Broom Service)
 
 Status: ✅ Business Page exists · ⏳ Campaign Manager + billing · ⏳ Insight Tag · ⏳ Campaigns live
 
@@ -7,7 +7,7 @@ Status: ✅ Business Page exists · ⏳ Campaign Manager + billing · ⏳ Insigh
 ### 1. Create Campaign Manager account
 - Go to https://www.linkedin.com/campaignmanager/ and create an account
 - Select your Business Page when asked ("Business page / organization")
-- Name it "BizStack Hosts"
+- Name it "Broom Service"
 
 ### 2. Add your payment method (billing)
 - Campaign Manager → **Billing** (left sidebar) → **Payment Methods** → Add payment card

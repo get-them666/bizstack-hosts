@@ -103,7 +103,7 @@ def outreach_draft(match):
     )
     return (
         f"Hey {match.get('author', '')} — saw your LinkedIn post about "
-        f"'{match.get('title', '')[:120]}'. I run BizStack Hosts, an STR operations company in the "
+        f"'{match.get('title', '')[:120]}'. I run Broom Service, an STR operations company in the "
         f"Hampton Roads/OBX area — we handle turnover cleaning, guest communication, and co-hosting for "
         f"owners converting homes to short-term rentals. Guests fund the cleaning so it's zero out-of-pocket. "
         f"{funding_note}Happy to share what similar conversions have earned and answer any questions. "

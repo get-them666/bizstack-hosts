@@ -1,4 +1,4 @@
-# BizStack Hosts — Facebook Page Launch Kit
+# Broom Service — Facebook Page Launch Kit
 
 ## 1. Page setup
 | Field | Value |
@@ -14,7 +14,7 @@
 5-star short-term rental turnover cleaning & co-hosting. Guest-funded turnovers across Hampton Roads, VA. Text or call 24/7: (757) 846-9275
 
 ## 3. About -> Long Description
-BizStack Hosts keeps short-term rental operators in the Hampton Roads area at 5-star service levels with professional turnover cleaning, deep cleaning, linen restock, and digital co-hosting — all built on an automated operations layer that dispatches and tracks your crew in real time.
+Broom Service keeps short-term rental operators in the Hampton Roads area at 5-star service levels with professional turnover cleaning, deep cleaning, linen restock, and digital co-hosting — all built on an automated operations layer that dispatches and tracks your crew in real time.
 
 Here's what separates us from a typical cleaning service:
 - **Guest-funded turnovers.** The cleaning fee is integrated into the guest's booking check-out — hosts never pay out-of-pocket and never take on loans or financing for cleaning operations.
@@ -37,7 +37,7 @@ Serving Airbnb, Vrbo, and direct-booking hosts across Williamsburg–Hampton Roa
 
 ## 6. First 3 posts
 **Post 1 (intro + booking)**
-New page! BizStack Hosts does 5-star STR turnover cleaning for Airbnb & Vrbo across Hampton Roads. The kicker: your guests fund the turnover fee at booking — zero out-of-pocket for hosts. Book at bizstackperks.com/book or text (757) 846-9275.
+New page! Broom Service does 5-star STR turnover cleaning for Airbnb & Vrbo across Hampton Roads. The kicker: your guests fund the turnover fee at booking — zero out-of-pocket for hosts. Book at bizstackperks.com/book or text (757) 846-9275.
 
 **Post 2 (verified angle)**
 Every clean is photo-verified, time-stamped, and location-checked — no blind cleaning. Hosts see the proof before the next guest walks in. Turnover $160 · Deep $275 · Linen $70 · Inspection $95.

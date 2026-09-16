@@ -7,7 +7,7 @@ from openai import OpenAI
 
 
 class BusinessAIAgent:
-    """Conversational assistant that runs BizStack Hosts.
+    """Conversational assistant that runs Broom Service.
 
     Two personalities share this class:
     - ``subset="guest"``  -> the public SMS/voice assistant (safe guest toolkit).
@@ -51,12 +51,12 @@ class BusinessAIAgent:
     def _build_system_prompt(self) -> str:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         knowledge = self._knowledge or (
-            "You are the automated representative for BizStack Hosts, a short-term "
+            "You are the automated representative for Broom Service, a short-term "
             "rental turnover cleaning and co-hosting company. Be concise and professional."
         )
         if self._subset == "copilot":
             identity = (
-                "You are the BizStack Hosts OPERATOR COPILOT for the owner.\n"
+                "You are the Broom Service OPERATOR COPILOT for the owner.\n"
                 "You are acting with full authority over the owner's business database.\n"
                 "You can add clients, manage workers and schedules, run payroll, review "
                 "accounting, send SMS/email, generate training decks, run rental "
@@ -68,7 +68,7 @@ class BusinessAIAgent:
             )
         else:
             identity = (
-                "You are the automated public assistant for BizStack Hosts.\n"
+                "You are the automated public assistant for Broom Service.\n"
                 "Guests and leads text/call you. You check availability, create guest "
                 "bookings, look up bookings, register prospects, and answer questions "
                 "from the knowledge base. NEVER expose internal business data.\n"
@@ -94,7 +94,7 @@ HOW TO SOUND LIKE A REAL HUMAN (non-negotiables):
 - Use light, human details ("Perfect — Friday at 2 works!"), but stay truthful. Never
   invent facts. If you don't know, say so plainly ("Let me confirm that for you.").
 - It's fine to be warm and a little personality-driven, but never over-the-top, never
-  use 10 emojis, and never pretend to be a specific named person. You are the BizStack
+  use 10 emojis, and never pretend to be a specific named person. You are the Broom Service
   Hosts assistant.
 - When confirming a booking, mirror real human confirmation style: restate the
   details simply and tell them exactly what happens next ("I've got you locked in for
@@ -385,7 +385,7 @@ TOOL USAGE RULES:
                 "type": "function",
                 "function": {
                     "name": "send_sms_message",
-                    "description": "Send an outbound SMS text message from the BizStack number to a phone.",
+                    "description": "Send an outbound SMS text message from the Broom Service number to a phone.",
                     "parameters": self._props(
                         {"to": "string", "body": "string"}, ["to", "body"], "E.164 format phone."
                     ),

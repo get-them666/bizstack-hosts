@@ -1079,7 +1079,7 @@ async def _notify_new_device(actor: dict, new_device_id: str, old_device_id: str
 
         to_email = (os.getenv("ADMIN_ALERT_EMAIL") or os.getenv("ADMIN_OTP_EMAIL") or os.getenv("ADMIN_EMAIL") or "").strip()
         to_phone = (os.getenv("ADMIN_ALERT_PHONE") or "").strip()
-        subject = "⚠️ New device signed in — BizStack Hosts"
+        subject = "⚠️ New device signed in — Broom Service"
         msg_text = (
             f"A new device just signed in to the {actor.get('role')} account "
             f"{actor.get('name') or actor.get('email') or '?'}.\n\n"
@@ -1252,12 +1252,12 @@ async def _deliver_otp(db, email: str, code: str, actor: dict):
     if documents_service.smtp_configured(cfg):
         body = (
             f"Hi {actor.get('name') or 'there'},\n\n"
-            f"Your BizStack Hosts verification code is:\n\n    {code}\n\n"
+            f"Your Broom Service verification code is:\n\n    {code}\n\n"
             f"It expires in 10 minutes. If you didn't try to sign in, you can ignore this email.\n\n"
-            f"— BizStack Hosts"
+            f"— Broom Service"
         )
         try:
-            await documents_service.send_email(cfg, email, "Your BizStack Hosts login code", body)
+            await documents_service.send_email(cfg, email, "Your Broom Service login code", body)
             return True, ""
         except Exception as e:
             return False, f"Could not send email: {e}"
@@ -2249,7 +2249,7 @@ def _geocode(address: str):
     query = urllib.parse.quote(address.strip())
     url = f"https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q={query}"
     req = urllib.request.Request(url, headers={
-        "User-Agent": "BizStackHostsOps/1.0 (bizstackperks.com; hello@bizstackperks.com)",
+        "User-Agent": "Broom ServiceHostsOps/1.0 (bizstackperks.com; hello@bizstackperks.com)",
         "Accept": "application/json",
     })
     try:
@@ -3099,7 +3099,7 @@ async def photos_export_pdf(event_id: int, request: Request, db=Depends(get_db))
     pdf.set_auto_page_break(auto=True, margin=14)
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 15)
-    pdf.cell(0, 9, "BizStack Hosts - Photo Verification Report", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 9, "Broom Service - Photo Verification Report", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(0, 6, f"Job: {event['customer_name'] or ''}  |  {event['service_type'] or ''}  |  {event['start_time']}", new_x="LMARGIN", new_y="NEXT")
     if event.get("job_address"):
@@ -4325,7 +4325,7 @@ async def save_access(request: Request, db=Depends(get_db)):
 
 def _bank_cfg() -> dict:
     return {
-        "holder": os.getenv("CHECK_HOLDER", "BizStack Hosts"),
+        "holder": os.getenv("CHECK_HOLDER", "Broom Service"),
         "address": os.getenv("CHECK_HOLDER_ADDRESS", ""),
         "city_state_zip": os.getenv("CHECK_CITY_STATE_ZIP", ""),
         "routing": os.getenv("CHECK_ROUTING", "000000000"),
@@ -4730,7 +4730,7 @@ async def voice_webhook(request: Request, db=Depends(get_db)):
         cur.execute("INSERT INTO comms_logs (direction, channel, sender, recipient, message_body) VALUES ('inbound', 'voice', %s, %s, %s);", (From, To, f"Voice call received - SID: {CallSid}"))
         db.commit()
 
-    greeting = "Thank you for calling BizStack Hosts! Our automated assistant is ready to help with bookings, house rules, or checkout instructions. How can I assist you today?"
+    greeting = "Thank you for calling Broom Service! Our automated assistant is ready to help with bookings, house rules, or checkout instructions. How can I assist you today?"
     twiml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="alice">{greeting}</Say>
@@ -4777,11 +4777,11 @@ async def voice_transcribe(request: Request, db=Depends(get_db)):
 # --- SWML live voice agent (SignalWire AI conversation with full site knowledge) ---
 
 VOICE_AGENT_PROMPT = """\
-You are the BizStack Hosts voice assistant, answering calls 24/7 for BizStack Hosts.
+You are the Broom Service voice assistant, answering calls 24/7 for Broom Service.
 Speak naturally, warmly, and concisely: short sentences, conversational, human-sounding — never robotic or corporate boilerplate.
 
 ABOUT THE COMPANY
-- BizStack Hosts is a short-term rental (STR) turnover-cleaning and co-hosting management company for Airbnb, Vrbo, and direct-booking properties.
+- Broom Service is a short-term rental (STR) turnover-cleaning and co-hosting management company for Airbnb, Vrbo, and direct-booking properties.
 - Website: https://bizstackperks.com. Assistant number, call or text 24/7: +1 (757) 846-9275. Email: hello@bizstackperks.com.
 - Core promises: zero upfront cost to hosts (the guest funds the operational fee at booking), no long-term contracts (unbundled modular services), 24/7 AI assistant, photo-verified cleaning with time-stamped room photos, calendar sync, and secure Stripe payments collected from guests at checkout.
 
@@ -4845,7 +4845,7 @@ async def voice_swml():
                         ],
                         "post_prompt_url": (os.getenv("APP_BASE_URL", "https://bizstackperks.com") or "") + "/api/voice/debug",
                         "pronounce": [
-                            {"replace": "BizStack", "with": "biz stack", "ignore_case": True},
+                            {"replace": "Broom Service", "with": "broom service", "ignore_case": True},
                             {"replace": "Vrbo", "with": "virbo", "ignore_case": True},
                             {"replace": "RevPAR", "with": "rev par", "ignore_case": True},
                             {"replace": "Airbnb", "with": "air bnb", "ignore_case": True},
@@ -5474,7 +5474,7 @@ async def legal_page(request: Request):
     site = os.getenv("APP_BASE_URL", "").rstrip("/") or str(request.base_url).rstrip("/")
     return templates.TemplateResponse(request=request, name="legal.html", context={
         "site": site,
-        "site_name": "BizStack Hosts",
+        "site_name": "Broom Service",
         "phone": "+1 (757) 846-9275",
         "email": "hello@bizstackperks.com",
         "bot_email": "hello@bizstackperks.com",

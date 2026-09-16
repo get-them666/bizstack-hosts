@@ -1,9 +1,9 @@
-# BizStack Hosts — Free Listing Kit (Top 12 Directories)
+# Broom Service — Free Listing Kit (Top 12 Directories)
 
 ## Your NAP (use EXACTLY this everywhere)
 | Field | Value |
 |---|---|
-| Business name | **BizStack Hosts** |
+| Business name | **Broom Service** |
 | Phone | **+1 (757) 846-9275** |
 | Website | **https://bizstackperks.com** |
 | Service area | Williamsburg–Hampton Roads, VA · Currituck County & Elizabeth City, NC (Virginia Beach · Norfolk · Chesapeake · Newport News · Portsmouth · Suffolk · Hampton · Williamsburg) |
@@ -18,13 +18,13 @@
 ## Blurb Bank (copy-paste per site)
 
 ### Short — 30 words
-> BizStack Hosts — 5-star short-term rental turnover cleaning and co-hosting across Hampton Roads, VA. Turnover fees are paid by your guests at booking, so hosts get flawless cleanings with zero out-of-pocket cost.
+> Broom Service — 5-star short-term rental turnover cleaning and co-hosting across Hampton Roads, VA. Turnover fees are paid by your guests at booking, so hosts get flawless cleanings with zero out-of-pocket cost.
 
 ### Standard — 60 words (recommended default)
 > Professional short-term rental turnover cleaning, deep cleans, linen restock, and premium co-hosting for Airbnb & Vrbo hosts across Hampton Roads, VA. Every clean is photo-verified, time-stamped, and geofence-checked by our crew. Turnover fees are guest-funded at booking — zero out-of-pocket, no contracts, no financing. Call or text our AI assistant anytime: (757) 846-9275.
 
 ### Stellar — long description (Google / Yelp / Facebook / BBB)
-> BizStack Hosts keeps short-term rental operators in the Hampton Roads area at 5-star service levels with professional turnover cleaning, deep cleaning, linen restock, and digital co-hosting — all built on an automated operations layer that dispatches and tracks your crew in real time.
+> Broom Service keeps short-term rental operators in the Hampton Roads area at 5-star service levels with professional turnover cleaning, deep cleaning, linen restock, and digital co-hosting — all built on an automated operations layer that dispatches and tracks your crew in real time.
 >
 > Here's what separates us from a typical cleaning service:
 > - **Guest-funded turnovers.** The cleaning fee is integrated into the guest's booking check-out — hosts never pay out-of-pocket and never take on loans or financing for cleaning operations.

@@ -4,7 +4,7 @@ from signalwire.rest.client import RestClient
 
 
 class SignalWireService:
-    """Outbound voice/SMS helper for the BizStack AI guest assistant."""
+    """Outbound voice/SMS helper for the Broom Service AI guest assistant."""
 
     def __init__(self):
         self.project_id = os.getenv("SIGNALWIRE_PROJECT_ID", "")
@@ -50,6 +50,6 @@ class SignalWireService:
         """Send a secure digital entry link mid-call."""
         body = (
             "Hi! Here is your secure entry link for your stay: "
-            f"{entry_link}. Your host (BizStack Hosts) wishes you a great stay!"
+            f"{entry_link}. Your host (Broom Service) wishes you a great stay!"
         )
         return self.send_sms(to, body)

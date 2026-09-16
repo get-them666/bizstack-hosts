@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% block title %}Pay Stub | BizStack Hosts{% endblock %}
+{% extends "base.html" %}{% block title %}Pay Stub | Broom Service{% endblock %}
 
 {% block content %}
 <section class="bg-gray-100 min-h-[70vh] py-12">
@@ -7,7 +7,7 @@
         <div class="bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden print:shadow-none print:border-none">
             <div class="px-8 py-6 flex items-center justify-between border-b border-gray-100">
                 <div>
-                    <p class="text-lg font-extrabold text-slate-900">BizStack Hosts</p>
+                    <p class="text-lg font-extrabold text-slate-900">Broom Service</p>
                     <p class="text-xs text-slate-500">Pay Stub · {{ stub['period_start'].strftime('%b %d') }} – {{ stub['period_end'].strftime('%b %d, %Y') }}</p>
                 </div>
                 <span class="px-3 py-1 text-xs font-bold rounded-full bg-indigo-50 text-indigo-600">PAID</span>
