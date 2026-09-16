@@ -10,6 +10,9 @@
         <form method="post" action="/radar/scan">
             <button type="submit" class="px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-sm">Scan Reddit Now</button>
         </form>
+        <form method="post" action="/radar/scan/linkedin">
+            <button type="submit" class="px-5 py-2.5 text-sm font-semibold text-white bg-sky-600 hover:bg-sky-700 rounded-xl shadow-sm">Scan LinkedIn Now</button>
+        </form>
     </div>
 
     {% if scanned or seen or errors %}
@@ -39,7 +42,10 @@
                         <p class="text-slate-500 line-clamp-2">{{ l['title'] }}</p>
                         {% if l['permalink'] %}<a href="{{ l['permalink'] }}" target="_blank" class="text-xs font-semibold text-indigo-600 hover:text-indigo-700">View post →</a>{% endif %}
                     </td>
-                    <td class="py-3 px-4 text-slate-500">r/{{ l['subreddit'] }}</td>
+                    <td class="py-3 px-4 text-slate-500">
+                        {% if l['source'] == 'linkedin' %}<span class="font-semibold text-sky-600">LinkedIn</span>
+                        {% else %}r/{{ l['subreddit'] }}{% endif %}
+                    </td>
                     <td class="py-3 px-4">
                         {% if l['funding'] %}<span class="px-2 py-1 text-xs font-semibold rounded-full bg-amber-50 text-amber-700 border border-amber-100">Needs funding</span>
                         {% else %}<span class="text-slate-400">—</span>{% endif %}
@@ -56,12 +62,12 @@
         {% else %}
         <div class="py-12 text-center text-slate-400">
             <p class="font-semibold">No leads yet</p>
-            <p class="text-sm mt-1">Hit "Scan Reddit Now" to sweep r/airbnb_hosts, r/realestateinvesting, and local VA/NC subs.</p>
+            <p class="text-sm mt-1">Hit "Scan Reddit Now" to sweep r/airbnb_hosts, r/realestateinvesting, and local VA/NC subs, or "Scan LinkedIn Now" for postings by hosts and property managers.</p>
         </div>
         {% endif %}
     </div>
 
-    <p class="mt-4 text-xs text-slate-400">Speed wins on Reddit — copy the outreach, send a DM or reply within the hour. Public posts only; no account scraping.</p>
+    <p class="mt-4 text-xs text-slate-400">Speed wins — copy the outreach and send a DM or reply within the hour. Public posts only; no account scraping.</p>
 </div>
 
 <script>

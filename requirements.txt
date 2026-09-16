@@ -10,3 +10,4 @@ stripe>=8.0.0
 fpdf2==2.8.8
 python-docx==1.2.0
 python-pptx==1.0.2
+apify-client>=1.7.0

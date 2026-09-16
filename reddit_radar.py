@@ -27,8 +27,43 @@ TOPIC_RE = re.compile(
 )
 
 
-def _fetch(url, retries=2):
+_next_request_at = 0.0
+
+
+def _respect_reset():
+    """Wait until the rate-limit reset window has passed, if we're inside one."""
+    global _next_request_at
+    remaining = _next_request_at - time.time()
+    if remaining > 0:
+        time.sleep(remaining)
+
+
+def _record_reset(exc):
+    """Remember Reddit's reset point so later requests wait it out."""
+    global _next_request_at
+    wait = _rate_limit_wait(exc)
+    _next_request_at = max(_next_request_at, time.time() + (wait if wait is not None else 30))
+
+
+def _rate_limit_wait(exc):
+    """Read Reddit's rate-limit headers; returns seconds to wait or None."""
+    raw = exc.headers.get("Retry-After") or exc.headers.get("X-Ratelimit-Reset")
+    if raw is None:
+        return None
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def _fetch(url, retries=3):
+    """Fetch a URL, honoring Reddit's rate-limit reset window on 429s.
+
+    Returns the body on success, None on failure. A 429 with a reset window
+    sleeps for that window so the retry actually has a chance to succeed.
+    """
     for attempt in range(retries + 1):
+        _respect_reset()
         req = urllib.request.Request(
             url,
             headers={
@@ -42,9 +77,14 @@ def _fetch(url, retries=2):
                 return resp.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
             if exc.code == 429 and attempt < retries:
-                time.sleep(3 * (attempt + 1))
+                _record_reset(exc)
+                _respect_reset()
                 continue
-            raise
+            if exc.code == 429:
+                _record_reset(exc)
+            return None
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return None
     return None
 
 
@@ -70,36 +110,11 @@ def _rss_posts(sub):
     return {"ok": True, "posts": posts}
 
 
-def _json_posts(sub):
-    body = _fetch(f"https://www.reddit.com/r/{urllib.parse.quote(sub)}/new.json?limit=25")
-    if body is None:
-        return {"ok": False, "error": "fetch failed"}
-    import json as _json
-
-    try:
-        data = _json.loads(body)
-    except ValueError as exc:
-        return {"ok": False, "error": f"bad json: {exc}"}
-    posts = []
-    for child in ((data or {}).get("data") or {}).get("children") or []:
-        p = child.get("data") or {}
-        posts.append(
-            {
-                "title": (p.get("title") or "").strip(),
-                "author": p.get("author") or "(deleted)",
-                "link": f"https://www.reddit.com{p.get('permalink') or ''}",
-                "content": p.get("selftext") or "",
-                "published": "",
-            }
-        )
-    return {"ok": True, "posts": posts}
-
-
 def _posts_for(sub, limit):
-    result = _rss_posts(sub)
-    if not result.get("ok"):
-        result = _json_posts(sub)
-    return result
+    # JSON endpoint is 403-blocked from host/datacenter IPs; falling back to it
+    # on an RSS failure only doubles the request load against the rate limit,
+    # so scan the RSS feed only.
+    return _rss_posts(sub)
 
 
 def scan_reddit(limit=100):

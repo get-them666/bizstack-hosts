@@ -18,9 +18,14 @@
                     <h2 class="text-base font-bold text-slate-900">🔭 Reddit Lead Radar</h2>
                     <p class="text-xs text-slate-500 mt-0.5">Owners converting homes to STRs, plus Hampton Roads / OBX locals.</p>
                 </div>
-                <form method="post" action="/radar/scan">
-                    <button type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all">Scan Reddit Now</button>
-                </form>
+                <div class="flex items-center gap-2">
+                    <form method="post" action="/radar/scan">
+                        <button type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all">Scan Reddit</button>
+                    </form>
+                    <form method="post" action="/radar/scan/linkedin">
+                        <button type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-sky-600 hover:bg-sky-700 rounded-xl transition-all">Scan LinkedIn</button>
+                    </form>
+                </div>
             </div>
             <div class="divide-y divide-slate-50">
                 {% for l in radar_leads %}
@@ -28,7 +33,8 @@
                     <div class="flex items-start justify-between gap-3">
                         <div>
                             <div class="text-sm font-semibold text-slate-800">
-                                r/{{ l.subreddit or '—' }} · <span class="text-slate-500 font-normal">{{ l.author }}</span>
+                                {% if l.source == 'linkedin' %}<span class="text-sky-600">LinkedIn</span>
+                                {% else %}r/{{ l.subreddit or '—' }}{% endif %} · <span class="text-slate-500 font-normal">{{ l.author }}</span>
                             </div>
                             <a href="{{ l.permalink }}" target="_blank" rel="noopener" class="text-sm text-indigo-600 hover:text-indigo-800">{{ l.title or '(no title)' }} ↗</a>
                             <div class="mt-1 flex flex-wrap gap-1.5">

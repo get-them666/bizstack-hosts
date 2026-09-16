@@ -23,6 +23,7 @@ import ai_agent
 from ai_agent import BusinessAIAgent
 from analysis_service import RentalAnalysisService
 from reddit_radar import outreach_draft, scan_reddit
+from linkedin_radar import scan_linkedin, outreach_draft as linkedin_outreach_draft
 from stripe_service import StripeService
 import stripe
 import site_theme
@@ -1572,7 +1573,7 @@ async def host_lead_radar(request: Request, db=Depends(get_db)):
     if not is_authed:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     with db.cursor() as cur:
-        cur.execute("SELECT * FROM leads WHERE source = 'reddit' ORDER BY created_at DESC LIMIT 200;")
+        cur.execute("SELECT * FROM leads WHERE source IN ('reddit', 'linkedin') ORDER BY created_at DESC LIMIT 200;")
         rows = cur.fetchall()
     leads = []
     for l in rows:
@@ -1581,12 +1582,14 @@ async def host_lead_radar(request: Request, db=Depends(get_db)):
             meta = json.loads(l.get("analysis_json") or "{}")
         except (TypeError, ValueError):
             pass
-        author = (l.get("name") or "").split("·", 1)[-1].strip() or "reddit user"
+        source = l.get("source") or "reddit"
+        author = (l.get("name") or "").split("·", 1)[-1].strip() or f"{source} user"
         mins = None
         try:
             mins = int((datetime.utcnow() - l["created_at"]).total_seconds() // 60)
         except Exception:
             pass
+        draft_fn = outreach_draft if source == "reddit" else linkedin_outreach_draft
         leads.append({
             "id": l["id"],
             "author": author,
@@ -1596,7 +1599,8 @@ async def host_lead_radar(request: Request, db=Depends(get_db)):
             "funding": bool(l.get("funding_needed")),
             "minutes_ago": mins,
             "status": l.get("status", "new"),
-            "draft": outreach_draft({
+            "source": source,
+            "draft": draft_fn({
                 "author": author,
                 "subreddit": meta.get("subreddit", ""),
                 "title": meta.get("title", ""),
@@ -1617,10 +1621,26 @@ async def host_lead_radar(request: Request, db=Depends(get_db)):
 
 @app.post("/radar/scan")
 async def radar_run_scan(request: Request, db=Depends(get_db)):
+    return await _radar_ingest(request, db, source="reddit", scan_fn=scan_reddit)
+
+
+@app.post("/radar/scan/linkedin")
+async def radar_run_linkedin_scan(request: Request, db=Depends(get_db)):
+    return await _radar_ingest(request, db, source="linkedin", scan_fn=scan_linkedin)
+
+
+async def _radar_ingest(request, db, source, scan_fn):
     is_authed, user_email = require_auth(request)
     if not is_authed:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
-    result = scan_reddit(limit=100)
+    try:
+        result = scan_fn()
+    except Exception as exc:
+        err = f"scan failed: {exc}"[:300]
+        return RedirectResponse(
+            url=f"/acquisition?scanned=0&seen=0&errors={urllib.parse.quote(err)}",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
     created = 0
     seen = 0
     with db.cursor() as cur:
@@ -1632,11 +1652,12 @@ async def radar_run_scan(request: Request, db=Depends(get_db)):
             meta = json.dumps({"title": m["title"], "subreddit": m["subreddit"]})
             cur.execute(
                 "INSERT INTO leads (name, email, listing_url, status, source, funding_needed, funding_use, referral_code, campaign, analysis_json) "
-                "VALUES (%s, %s, %s, 'new', 'reddit', %s, %s, %s, 'host-lead-radar', %s) RETURNING id;",
+                "VALUES (%s, %s, %s, 'new', %s, %s, %s, %s, 'host-lead-radar', %s) RETURNING id;",
                 (
-                    f"Reddit · {m['author']}",
-                    f"reddit-{m['post_id']}@lead.local",
+                    f"{source.title()} · {m['author']}",
+                    f"{source}-{m['post_id']}@lead.local",
                     m["permalink"],
+                    source,
                     m["funding"],
                     (m.get("funding_use") or "")[:500],
                     m["post_id"],
@@ -5237,17 +5258,19 @@ async def acquisition_page(request: Request, db=Depends(get_db)):
     if not is_authed:
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
 
-    # Radar leads (Reddit)
+    # Radar leads (Reddit / LinkedIn)
     radar_leads = []
     with db.cursor() as cur:
-        cur.execute("SELECT * FROM leads WHERE source = 'reddit' ORDER BY created_at DESC LIMIT 20;")
+        cur.execute("SELECT * FROM leads WHERE source IN ('reddit', 'linkedin') ORDER BY created_at DESC LIMIT 20;")
         for l in cur.fetchall():
             meta = {}
             try:
                 meta = json.loads(l.get("analysis_json") or "{}")
             except (TypeError, ValueError):
                 pass
-            author = (l.get("name") or "").split("·", 1)[-1].strip() or "reddit user"
+            source = l.get("source") or "reddit"
+            author = (l.get("name") or "").split("·", 1)[-1].strip() or f"{source} user"
+            draft_fn = outreach_draft if source == "reddit" else linkedin_outreach_draft
             radar_leads.append({
                 "id": l["id"],
                 "author": author,
@@ -5256,7 +5279,8 @@ async def acquisition_page(request: Request, db=Depends(get_db)):
                 "permalink": l.get("listing_url", ""),
                 "funding": bool(l.get("funding_needed")),
                 "status": l.get("status", "new"),
-                "draft": outreach_draft({
+                "source": source,
+                "draft": draft_fn({
                     "author": author,
                     "subreddit": meta.get("subreddit", ""),
                     "title": meta.get("title", ""),
