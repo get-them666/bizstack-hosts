@@ -728,6 +728,8 @@ async def lifecycle(app: FastAPI):
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
+                cur.execute("ALTER TABLE workers ADD COLUMN IF NOT EXISTS magic_token VARCHAR(64);")
+                cur.execute("ALTER TABLE workers ADD COLUMN IF NOT EXISTS magic_token_expires_at TIMESTAMP WITH TIME ZONE;")
                 cur.execute("""
                 CREATE TABLE IF NOT EXISTS worker_paychecks (
                     id SERIAL PRIMARY KEY,
@@ -1201,13 +1203,33 @@ def _secure_cookies() -> bool:
 def _login_redirect(role: str) -> str:
     return {"admin": "/dashboard", "worker": "/worker", "host": "/host"}.get(role or "", "/")
 
-def _otp_enabled(db) -> bool:
+def _otp_global(db) -> bool:
     env = os.getenv("OTP_ENABLED", "").strip().lower()
     if env in ("0", "false", "no", "off"):
         return False
     if env in ("1", "true", "yes", "on"):
         return True
     return (_get_setting(db, "otp_enabled", "true").strip().lower() not in ("0", "false", "no", "off"))
+
+def _otp_role_enabled(db, role: str) -> bool:
+    """Whether an email code is switched on for this role (ignores delivery)."""
+    raw = _get_setting(db, f"otp_role_{role}", "").strip().lower()
+    if raw:
+        return raw not in ("0", "false", "no", "off")
+    return role == "admin"
+
+def _otp_enabled(db, role: str = "admin") -> bool:
+    """Whether a one-time code is actually required for this role right now.
+
+    OTP is only enforced when it is switched on *and* email delivery is
+    configured. Without SMTP the code can never arrive, so requiring one would
+    lock every user out; in that case we fall back to the password/PIN step
+    alone. Workers and hosts default to no OTP so their sign-in stays quick,
+    while admins default to OTP.
+    """
+    if not _otp_global(db) or not _otp_role_enabled(db, role):
+        return False
+    return documents_service.smtp_configured(_smtp_cfg(db))
 
 def _resolve_credentials(db, identifier: str, secret: str):
     ident = (identifier or "").strip()
@@ -1289,10 +1311,10 @@ async def api_login(identifier: str = Form(...), secret: str = Form(...), reques
     if not actor:
         return RedirectResponse(url="/login?error=Invalid+email%2Fphone+or+password%2FPIN", status_code=status.HTTP_303_SEE_OTHER)
     email = (actor.get("email") or "").strip()
-    if _otp_enabled(db) and not email:
+    if _otp_enabled(db, actor["role"]) and not email:
         return RedirectResponse(url="/login?error=No+email+on+file+%E2%80%94+ask+the+office+to+add+one", status_code=status.HTTP_303_SEE_OTHER)
 
-    if not _otp_enabled(db):
+    if not _otp_enabled(db, actor["role"]):
         return _finish_login(actor, request)
 
     code = auth_service.generate_otp()
@@ -1994,9 +2016,9 @@ async def host_login(email: str = Form(...), password: str = Form(...), request:
         return RedirectResponse(url="/host-login?error=Invalid+email+or+password", status_code=status.HTTP_303_SEE_OTHER)
 
     actor = {"role": "host", "id": host["id"], "email": host["email"], "name": host["name"]}
-    if _otp_enabled(db) and not (host.get("email") or "").strip():
+    if _otp_enabled(db, "host") and not (host.get("email") or "").strip():
         return RedirectResponse(url="/host-login?error=No+email+on+file+%E2%80%94+ask+the+office+to+add+one", status_code=status.HTTP_303_SEE_OTHER)
-    if not _otp_enabled(db):
+    if not _otp_enabled(db, "host"):
         return _finish_login(actor, request)
 
     code = auth_service.generate_otp()
@@ -2667,9 +2689,9 @@ async def worker_login(phone: str = Form(...), pin: str = Form(...), request: Re
         return RedirectResponse(url="/worker-login?error=Invalid+phone+or+PIN", status_code=status.HTTP_303_SEE_OTHER)
 
     actor = {"role": "worker", "id": match["id"], "email": match.get("email") or "", "name": match["name"]}
-    if _otp_enabled(db) and not (match.get("email") or "").strip():
+    if _otp_enabled(db, "worker") and not (match.get("email") or "").strip():
         return RedirectResponse(url="/worker-login?error=No+email+on+file+%E2%80%94+ask+the+office+to+add+one", status_code=status.HTTP_303_SEE_OTHER)
-    if not _otp_enabled(db):
+    if not _otp_enabled(db, "worker"):
         return _finish_login(actor, request)
 
     code = auth_service.generate_otp()
@@ -2696,6 +2718,54 @@ async def worker_logout():
     redirect.delete_cookie("role")
     redirect.delete_cookie("actor_id")
     return redirect
+
+MAGIC_LINK_TTL_DAYS = int(os.getenv("WORKER_MAGIC_LINK_DAYS", "30"))
+
+
+def _magic_link_url(request: Request, token: str) -> str:
+    return str(request.base_url).rstrip("/") + f"/w/{token}"
+
+
+def _issue_magic_token(db, worker_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    with db.cursor() as cur:
+        cur.execute(
+            "UPDATE workers SET magic_token = %s, magic_token_expires_at = NOW() + (%s || ' days')::INTERVAL WHERE id = %s;",
+            (token, str(MAGIC_LINK_TTL_DAYS), worker_id),
+        )
+        db.commit()
+    return token
+
+
+@app.get("/w/{token}")
+async def worker_magic_login(token: str, request: Request, db=Depends(get_db)):
+    """One-tap crew sign-in from a texted/emailed link."""
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM workers WHERE is_active = TRUE AND magic_token = %s;", (token,))
+        worker = cur.fetchone()
+    if not worker:
+        return RedirectResponse(url="/worker-login?error=Link+is+invalid+or+was+reset", status_code=status.HTTP_303_SEE_OTHER)
+    expires = worker.get("magic_token_expires_at")
+    if expires and expires < datetime.now(APP_TZ):
+        return RedirectResponse(url="/worker-login?error=Link+expired+%E2%80%94+ask+the+office+for+a+new+one", status_code=status.HTTP_303_SEE_OTHER)
+    actor = {"role": "worker", "id": worker["id"], "email": worker.get("email") or "", "name": worker["name"]}
+    return _finish_login(actor, request)
+
+
+@app.post("/api/workers/{worker_id}/magic-link")
+async def worker_magic_link(worker_id: int, request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute("SELECT id FROM workers WHERE id = %s;", (worker_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Worker not found")
+    token = _issue_magic_token(db, worker_id)
+    return JSONResponse({
+        "status": "success",
+        "url": _magic_link_url(request, token),
+        "expires_days": MAGIC_LINK_TTL_DAYS,
+    })
+
 
 @app.get("/worker", response_class=HTMLResponse)
 async def worker_portal(request: Request, db=Depends(get_db)):
@@ -3600,7 +3670,7 @@ async def worker_app_login(phone: str = Form(...), pin: str = Form(...), db=Depe
     if not match:
         return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid phone or PIN"})
 
-    if _otp_enabled(db):
+    if _otp_enabled(db, "worker"):
         email = (match.get("email") or "").strip()
         if not email:
             return JSONResponse(status_code=400, content={"status": "error", "message": "No email on file — ask the office to add one so we can send your login code"})
@@ -3836,6 +3906,68 @@ def _channel_pat(db):
     return (os.getenv("HOSPITABLE_PAT", "") or _get_setting(db, "hospitable_pat") or "").strip()
 
 
+def _auto_dispatch_enabled(db) -> bool:
+    return _get_setting(db, "auto_dispatch", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _auto_dispatch_assign(db, event_ids=None) -> int:
+    """Assign unassigned jobs to an active worker so crew land on a job already done.
+
+    Honours a preferred crew member when one is configured; otherwise balances
+    load by picking the worker with the fewest upcoming assigned jobs. Mirrors
+    the manual assign route: the worker's pay rate becomes the job pay and the
+    job site address is resolved from the linked property. Returns the number
+    of jobs assigned.
+    """
+    if not _auto_dispatch_enabled(db):
+        return 0
+    with db.cursor() as cur:
+        cur.execute("SELECT id, pay_rate_cents FROM workers WHERE is_active = TRUE ORDER BY id;")
+        workers = cur.fetchall()
+        if not workers:
+            return 0
+        by_id = {w["id"]: w for w in workers}
+        preferred = None
+        pref_raw = _get_setting(db, "auto_dispatch_worker_id", "")
+        if pref_raw:
+            try:
+                preferred = int(pref_raw)
+            except (TypeError, ValueError):
+                preferred = None
+        if event_ids:
+            cur.execute(
+                "SELECT id FROM calendar_events WHERE id = ANY(%s) AND worker_id IS NULL AND start_time >= NOW() - INTERVAL '1 day' ORDER BY start_time;",
+                (list(event_ids),),
+            )
+        else:
+            cur.execute(
+                "SELECT id FROM calendar_events WHERE worker_id IS NULL AND start_time >= NOW() - INTERVAL '1 day' ORDER BY start_time;"
+            )
+        targets = [r["id"] for r in cur.fetchall()]
+        if not targets:
+            return 0
+        cur.execute(
+            "SELECT worker_id, COUNT(*) AS n FROM calendar_events WHERE worker_id IS NOT NULL AND start_time >= NOW() - INTERVAL '1 day' GROUP BY worker_id;"
+        )
+        load = {r["worker_id"]: r["n"] for r in cur.fetchall()}
+        assigned = 0
+        for event_id in targets:
+            if preferred and preferred in by_id:
+                pick = by_id[preferred]
+            else:
+                pick = min(workers, key=lambda w: (load.get(w["id"], 0), w["id"]))
+            job_site_address, job_lat, job_lng = _resolve_job_site(db, event_id)
+            cur.execute(
+                "UPDATE calendar_events SET worker_id = %s, worker_pay_cents = %s, worker_status = 'assigned', job_address = COALESCE(job_address, %s), job_lat = COALESCE(job_lat, %s), job_lng = COALESCE(job_lng, %s) WHERE id = %s AND worker_id IS NULL;",
+                (pick["id"], pick["pay_rate_cents"], job_site_address or None, job_lat, job_lng, event_id),
+            )
+            if cur.rowcount:
+                load[pick["id"]] = load.get(pick["id"], 0) + 1
+                assigned += 1
+        db.commit()
+    return assigned
+
+
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, db=Depends(get_db)):
     is_authed, user_email = require_auth(request)
@@ -3872,6 +4004,8 @@ async def settings_page(request: Request, db=Depends(get_db)):
         row = cur.fetchone()
         if row:
             ch_last = {"status": row["status"], "summary": row["summary"], "finished_at": row["finished_at"]}
+        cur.execute("SELECT id, name FROM workers WHERE is_active = TRUE ORDER BY name;")
+        crews = cur.fetchall()
 
     webhook_url = str(request.base_url).rstrip("/") + "/api/channels/hospitable/webhook"
     return templates.TemplateResponse(
@@ -3888,6 +4022,13 @@ async def settings_page(request: Request, db=Depends(get_db)):
             "channel_linked_count": ch_applied,
             "channel_last_sync": ch_last,
             "channel_webhook_url": webhook_url,
+            "saved": request.query_params.get("saved"),
+            "otp_global": _otp_global(db),
+            "otp_roles": {r: _otp_role_enabled(db, r) for r in ("admin", "worker", "host")},
+            "smtp_ready": documents_service.smtp_configured(_smtp_cfg(db)),
+            "auto_dispatch": _auto_dispatch_enabled(db),
+            "auto_dispatch_worker_id": _get_setting(db, "auto_dispatch_worker_id", ""),
+            "crews": crews,
         },
     )
 
@@ -3987,6 +4128,22 @@ async def save_channel_settings(request: Request, db=Depends(get_db)):
     return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@app.post("/api/settings/security")
+async def save_security_settings(request: Request, db=Depends(get_db)):
+    require_admin(request)
+    form = await request.form()
+    _set_setting(db, "otp_enabled", "true" if form.get("otp_global") == "on" else "false")
+    for role in ("admin", "worker", "host"):
+        _set_setting(db, f"otp_role_{role}", "true" if form.get(f"otp_role_{role}") == "on" else "false")
+    _set_setting(db, "auto_dispatch", "true" if form.get("auto_dispatch") == "on" else "false")
+    default_worker = (form.get("auto_dispatch_worker_id") or "").strip()
+    if default_worker:
+        _set_setting(db, "auto_dispatch_worker_id", default_worker)
+    else:
+        _del_setting(db, "auto_dispatch_worker_id")
+    return RedirectResponse(url="/settings?saved=1", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @app.post("/api/channels/sync")
 async def run_channel_sync(request: Request, db=Depends(get_db)):
     is_authed, _ = require_auth(request)
@@ -3995,7 +4152,13 @@ async def run_channel_sync(request: Request, db=Depends(get_db)):
     pat = _channel_pat(db)
     if not pat:
         return JSONResponse({"status": "failed", "message": "Hospitable API token not configured."})
-    return JSONResponse(channel_sync.sync_hospitable(db, pat))
+    result = channel_sync.sync_hospitable(db, pat)
+    try:
+        result["dispatched"] = _auto_dispatch_assign(db)
+    except Exception as e:
+        result["dispatched"] = 0
+        result["dispatch_error"] = str(e)
+    return JSONResponse(result)
 
 
 @app.post("/api/channels/hospitable/webhook")
@@ -4029,10 +4192,16 @@ async def hospitable_webhook(request: Request, db=Depends(get_db)):
             pat = _channel_pat(db)
             if pat:
                 channel_sync.sync_hospitable(db, pat)
+        dispatched = 0
+        if action.startswith("reservation."):
+            try:
+                dispatched = _auto_dispatch_assign(db)
+            except Exception as dispatch_err:
+                print(f"[DISPATCH] auto-dispatch failed: {dispatch_err}", flush=True)
         summary = f"Webhook {action}"
-        details = {"webhook_id": wh_id}
+        details = {"webhook_id": wh_id, "dispatched": dispatched}
         if result is not None:
-            details = {**result, "webhook_id": wh_id}
+            details = {**result, "webhook_id": wh_id, "dispatched": dispatched}
         try:
             with db.cursor() as cur:
                 cur.execute(

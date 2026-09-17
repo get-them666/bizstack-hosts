@@ -1,8 +1,9 @@
 """Authentication, OTP, roles and feature permissions for Broom Service.
 
 Sessions are stateless HMAC-signed tokens (no dependency on itsdangerous).
-Every role — admin, worker, host — logs in with a password/PIN and then must
-confirm a one-time code (OTP) delivered to their email address.
+Every role — admin, worker, host — logs in with a password/PIN. An email OTP
+step can be layered on top; it is configurable per role and only enforced when
+email delivery is actually configured (see _otp_enabled in main.py).
 
 Workers and hosts see a restricted toolset. An admin can toggle each tool on
 or off; the toggles are stored in app_settings as JSON under `perms_worker`
