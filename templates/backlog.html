@@ -1,0 +1,110 @@
+{% extends "base.html" %}{% block title %}Back-log | Broom Service{% endblock %}
+
+{% block content %}
+<section class="bg-gradient-to-b from-slate-50 to-white">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+            <div>
+                <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900">Back-log</h1>
+                <p class="mt-2 text-slate-600">Record turnovers, deep cleans, and expenses that already happened — with their real dates.</p>
+            </div>
+            <a href="/dashboard" class="inline-flex items-center justify-center px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all shadow-md shadow-indigo-100">← Dashboard</a>
+        </div>
+
+        {% if request.query_params.get('ok') %}
+        <div class="mb-8 rounded-2xl bg-emerald-50 border border-emerald-200 px-5 py-3 text-sm font-semibold text-emerald-700">
+            {% if request.query_params.get('ok') == 'deleted' %}Entry removed.{% else %}Back-logged — the totals below are updated.{% endif %}
+        </div>
+        {% endif %}
+        {% if request.query_params.get('err') %}
+        <div class="mb-8 rounded-2xl bg-red-50 border border-red-200 px-5 py-3 text-sm font-semibold text-red-700">Enter an amount greater than zero.</div>
+        {% endif %}
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-10">
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-6">
+                <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Back-logged income</p>
+                <p class="mt-2 text-3xl font-extrabold text-emerald-600">{{ '$%0.2f'|format((totals.income or 0) / 100) }}</p>
+            </div>
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-6">
+                <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Back-logged expenses</p>
+                <p class="mt-2 text-3xl font-extrabold text-red-600">{{ '$%0.2f'|format((totals.expense or 0) / 100) }}</p>
+            </div>
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-6">
+                <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Net</p>
+                <p class="mt-2 text-3xl font-extrabold {{ 'text-emerald-600' if (totals.income or 0) >= (totals.expense or 0) else 'text-red-600' }}">{{ '$%0.2f'|format(((totals.income or 0) - (totals.expense or 0)) / 100) }}</p>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div class="lg:col-span-2">
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 overflow-hidden">
+                    <table class="w-full text-sm">
+                        <thead class="bg-slate-50 text-slate-500">
+                            <tr>
+                                <th class="text-left font-semibold px-6 py-3">Date</th>
+                                <th class="text-left font-semibold px-6 py-3">Description</th>
+                                <th class="text-left font-semibold px-6 py-3">Host / property</th>
+                                <th class="text-right font-semibold px-6 py-3">Amount</th>
+                                <th class="px-6 py-3"></th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            {% for e in entries %}
+                            <tr>
+                                <td class="px-6 py-3 text-slate-500 whitespace-nowrap">{{ e.created_at.strftime('%b %d, %Y') }}</td>
+                                <td class="px-6 py-3 font-semibold text-slate-800">{{ e.description }}</td>
+                                <td class="px-6 py-3 text-slate-500">{{ e.customer_name or '—' }}{% if e.service_type %}<br><span class="text-xs text-slate-400">{{ e.service_type }}</span>{% endif %}</td>
+                                <td class="px-6 py-3 text-right whitespace-nowrap font-semibold {{ 'text-emerald-600' if e.tx_type == 'income' else 'text-red-600' }}">
+                                    {{ '+' if e.tx_type == 'income' else '−' }}{{ '$%0.2f'|format(e.amount_cents / 100) }}
+                                </td>
+                                <td class="px-6 py-3 text-right">
+                                    <form method="POST" action="/api/backlog/{{ e.id }}/delete" onsubmit="return confirm('Remove this back-log entry?')">
+                                        <button type="submit" class="text-xs font-semibold text-red-500 hover:text-red-600">✕</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="5" class="px-6 py-16 text-center text-slate-500">Nothing back-logged yet. Add a job or expense on the right.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="space-y-8">
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-6">
+                    <h2 class="text-lg font-bold text-slate-900 mb-4">Back-log a job</h2>
+                    <form method="POST" action="/api/backlog/job" class="space-y-3">
+                        <label class="block text-xs font-semibold text-slate-500">Date it happened
+                            <input type="date" name="entry_date" value="{{ today }}" required class="mt-1 w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        </label>
+                        <input type="text" name="customer_name" placeholder="Host / customer name" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <input type="text" name="service_type" placeholder="Turnover / deep clean / co-host" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <input type="text" name="description" placeholder="Description (optional)" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <input type="number" step="0.01" min="0" name="amount_dollars" placeholder="Amount charged $" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <div class="pt-2 border-t border-slate-100">
+                            <p class="text-xs font-semibold text-slate-500 mb-2">Add host / property (optional)</p>
+                            <input type="text" name="host_name" placeholder="Host name" class="w-full mb-2 px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            <input type="text" name="property_name" placeholder="Property name" class="w-full mb-2 px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            <input type="text" name="property_address" placeholder="Property address" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        </div>
+                        <button type="submit" class="w-full py-3 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all">+ Add job</button>
+                    </form>
+                </div>
+
+                <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 p-6">
+                    <h2 class="text-lg font-bold text-slate-900 mb-4">Back-log an expense</h2>
+                    <form method="POST" action="/api/backlog/expense" class="space-y-3">
+                        <label class="block text-xs font-semibold text-slate-500">Date it happened
+                            <input type="date" name="entry_date" value="{{ today }}" required class="mt-1 w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        </label>
+                        <input type="text" name="description" placeholder="Description (supplies, mileage, etc.)" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <input type="number" step="0.01" min="0" name="amount_dollars" placeholder="Amount $" class="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <button type="submit" class="w-full py-3 text-sm font-bold text-white bg-slate-700 hover:bg-slate-800 rounded-xl transition-all">+ Add expense</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

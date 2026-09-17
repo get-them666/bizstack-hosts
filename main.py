@@ -391,7 +391,7 @@ def build_tool_handlers(db, stripe_svc):
     def get_accounting_summary(period_days: int = 30):
         since = datetime.now(APP_TZ) - timedelta(days=int(period_days))
         with db.cursor() as cur:
-            cur.execute("SELECT COALESCE(SUM(amount_cents) FILTER (WHERE tx_type = 'revenue'), 0) AS revenue, COALESCE(SUM(amount_cents) FILTER (WHERE tx_type = 'expense'), 0) AS expense FROM ledger_entries;")
+            cur.execute("SELECT COALESCE(SUM(amount_cents) FILTER (WHERE tx_type IN ('income','revenue')), 0) AS revenue, COALESCE(SUM(amount_cents) FILTER (WHERE tx_type = 'expense'), 0) AS expense FROM ledger_entries;")
             totals = cur.fetchone()
             cur.execute("SELECT * FROM ledger_entries WHERE created_at >= %s ORDER BY created_at DESC LIMIT 50;", (since,))
             ledger = cur.fetchall()
@@ -402,8 +402,10 @@ def build_tool_handlers(db, stripe_svc):
 
     def add_ledger_entry(tx_type: str, description: str, amount_dollars: float):
         tx = (tx_type or "").strip().lower()
-        if tx not in ("revenue", "expense"):
-            return {"ok": False, "error": "tx_type must be 'revenue' or 'expense'."}
+        if tx in ("income", "revenue"):
+            tx = "income"
+        elif tx != "expense":
+            return {"ok": False, "error": "tx_type must be 'income' or 'expense'."}
         amount_cents = int(round(float(amount_dollars) * 100))
         if amount_cents <= 0:
             return {"ok": False, "error": "Amount must be positive."}
@@ -562,10 +564,16 @@ async def lifecycle(app: FastAPI):
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS channel_booking_id VARCHAR(64);")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS channel_status VARCHAR(30);")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS channel_guest_email VARCHAR(255);")
+                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS channel_external_ref VARCHAR(128);")
                 cur.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_calendar_channel_booking
                 ON calendar_events (channel_source, channel_booking_id)
                 WHERE channel_source IS NOT NULL AND channel_booking_id IS NOT NULL;
+                """)
+                cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_calendar_external_ref
+                ON calendar_events (channel_external_ref)
+                WHERE channel_external_ref IS NOT NULL;
                 """)
                 cur.execute("""
                 CREATE TABLE IF NOT EXISTS app_settings (
@@ -643,6 +651,7 @@ async def lifecycle(app: FastAPI):
                 );
                 """)
                 cur.execute("ALTER TABLE properties ADD COLUMN IF NOT EXISTS channel_property_uuid VARCHAR(64);")
+                cur.execute("ALTER TABLE properties ADD COLUMN IF NOT EXISTS turno_property_id VARCHAR(64);")
                 cur.execute("""
                 CREATE TABLE IF NOT EXISTS devices (
                     id SERIAL PRIMARY KEY,
@@ -3906,6 +3915,12 @@ def _channel_pat(db):
     return (os.getenv("HOSPITABLE_PAT", "") or _get_setting(db, "hospitable_pat") or "").strip()
 
 
+def _turno_cfg(db):
+    token = (os.getenv("TURNO_API_TOKEN", "") or _get_setting(db, "turno_api_token") or "").strip()
+    partner_id = (os.getenv("TURNO_PARTNER_ID", "") or _get_setting(db, "turno_partner_id") or "").strip()
+    return token, partner_id
+
+
 def _auto_dispatch_enabled(db) -> bool:
     return _get_setting(db, "auto_dispatch", "true").strip().lower() not in ("0", "false", "no", "off")
 
@@ -3986,20 +4001,36 @@ async def settings_page(request: Request, db=Depends(get_db)):
             ch_error = str(e)
             ch_hosp = []
 
+    turno_token, turno_partner = _turno_cfg(db)
+    turno_configured = bool(turno_token)
+    turno_error = ""
+    turno_props = []
+    if turno_configured:
+        try:
+            turno_props = channel_sync.TurnoService(turno_token, turno_partner).get_properties()
+        except RuntimeError as e:
+            turno_error = str(e)
+            turno_props = []
+
     hosp_by_id = {str(hp.get("id") or ""): hp.get("name") or "Unnamed" for hp in ch_hosp}
+    turno_by_id = {channel_sync.extract_turno_property(tp)["id"]: channel_sync.extract_turno_property(tp)["name"] for tp in turno_props}
     ch_links = []
     ch_applied = 0
+    turno_applied = 0
     ch_last = None
     with db.cursor() as cur:
         cur.execute(
-            """SELECT p.id, p.name, p.channel_property_uuid, h.name AS host_name
+            """SELECT p.id, p.name, p.channel_property_uuid, p.turno_property_id, h.name AS host_name
                FROM properties p LEFT JOIN hosts h ON h.id = p.host_id ORDER BY p.name;"""
         )
         for row in cur.fetchall():
             row["hosp_name"] = hosp_by_id.get(str(row["channel_property_uuid"] or ""), "")
+            row["turno_name"] = turno_by_id.get(str(row["turno_property_id"] or ""), "")
             ch_links.append(row)
         cur.execute("SELECT COUNT(*) FROM properties WHERE channel_property_uuid IS NOT NULL;")
         ch_applied = cur.fetchone()["count"]
+        cur.execute("SELECT COUNT(*) FROM properties WHERE turno_property_id IS NOT NULL;")
+        turno_applied = cur.fetchone()["count"]
         cur.execute("SELECT status, summary, finished_at FROM channel_sync_logs ORDER BY id DESC LIMIT 1;")
         row = cur.fetchone()
         if row:
@@ -4008,6 +4039,7 @@ async def settings_page(request: Request, db=Depends(get_db)):
         crews = cur.fetchall()
 
     webhook_url = str(request.base_url).rstrip("/") + "/api/channels/hospitable/webhook"
+    turno_webhook_url = str(request.base_url).rstrip("/") + "/api/channels/turno/webhook"
     return templates.TemplateResponse(
         request=request,
         name="settings.html",
@@ -4022,6 +4054,11 @@ async def settings_page(request: Request, db=Depends(get_db)):
             "channel_linked_count": ch_applied,
             "channel_last_sync": ch_last,
             "channel_webhook_url": webhook_url,
+            "turno_configured": turno_configured,
+            "turno_error": turno_error,
+            "turno_props": turno_props,
+            "turno_linked_count": turno_applied,
+            "turno_webhook_url": turno_webhook_url,
             "saved": request.query_params.get("saved"),
             "otp_global": _otp_global(db),
             "otp_roles": {r: _otp_role_enabled(db, r) for r in ("admin", "worker", "host")},
@@ -4115,16 +4152,31 @@ async def save_channel_settings(request: Request, db=Depends(get_db)):
         _del_setting(db, "hospitable_webhook_secret")
     elif secret:
         _set_setting(db, "hospitable_webhook_secret", secret)
+
+    turno_token = (form.get("turno_api_token") or "").strip()
+    turno_partner = (form.get("turno_partner_id") or "").strip()
+    if turno_token:
+        _set_setting(db, "turno_api_token", turno_token)
+    if turno_partner:
+        _set_setting(db, "turno_partner_id", turno_partner)
+    if form.get("clear_turno_credentials"):
+        _del_setting(db, "turno_api_token")
+        _del_setting(db, "turno_partner_id")
+
+    link_targets = (("turno_link_", "turno_property_id"), ("link_", "channel_property_uuid"))
     for key, value in form.items():
-        if key.startswith("link_"):
-            try:
-                pid = int(key.split("_", 1)[1])
-            except (ValueError, IndexError):
+        for prefix, column in link_targets:
+            if not key.startswith(prefix):
                 continue
+            try:
+                pid = int(key[len(prefix):])
+            except ValueError:
+                break
             val = value.strip() if value else None
             with db.cursor() as cur:
-                cur.execute("UPDATE properties SET channel_property_uuid = %s WHERE id = %s;", (val, pid))
+                cur.execute(f"UPDATE properties SET {column} = %s WHERE id = %s;", (val, pid))
                 db.commit()
+            break
     return RedirectResponse(url="/settings", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -4232,6 +4284,74 @@ async def hospitable_webhook(request: Request, db=Depends(get_db)):
                         "failed",
                         f"Webhook {action}",
                         json.dumps({"error": str(e), "webhook_id": wh_id}, default=str),
+                        datetime.now(timezone.utc),
+                        datetime.now(timezone.utc),
+                    ),
+                )
+            db.commit()
+        except Exception:
+            db.rollback()
+        return JSONResponse({"status": "ok", "received": True, "action": action, "error": str(e)})
+
+
+@app.post("/api/channels/turno/sync")
+async def run_turno_sync(request: Request, db=Depends(get_db)):
+    is_authed, _ = require_auth(request)
+    if not is_authed:
+        return JSONResponse({"status": "error", "message": "Not authorized"}, status_code=401)
+    token, partner_id = _turno_cfg(db)
+    if not token:
+        return JSONResponse({"status": "failed", "message": "Turno API token not configured."})
+    result = channel_sync.sync_turno(db, token, partner_id)
+    try:
+        result["dispatched"] = _auto_dispatch_assign(db)
+    except Exception as e:
+        result["dispatched"] = 0
+        result["dispatch_error"] = str(e)
+    return JSONResponse(result)
+
+
+@app.post("/api/channels/turno/webhook")
+async def turno_webhook(request: Request, db=Depends(get_db)):
+    body_bytes = await request.body()
+    secret = (os.getenv("TURNO_WEBHOOK_SECRET", "") or _get_setting(db, "turno_webhook_secret") or "").strip()
+    if secret:
+        sig = (
+            request.headers.get("Signature")
+            or request.headers.get("x-turno-signature")
+            or request.headers.get("x-signature")
+            or ""
+        )
+        expected = hmac.new(secret.encode(), body_bytes, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return JSONResponse({"status": "error", "message": "invalid signature"}, status_code=403)
+    try:
+        payload = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+    except Exception:
+        payload = {}
+    action = payload.get("action") or payload.get("event") or "turno.event"
+    token, partner_id = _turno_cfg(db)
+    if not token:
+        return JSONResponse({"status": "ok", "received": True, "skipped": "Turno API token not configured"})
+    try:
+        result = channel_sync.sync_turno(db, token, partner_id)
+        try:
+            result["dispatched"] = _auto_dispatch_assign(db)
+        except Exception as dispatch_err:
+            result["dispatched"] = 0
+            result["dispatch_error"] = str(dispatch_err)
+        return JSONResponse({"status": "ok", "received": True, "action": action, "sync": result})
+    except Exception as e:
+        try:
+            with db.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO channel_sync_logs (channel, status, summary, details, started_at, finished_at)
+                       VALUES (%s, %s, %s, %s, %s, %s);""",
+                    (
+                        channel_sync.TURNO_CHANNEL,
+                        "failed",
+                        f"Webhook {action}",
+                        json.dumps({"error": str(e)}, default=str),
                         datetime.now(timezone.utc),
                         datetime.now(timezone.utc),
                     ),
@@ -4452,6 +4572,139 @@ async def save_email_settings(request: Request, db=Depends(get_db)):
         val = (form.get(key) or "").strip()
         _set_setting(db, key, val)
     return RedirectResponse(url="/docs?saved=1", status_code=303)
+
+
+# --- Back-log ---------------------------------------------------------------
+# Record real work that happened before it was entered, with its true date, so
+# revenue, bookings, and host relationships reflect reality.
+def _backlog_when(value: str) -> datetime:
+    try:
+        d = date.fromisoformat((value or "").strip())
+    except ValueError:
+        d = date.today()
+    return datetime(d.year, d.month, d.day, 12, 0, tzinfo=APP_TZ)
+
+
+def _backlog_cents(value: str) -> int:
+    try:
+        return max(0, int(round(float(value) * 100)))
+    except (TypeError, ValueError):
+        return 0
+
+
+@app.get("/backlog", response_class=HTMLResponse)
+async def backlog_page(request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT l.id, l.tx_type, l.description, l.amount_cents, l.created_at, "
+            "b.customer_name, b.service_type "
+            "FROM ledger_entries l "
+            "LEFT JOIN bookings b ON b.id = l.ref_id AND l.ref_type = 'backlog_job' "
+            "WHERE l.ref_type IN ('backlog_job', 'backlog_expense') "
+            "ORDER BY l.created_at DESC LIMIT 200;"
+        )
+        entries = cur.fetchall()
+        cur.execute(
+            "SELECT COALESCE(SUM(amount_cents) FILTER (WHERE tx_type = 'income'), 0) AS income, "
+            "COALESCE(SUM(amount_cents) FILTER (WHERE tx_type = 'expense'), 0) AS expense "
+            "FROM ledger_entries WHERE ref_type IN ('backlog_job', 'backlog_expense');"
+        )
+        totals = cur.fetchone()
+    return templates.TemplateResponse(
+        request=request, name="backlog.html",
+        context={"entries": entries, "totals": totals, "today": date.today().isoformat()},
+    )
+
+
+@app.post("/api/backlog/job")
+async def backlog_job(
+    request: Request,
+    entry_date: str = Form(""),
+    customer_name: str = Form(""),
+    service_type: str = Form(""),
+    description: str = Form(""),
+    amount_dollars: str = Form(""),
+    host_name: str = Form(""),
+    property_name: str = Form(""),
+    property_address: str = Form(""),
+    db=Depends(get_db),
+):
+    require_admin(request)
+    when = _backlog_when(entry_date)
+    cents = _backlog_cents(amount_dollars)
+    if cents <= 0:
+        return RedirectResponse(url="/backlog?err=amount", status_code=303)
+    customer = customer_name or "Back-logged customer"
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO customers (name, source, created_at) VALUES (%s, 'backlog', %s);",
+                    (customer, when))
+        cur.execute(
+            "INSERT INTO bookings (customer_name, service_type, status, created_at) "
+            "VALUES (%s, %s, 'completed', %s) RETURNING id;",
+            (customer, service_type or "Turnover", when),
+        )
+        booking_id = cur.fetchone()["id"]
+        cur.execute(
+            "INSERT INTO ledger_entries (tx_type, ref_type, ref_id, description, amount_cents, created_at) "
+            "VALUES ('income', 'backlog_job', %s, %s, %s, %s) "
+            "ON CONFLICT (ref_type, ref_id) DO NOTHING;",
+            (booking_id, description or f"{service_type or 'Job'} — {customer}", cents, when),
+        )
+        if host_name:
+            cur.execute("SELECT id FROM hosts WHERE name = %s LIMIT 1;", (host_name,))
+            row = cur.fetchone()
+            if row:
+                host_id = row["id"]
+            else:
+                cur.execute(
+                    "INSERT INTO hosts (name, property_name, created_at) VALUES (%s, %s, %s) RETURNING id;",
+                    (host_name, property_name or None, when),
+                )
+                host_id = cur.fetchone()["id"]
+            if property_name or property_address:
+                cur.execute(
+                    "INSERT INTO properties (host_id, name, address, created_at) VALUES (%s, %s, %s, %s);",
+                    (host_id, property_name or "Managed property", property_address, when),
+                )
+        db.commit()
+    return RedirectResponse(url="/backlog?ok=job", status_code=303)
+
+
+@app.post("/api/backlog/expense")
+async def backlog_expense(
+    request: Request,
+    entry_date: str = Form(""),
+    description: str = Form(""),
+    amount_dollars: str = Form(""),
+    db=Depends(get_db),
+):
+    require_admin(request)
+    when = _backlog_when(entry_date)
+    cents = _backlog_cents(amount_dollars)
+    if cents <= 0:
+        return RedirectResponse(url="/backlog?err=amount", status_code=303)
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO ledger_entries (tx_type, ref_type, description, amount_cents, created_at) "
+            "VALUES ('expense', 'backlog_expense', %s, %s, %s);",
+            (description or "Back-logged expense", cents, when),
+        )
+        db.commit()
+    return RedirectResponse(url="/backlog?ok=expense", status_code=303)
+
+
+@app.post("/api/backlog/{entry_id}/delete")
+async def backlog_delete(entry_id: int, request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute("SELECT ref_type, ref_id FROM ledger_entries WHERE id = %s;", (entry_id,))
+        row = cur.fetchone()
+        cur.execute("DELETE FROM ledger_entries WHERE id = %s;", (entry_id,))
+        if row and row.get("ref_type") == "backlog_job" and row.get("ref_id"):
+            cur.execute("DELETE FROM bookings WHERE id = %s;", (row["ref_id"],))
+        db.commit()
+    return RedirectResponse(url="/backlog?ok=deleted", status_code=303)
 
 
 # --- ACCESS CONTROL (ADMIN) ---
