@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from contextlib import asynccontextmanager
 from pathlib import Path
 import threading
+from contextvars import ContextVar
 import psycopg
 from psycopg.rows import dict_row
 from fastapi import FastAPI, Request, Form, Response, Depends, HTTPException, status, File, UploadFile, WebSocket, WebSocketDisconnect
@@ -34,12 +35,60 @@ import legal_forms
 import documents_service
 import auth_service
 import training_service
+import auto_reply
 
 db_url = os.getenv("DATABASE_URL", "postgresql://shaun:secret@localhost:5432/bizstack")
 templates = Jinja2Templates(directory="templates")
 stripe_svc = StripeService()
 signalwire = SignalWireService()
 rental_analysis = RentalAnalysisService()
+
+_company_var: ContextVar[str] = ContextVar("company_key", default="broom")
+
+
+def _company_config(key: str) -> dict:
+    """Shared identity block for the merged BizStack app."""
+    if key == "construction":
+        return {
+            "key": "construction",
+            "name": os.getenv("CONSTRUCTION_COMPANY_NAME", "Buildstack Construction Co."),
+            "phone": os.getenv("CONSTRUCTION_COMPANY_PHONE", "+1 (757) 846-9275"),
+            "phone_e164": os.getenv("SIGNALWIRE_PHONE", "+17578469275"),
+            "email": os.getenv("CONSTRUCTION_COMPANY_EMAIL", "hello@bizstackperks.com"),
+            "domain": os.getenv("CONSTRUCTION_COMPANY_DOMAIN", "construction.bizstackperks.com"),
+            "license": os.getenv("CONSTRUCTION_CONTRACTOR_LICENSE", ""),
+            "service_area": os.getenv(
+                "CONSTRUCTION_SERVICE_AREA",
+                "Williamsburg–Hampton Roads, VA · Currituck County & Elizabeth City, NC",
+            ),
+            "founded": "2026",
+        }
+    return {
+        "key": "broom",
+        "name": os.getenv("COMPANY_NAME", "Broom Service"),
+        "phone": os.getenv("COMPANY_PHONE", "+1 (757) 846-9275"),
+        "phone_e164": os.getenv("SIGNALWIRE_PHONE", "+17578469275"),
+        "email": os.getenv("COMPANY_EMAIL", "hello@bizstackperks.com"),
+        "domain": os.getenv("COMPANY_DOMAIN", "bizstackperks.com"),
+        "license": os.getenv("CONTRACTOR_LICENSE", ""),
+        "service_area": os.getenv(
+            "SERVICE_AREA",
+            "Williamsburg–Hampton Roads, VA",
+        ),
+        "founded": "2026",
+    }
+
+
+def company() -> dict:
+    return _company_config(_company_var.get())
+
+
+def _map_embed(address: str | None) -> str:
+    return f"https://maps.google.com/maps?q={urllib.parse.quote_plus(address or '')}&output=embed"
+
+
+def _map_directions(address: str | None) -> str:
+    return f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote_plus(address or '')}"
 
 
 def _money(value):
@@ -49,7 +98,17 @@ def _money(value):
         return "—"
 
 
+def _money_cents(value):
+    try:
+        return f"${float(value or 0) / 100:,.0f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
 templates.env.filters["money"] = _money
+
+con_templates = Jinja2Templates(directory="templates/construction")
+con_templates.env.filters["money"] = _money_cents
 
 APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "America/New_York"))
 BOOKING_HOURS = int(os.getenv("BOOKING_HOURS", "1"))
@@ -926,14 +985,215 @@ async def lifecycle(app: FastAPI):
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
+                # ---- Unified multi-company schema (Broom Service + Buildstack Construction) ----
+                # Tag every shared row with a company so one backend serves both brands.
+                for _shared_tbl in ("calendar_events", "payments", "comms_logs", "users", "leads",
+                                    "customers", "messages", "job_photos", "hosts", "workers"):
+                    cur.execute(f'ALTER TABLE {_shared_tbl} ADD COLUMN IF NOT EXISTS company VARCHAR(20) NOT NULL DEFAULT \'broom\';')
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_leads_company ON leads (company);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_payments_company ON payments (company);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_events_company ON calendar_events (company);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_company ON messages (company);")
+                # Relax parent-only NOT NULLs so construction rows coexist (booking_id / event_id / email).
+                cur.execute("ALTER TABLE payments ALTER COLUMN booking_id DROP NOT NULL;")
+                cur.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS lead_id INTEGER REFERENCES leads(id);")
+                cur.execute("ALTER TABLE calendar_events ALTER COLUMN customer_name DROP NOT NULL;")
+                cur.execute("ALTER TABLE calendar_events ALTER COLUMN service_type DROP NOT NULL;")
+                cur.execute("ALTER TABLE leads ALTER COLUMN email DROP NOT NULL;")
+                # Construction lead columns ride on the same leads table.
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS project_type VARCHAR(120);")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS address VARCHAR(255);")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS budget VARCHAR(120);")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS timeline VARCHAR(120);")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS description TEXT;")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS deposit_status VARCHAR(50) DEFAULT 'none';")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS deposit_cents INTEGER;")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS stripe_session_id VARCHAR(255);")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS notes TEXT;")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS property_sqft INTEGER;")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS estimate_low_cents INTEGER;")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS estimate_high_cents INTEGER;")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS estimate_json TEXT;")
+                # Construction-only tables.
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS crew (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
+                    phone VARCHAR(50) NOT NULL,
+                    email VARCHAR(255),
+                    role VARCHAR(50) DEFAULT 'crew',
+                    pay_type VARCHAR(20) DEFAULT 'hourly',
+                    pay_rate NUMERIC(10,2) DEFAULT 0,
+                    pin_hash VARCHAR(255),
+                    is_active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    company VARCHAR(20) NOT NULL DEFAULT 'construction'
+                );
+                """)
+                cur.execute("ALTER TABLE crew ADD COLUMN IF NOT EXISTS stripe_account_id VARCHAR(255);")
+                cur.execute("ALTER TABLE crew ADD COLUMN IF NOT EXISTS bank_status VARCHAR(20) DEFAULT 'none';")
+                cur.execute("ALTER TABLE crew ADD COLUMN IF NOT EXISTS worker_token VARCHAR(255);")
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS projects (
+                    id SERIAL PRIMARY KEY,
+                    lead_id INTEGER REFERENCES leads(id),
+                    name VARCHAR(255) NOT NULL,
+                    address VARCHAR(255),
+                    summary TEXT,
+                    start_date DATE,
+                    end_date DATE,
+                    status VARCHAR(50) DEFAULT 'planned',
+                    notes TEXT,
+                    company VARCHAR(20) NOT NULL DEFAULT 'construction',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_projects_company ON projects (company);")
+                cur.execute("ALTER TABLE job_photos ALTER COLUMN event_id DROP NOT NULL;")
+                cur.execute("ALTER TABLE job_photos ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id);")
+                cur.execute("ALTER TABLE job_photos ADD COLUMN IF NOT EXISTS crew_id INTEGER REFERENCES crew(id);")
+                cur.execute("ALTER TABLE job_photos ADD COLUMN IF NOT EXISTS is_punchlist BOOLEAN DEFAULT FALSE;")
+                cur.execute("ALTER TABLE job_photos ADD COLUMN IF NOT EXISTS filename VARCHAR(500);")
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS project_assignments (
+                    id SERIAL PRIMARY KEY,
+                    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                    crew_id INTEGER NOT NULL REFERENCES crew(id) ON DELETE CASCADE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (project_id, crew_id)
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS clock_events (
+                    id SERIAL PRIMARY KEY,
+                    crew_id INTEGER NOT NULL REFERENCES crew(id),
+                    project_id INTEGER REFERENCES projects(id),
+                    punch_in_at TIMESTAMP WITH TIME ZONE,
+                    punch_out_at TIMESTAMP WITH TIME ZONE,
+                    punch_in_lat NUMERIC(9,6),
+                    punch_in_lng NUMERIC(9,6),
+                    punch_out_lat NUMERIC(9,6),
+                    punch_out_lng NUMERIC(9,6),
+                    work_type VARCHAR(20) DEFAULT 'regular',
+                    notes TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS timesheets (
+                    id SERIAL PRIMARY KEY,
+                    crew_id INTEGER NOT NULL REFERENCES crew(id),
+                    project_id INTEGER REFERENCES projects(id),
+                    work_date DATE NOT NULL,
+                    start_time VARCHAR(10),
+                    end_time VARCHAR(10),
+                    hours NUMERIC(6,2) NOT NULL,
+                    work_type VARCHAR(20) DEFAULT 'regular',
+                    source VARCHAR(20) DEFAULT 'manual',
+                    status VARCHAR(20) DEFAULT 'submitted',
+                    notes TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS payroll_runs (
+                    id SERIAL PRIMARY KEY,
+                    period_start DATE NOT NULL,
+                    period_end DATE NOT NULL,
+                    status VARCHAR(20) DEFAULT 'open',
+                    note TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS payroll_lines (
+                    id SERIAL PRIMARY KEY,
+                    run_id INTEGER NOT NULL REFERENCES payroll_runs(id) ON DELETE CASCADE,
+                    crew_id INTEGER NOT NULL REFERENCES crew(id),
+                    hours NUMERIC(6,2) DEFAULT 0,
+                    overtime_hours NUMERIC(6,2) DEFAULT 0,
+                    gross_cents INTEGER DEFAULT 0,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (run_id, crew_id)
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS job_leads (
+                    id SERIAL PRIMARY KEY,
+                    permit_number VARCHAR(255),
+                    address VARCHAR(255),
+                    city VARCHAR(120),
+                    state VARCHAR(5),
+                    work_type VARCHAR(120),
+                    job_description TEXT,
+                    contractor_name VARCHAR(255),
+                    issue_date VARCHAR(40),
+                    estimated_value NUMERIC(14,2),
+                    owner_contact VARCHAR(50),
+                    status VARCHAR(20) DEFAULT 'new',
+                    source VARCHAR(50) DEFAULT 'permits',
+                    is_demo BOOLEAN DEFAULT FALSE,
+                    company VARCHAR(20) NOT NULL DEFAULT 'construction',
+                    found_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                # Private messaging: kind ('dm'|'announcement'), recipient + scope.
+                cur.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS kind VARCHAR(20) NOT NULL DEFAULT 'announcement';")
+                cur.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS recipient_role VARCHAR(20);")
+                cur.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS recipient_id INTEGER;")
+                cur.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS recipient_name VARCHAR(255);")
+                cur.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS scope VARCHAR(20) NOT NULL DEFAULT 'all';")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_dm ON messages (kind, recipient_role, recipient_id);")
                 conn.commit()
         print("🚀 Database connectivity and tables validated successfully.")
     except Exception as e:
         print(f"❌ Structural database connection failure: {e}")
+
+    if not os.getenv("DISABLE_LOAN_OUTREACH"):
+        try:
+            from loan_outreach import start_outreach_tasks
+            app.state.outreach_tasks = start_outreach_tasks()
+        except Exception as e:
+            print(f"⚠️ Loan outreach startup skipped: {e}")
+
+    if not os.getenv("DISABLE_EMAIL_BOT"):
+        try:
+            from email_bot import start_email_bot
+            start_email_bot()
+        except Exception as e:
+            print(f"⚠️ Email bot startup skipped: {e}")
+
+    if not os.getenv("DISABLE_PERMIT_IMPORT"):
+        try:
+            from construction_main import _start_permit_importer
+            import permit_service
+            if permit_service.is_configured():
+                _start_permit_importer()
+                print("[permit-scan] importer started from host dispatcher", flush=True)
+        except Exception as e:
+            print(f"⚠️ Permit importer startup skipped: {e}")
+
     yield
 
 app = FastAPI(lifespan=lifecycle, docs_url="/swagger", redoc_url="/redoc")
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+def resolve_company(request: Request) -> str:
+    """Pick the company from the Host header; default to whatever env sets."""
+    host = (request.headers.get("host") or "").lower().split(":")[0]
+    if _is_construction_host(host):
+        return "construction"
+    return os.getenv("COMPANY_KEY", "broom")
+
+
+@app.middleware("http")
+async def _company_middleware(request: Request, call_next):
+    token = _company_var.set(resolve_company(request))
+    try:
+        return await call_next(request)
+    finally:
+        _company_var.reset(token)
 
 def get_db():
     conn = psycopg.connect(db_url, row_factory=dict_row)
@@ -947,7 +1207,11 @@ def current_actor(request: Request):
     return auth_service.actor_from_token(request.cookies.get(auth_service.SESSION_COOKIE))
 
 def _worker_session_actor(request: Request) -> dict | None:
-    """Return a worker actor authenticated via the crew app's worker_session cookie."""
+    """Return a worker actor authenticated via the crew app's worker_session cookie.
+
+    The same cookie is used by both companies, so we check the Broom `workers`
+    table first, then the construction `crew` table, stamping the company.
+    """
     token = request.cookies.get("worker_session")
     worker_id = request.cookies.get("worker_id")
     if not token or not worker_id:
@@ -956,17 +1220,24 @@ def _worker_session_actor(request: Request) -> dict | None:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, name, email FROM workers WHERE id = %s AND is_active = TRUE AND worker_token = %s;",
+                "SELECT id, name, email, company FROM workers WHERE id = %s AND is_active = TRUE AND worker_token = %s;",
                 (int(worker_id), token),
             )
             row = cur.fetchone()
+            if not row:
+                cur.execute(
+                    "SELECT id, name, email, company FROM crew WHERE id = %s AND is_active = TRUE AND worker_token = %s;",
+                    (int(worker_id), token),
+                )
+                row = cur.fetchone()
     except Exception:
         row = None
     finally:
         conn.close()
     if not row:
         return None
-    return {"role": "worker", "id": row["id"], "email": row.get("email"), "name": row.get("name")}
+    return {"role": "worker", "id": row["id"], "email": row.get("email"), "name": row.get("name"),
+            "company": row.get("company") or "broom"}
 
 def _session_actor(request: Request) -> dict | None:
     """The signed-in session actor, or a worker authenticated via the crew app."""
@@ -1145,6 +1416,16 @@ templates.env.globals["current_actor"] = _template_actor
 templates.env.globals["current_features"] = _template_features
 templates.env.globals["site_theme_state"] = lambda: site_theme.state()
 templates.env.globals["promo_code"] = lambda: "FIRSTCLEAN"
+
+for _env in (templates.env, con_templates.env):
+    _env.globals["company"] = company
+    _env.globals["map_embed"] = _map_embed
+    _env.globals["map_directions"] = _map_directions
+
+con_templates.env.globals["current_actor"] = _template_actor
+con_templates.env.globals["current_features"] = _template_features
+con_templates.env.globals["site_theme_state"] = lambda: site_theme.state()
+con_templates.env.globals["promo_code"] = lambda: "FIRSTCLEAN"
 
 # --- PUBLIC LANDING & AUTH ---
 
@@ -1480,6 +1761,114 @@ async def submit_lead(
     else:
         response["analysis_ready"] = False
     return JSONResponse(content=response)
+
+# --- Public financing application (both companies share one page) -----------
+@app.get("/finance", response_class=HTMLResponse)
+async def finance_page(request: Request):
+    if resolve_company(request) == "construction":
+        return con_templates.TemplateResponse(request=request, name="finance.html", context={})
+    return templates.TemplateResponse(request=request, name="finance.html", context={})
+
+
+@app.post("/finance")
+async def finance_apply(
+    request: Request,
+    full_name: str = Form(""),
+    phone: str = Form(""),
+    email: str = Form(""),
+    service_type: str = Form(""),
+    project_type: str = Form(""),
+    address: str = Form(""),
+    amount_needed: str = Form(""),
+    how_soon: str = Form(""),
+    when_start: str = Form(""),
+    message: str = Form(""),
+    ref: str = Form(""),
+    db=Depends(get_db),
+):
+    name = (full_name or "").strip()
+    phone = (phone or "").strip()
+    email = (email or "").strip()
+    if not name or not phone:
+        return RedirectResponse(url="/finance?error=Please+add+your+name+and+phone", status_code=status.HTTP_303_SEE_OTHER)
+    if not email:
+        return RedirectResponse(url="/finance?error=Please+add+your+email+%E2%80%94+we%27ll+send+your+quote+there", status_code=status.HTTP_303_SEE_OTHER)
+    company_key = resolve_company(request)
+    budget = (amount_needed or "").strip()
+    timeline = (when_start or how_soon or "").strip()
+    use_note = (message or "").strip()[:2000]
+    ref_code = (ref or request.query_params.get("ref") or "").strip().lower()[:50]
+
+    partner_id = None
+    if ref_code:
+        with db.cursor() as cur:
+            cur.execute("SELECT id FROM partners WHERE referral_code = %s;", (ref_code,))
+            prow = cur.fetchone()
+            if prow:
+                partner_id = prow["id"]
+            else:
+                cur.execute("SELECT id FROM referral_codes WHERE code = %s;", (ref_code,))
+                if not cur.fetchone():
+                    ref_code = ""
+
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO leads (name, email, phone, project_type, address, budget, timeline, description, "
+            "source, status, funding_needed, funding_use, referral_code, partner_id, campaign, company) "
+            "VALUES (%s, %s, %s, NULLIF(%s,''), NULLIF(%s,''), NULLIF(%s,''), NULLIF(%s,''), %s, "
+            "'finance', 'new', TRUE, %s, NULLIF(%s,''), %s, NULLIF(%s,''), %s) RETURNING id;",
+            (name, (email or "").strip(), phone,
+             project_type if company_key == "construction" else "",
+             address, budget, timeline, use_note,
+             use_note, ref_code, partner_id, "finance-link", company_key),
+        )
+        lead_id = cur.fetchone()["id"]
+        db.commit()
+
+    summary = (
+        f"💰 New financing application (#{lead_id}) — {name}, {phone}"
+        + (f", {email.strip()}" if (email or "").strip() else "")
+        + (f"\nNeeds: {service_type or project_type}" if (service_type or project_type) else "")
+        + (f"\nAmount: ${budget}" if budget else "")
+        + (f"\nWhen: {timeline}" if timeline else "")
+        + (f"\n{use_note[:200]}" if use_note else "")
+        + (f"\nRef: {ref_code}" if ref_code else "")
+    )
+    owner_phone = _company_config("construction" if company_key == "construction" else "broom")["phone_e164"]
+    try:
+        if os.getenv("OWNER_SMS_ENABLED", "0").lower() in ("1", "true", "yes") and signalwire.is_configured():
+            signalwire.send_sms(owner_phone, summary[:1500])
+            with db.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO comms_logs (direction, channel, sender, recipient, message_body) "
+                    "VALUES (%s, %s, %s, %s, %s);",
+                    ("outbound", "sms", "system", owner_phone, summary),
+                )
+                db.commit()
+    except Exception as e:
+        print(f"⚠️ finance owner SMS failed: {e}", flush=True)
+
+    try:
+        cfg = documents_service.smtp_config_from_env()
+        if documents_service.smtp_configured(cfg):
+            documents_service.send_email(cfg, _company_config(
+                "construction" if company_key == "construction" else "broom")["email"],
+                f"New financing application #{lead_id}", summary)
+    except Exception as e:
+        print(f"⚠️ finance owner email failed: {e}", flush=True)
+
+    try:
+        auto_reply.auto_reply_to_lead(
+            db, company_key, name=name, phone=phone, email=(email or "").strip(),
+            service=(service_type or project_type or ""),
+            address=(address or ""), budget=(budget or ""), timeline=(timeline or ""),
+            message=(use_note or ""), source="finance", funding=True,
+            sqft=0, lead_id=lead_id,
+        )
+    except Exception as e:
+        print(f"⚠️ finance auto-reply failed: {e}", flush=True)
+
+    return RedirectResponse(url="/finance?sent=1", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.get("/analysis/{lead_id}", response_class=HTMLResponse)
 async def view_analysis(lead_id: int, request: Request, db=Depends(get_db)):
@@ -1927,6 +2316,14 @@ async def link_host_booking(host_id: int, event_id: int = Form(...), db=Depends(
 async def delete_lead(lead_id: int, request: Request, db=Depends(get_db)):
     require_admin(request)
     with db.cursor() as cur:
+        cur.execute("SELECT id FROM projects WHERE lead_id = %s;", (lead_id,))
+        project_ids = [r["id"] for r in cur.fetchall()]
+        if project_ids:
+            cur.execute("DELETE FROM job_photos WHERE project_id = ANY(%s);", (project_ids,))
+            cur.execute("DELETE FROM clock_events WHERE project_id = ANY(%s);", (project_ids,))
+            cur.execute("DELETE FROM timesheets WHERE project_id = ANY(%s);", (project_ids,))
+            cur.execute("DELETE FROM projects WHERE id = ANY(%s);", (project_ids,))
+        cur.execute("DELETE FROM payments WHERE lead_id = %s;", (lead_id,))
         cur.execute("DELETE FROM leads WHERE id = %s;", (lead_id,))
         db.commit()
     return RedirectResponse(url="/hosts", status_code=303)
@@ -3467,8 +3864,61 @@ async def devices_delete(device_id: int, request: Request, db=Depends(get_db)):
 # --- INTERNAL OFFICE MESSAGING ---
 
 def _message_actor(request: Request):
-    """Current session actor, or a worker authenticated via the crew app's worker_session."""
-    return _session_actor(request)
+    """Current session actor, or a worker authenticated via the crew app's worker_session.
+
+    Returns {role, id, email, name, company} where company is 'broom' or
+    'construction' (admin belongs to both and reports 'all')."""
+    actor = current_actor(request)
+    if actor:
+        actor = dict(actor)
+        actor["company"] = "all" if actor.get("role") == "admin" else resolve_company(request)
+        return actor
+    worker = _worker_session_actor(request)
+    if worker:
+        return worker
+    token = request.cookies.get("host_session")
+    if token:
+        actor = auth_service.actor_from_token(token)
+        if actor and actor.get("role") == "host":
+            actor = dict(actor)
+            actor["company"] = "broom"
+            return actor
+    return None
+
+def _message_visible(m: dict, actor: dict) -> bool:
+    """A message is visible to an actor when it's an announcement they're in
+    scope for, or a DM where they are the author or the recipient."""
+    if not actor:
+        return False
+    kind = m.get("kind") or "announcement"
+    if kind == "dm":
+        return bool(
+            (m.get("author_role") == actor.get("role") and m.get("author_id") == actor.get("id"))
+            or (m.get("recipient_role") == actor.get("role") and m.get("recipient_id") == actor.get("id"))
+        )
+    scope = m.get("scope") or "all"
+    if actor.get("role") == "admin" or actor.get("company") == "all":
+        return True
+    return scope == "all" or scope == actor.get("company")
+
+
+def _serialize_message(m: dict) -> dict:
+    return {
+        "id": m["id"],
+        "kind": m.get("kind") or "announcement",
+        "author_role": m["author_role"],
+        "author_id": m["author_id"],
+        "author_name": m["author_name"],
+        "author_company": m.get("company") or "broom",
+        "audience": m.get("audience"),
+        "scope": m.get("scope") or "all",
+        "recipient_role": m.get("recipient_role"),
+        "recipient_id": m.get("recipient_id"),
+        "recipient_name": m.get("recipient_name"),
+        "body": m["body"],
+        "created_at": m["created_at"].isoformat(),
+    }
+
 
 @app.get("/messages", response_class=HTMLResponse)
 async def messages_page(request: Request, db=Depends(get_db)):
@@ -3493,51 +3943,99 @@ async def messages_list(request: Request, after: int = 0, db=Depends(get_db)):
             ORDER BY id ASC LIMIT 500;
         """, (int(after),))
         rows = cur.fetchall()
-    msgs = []
-    for m in rows:
-        msgs.append({
-            "id": m["id"],
-            "author_role": m["author_role"],
-            "author_id": m["author_id"],
-            "author_name": m["author_name"],
-            "audience": m["audience"],
-            "body": m["body"],
-            "created_at": m["created_at"].isoformat(),
-        })
+    msgs = [_serialize_message(m) for m in rows if _message_visible(m, actor)]
     return JSONResponse(content={"ok": True, "messages": msgs})
 
+@app.get("/api/messages/roster", response_class=JSONResponse)
+async def messages_roster(request: Request, db=Depends(get_db)):
+    """Unified roster of every reachable user across both companies."""
+    actor = _message_actor(request)
+    if not actor:
+        raise HTTPException(status_code=401, detail="Login required")
+    roster = []
+    with db.cursor() as cur:
+        cur.execute("SELECT id, email, name FROM users WHERE role = 'admin';")
+        for u in cur.fetchall():
+            roster.append({"role": "admin", "id": u["id"], "name": u.get("name") or u["email"], "company": "all"})
+        cur.execute("SELECT id, name, email, company FROM workers WHERE is_active = TRUE;")
+        for w in cur.fetchall():
+            roster.append({"role": "worker", "id": w["id"], "name": w["name"], "company": w.get("company") or "broom"})
+        cur.execute("SELECT id, name, email, company FROM crew WHERE is_active = TRUE;")
+        for c in cur.fetchall():
+            roster.append({"role": "worker", "id": c["id"], "name": c["name"], "company": c.get("company") or "construction"})
+        cur.execute("SELECT id, name, email, company FROM hosts WHERE status = 'active';")
+        for h in cur.fetchall():
+            roster.append({"role": "host", "id": h["id"], "name": h["name"], "company": h.get("company") or "broom"})
+    return JSONResponse(content={"ok": True, "roster": roster})
+
 @app.post("/api/messages", response_class=JSONResponse)
-async def messages_send(request: Request, body: str = Form(...), audience: str = Form("office"), db=Depends(get_db)):
+async def messages_send(request: Request, body: str = Form(...), audience: str = Form("office"),
+                        kind: str = Form("dm"), to_role: str = Form(""), to_id: str = Form(""),
+                        scope: str = Form("all"), db=Depends(get_db)):
     actor = _message_actor(request)
     if not actor:
         raise HTTPException(status_code=401, detail="Login required")
     if actor.get("role") != "worker" and not _device_session_ok(db, actor, request):
         raise HTTPException(status_code=403, detail="Messaging is locked to this account's active device. Log in again on this device to take over.")
-    if actor.get("role") == "worker":
-        audience = "office"
+    kind = kind if kind in ("dm", "announcement") else "dm"
+    if kind == "announcement":
+        if actor.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Only the owner can announce to everyone")
+        scope = scope if scope in ("all", "broom", "construction") else "all"
+    elif actor.get("role") == "worker":
+        # Crew/workers can't broadcast; they send DMs to the office/admin instead.
+        to_role, to_id, scope = "admin", "", "all"
     if not body.strip():
         raise HTTPException(status_code=400, detail="Message is empty")
-    if audience not in ("office", "workers", "hosts"):
-        audience = "office"
+    recipient_name = None
+    recipient_role = None
+    recipient_id = None
+    if kind == "dm" and to_role:
+        if to_role == "admin":
+            recipient_role, recipient_name = "admin", "Office"
+        else:
+            recipient_id = int(to_id) if (to_id or "").isdigit() else None
+            if recipient_id is not None:
+                recipient_role = to_role
+                with db.cursor() as cur:
+                    cur.execute(f"SELECT name FROM {to_role + 's'} WHERE id = %s LIMIT 1;", (recipient_id,))
+                    row = cur.fetchone()
+                    recipient_name = row["name"] if row else None
+    author_company = actor.get("company")
+    if author_company == "all":
+        author_company = resolve_company(request)
     with db.cursor() as cur:
         cur.execute(
-            "INSERT INTO messages (author_role, author_id, author_name, audience, body) VALUES (%s, %s, %s, %s, %s) RETURNING id;",
-            (actor["role"], actor["id"], actor["name"], audience, body[:4000]),
+            """INSERT INTO messages (author_role, author_id, author_name, company, kind, audience, scope,
+                                      recipient_role, recipient_id, recipient_name, body)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;""",
+            (actor["role"], actor["id"], actor["name"], author_company, kind,
+             audience if kind == "announcement" else "office",
+             scope if kind == "announcement" else "all",
+             recipient_role, recipient_id, recipient_name, body[:4000]),
         )
         new_id = cur.fetchone()["id"]
         db.commit()
-    broadcast = {
+    new_row = {
         "id": new_id,
+        "kind": kind,
         "author_role": actor["role"],
         "author_id": actor["id"],
         "author_name": actor["name"],
-        "audience": audience,
+        "author_company": author_company,
+        "audience": audience if kind == "announcement" else "office",
+        "scope": scope if kind == "announcement" else "all",
+        "recipient_role": recipient_role,
+        "recipient_id": recipient_id,
+        "recipient_name": recipient_name,
         "body": body[:4000],
         "created_at": datetime.now(ZoneInfo("UTC")).isoformat(),
     }
     for ws in list(msg_clients):
+        viewer = getattr(ws.state, "actor", None)
         try:
-            await ws.send_json(broadcast)
+            if _message_visible(new_row, viewer):
+                await ws.send_json(new_row)
         except Exception:
             msg_clients.discard(ws)
     return JSONResponse(content={"ok": True})
@@ -3588,15 +4086,8 @@ async def ws_messages(websocket: WebSocket):
                     cur.execute("SELECT * FROM messages WHERE id > %s ORDER BY id ASC LIMIT 100;", (after_id,))
                     rows = cur.fetchall()
                 for m in rows:
-                    await websocket.send_json({
-                        "id": m["id"],
-                        "author_role": m["author_role"],
-                        "author_id": m["author_id"],
-                        "author_name": m["author_name"],
-                        "audience": m["audience"],
-                        "body": m["body"],
-                        "created_at": m["created_at"].isoformat(),
-                    })
+                    if _message_visible(m, actor):
+                        await websocket.send_json(_serialize_message(m))
             finally:
                 conn.close()
     except WebSocketDisconnect:
@@ -5048,6 +5539,11 @@ async def create_payment_link(event_id: int, db=Depends(get_db)):
 @app.get("/payments/success", response_class=HTMLResponse)
 async def payments_success(request: Request, db=Depends(get_db)):
     session_id = request.query_params.get("session_id")
+    if resolve_company(request) == "construction" and session_id:
+        with db.cursor() as cur:
+            cur.execute("SELECT * FROM leads WHERE stripe_session_id = %s;", (session_id,))
+            lead = cur.fetchone()
+        return con_templates.TemplateResponse(request=request, name="payment_success.html", context={"lead": lead})
     booking = None
     if session_id:
         with db.cursor() as cur:
@@ -5061,6 +5557,8 @@ async def payments_success(request: Request, db=Depends(get_db)):
 
 @app.get("/payments/cancel", response_class=HTMLResponse)
 async def payments_cancel(request: Request):
+    if resolve_company(request) == "construction":
+        return con_templates.TemplateResponse(request=request, name="payment_cancel.html", context={})
     return templates.TemplateResponse(request=request, name="payment_cancel.html", context={})
 
 @app.post("/api/payments/webhook")
@@ -5075,11 +5573,30 @@ async def payments_webhook(request: Request, db=Depends(get_db)):
 
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
-        event_id = session.get("metadata", {}).get("event_id")
         payment_intent = session.get("payment_intent")
         amount_total = session.get("amount_total", 0)
         currency = session.get("currency", "usd")
+        lead_id = session.get("metadata", {}).get("lead_id")
 
+        if lead_id:
+            # Construction project deposit
+            with db.cursor() as cur:
+                cur.execute(
+                    "UPDATE leads SET deposit_status = 'paid', stripe_session_id = %s, deposit_cents = %s, "
+                    "status = CASE WHEN status IN ('completed','in_progress') THEN status ELSE 'deposit' END "
+                    "WHERE id = %s;",
+                    (session.get("id"), amount_total, int(lead_id)),
+                )
+                cur.execute(
+                    "INSERT INTO payments (lead_id, stripe_session_id, stripe_payment_intent_id, amount_cents, currency, company) "
+                    "SELECT %s, %s, %s, %s, %s, 'construction' "
+                    "WHERE NOT EXISTS (SELECT 1 FROM payments WHERE stripe_session_id = %s);",
+                    (int(lead_id), session.get("id"), payment_intent, amount_total, currency, session.get("id")),
+                )
+                db.commit()
+            return Response(content='{"received": true}', media_type="application/json")
+
+        event_id = session.get("metadata", {}).get("event_id")
         if event_id:
             with db.cursor() as cur:
                 cur.execute(
@@ -5104,6 +5621,29 @@ async def payments_webhook(request: Request, db=Depends(get_db)):
                     )
                 db.commit()
 
+    return Response(content='{"received": true}', media_type="application/json")
+
+@app.post("/api/payments/connect-webhook")
+async def payments_connect_webhook(request: Request, db=Depends(get_db)):
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    try:
+        event = stripe_svc.construct_connect_event(payload, sig)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Connect webhook failed: {e}")
+    if isinstance(event, dict):
+        etype = event.get("type")
+        eobj = (event.get("data") or {}).get("object") or {}
+    else:
+        etype = event.type
+        eobj = event.data.object if event.data else {}
+    if etype in ("account.updated",):
+        account_id = eobj.get("id")
+        payouts_enabled = bool(eobj.get("payouts_enabled"))
+        with db.cursor() as cur:
+            cur.execute("UPDATE crew SET bank_status = %s WHERE stripe_account_id = %s;",
+                        ("connected" if payouts_enabled else "pending", account_id))
+            db.commit()
     return Response(content='{"received": true}', media_type="application/json")
 
 # --- BUSINESS API ---
@@ -5901,3 +6441,48 @@ async def legal_page(request: Request):
         "email": "hello@bizstackperks.com",
         "bot_email": "hello@bizstackperks.com",
     })
+
+# --- Multi-company host dispatcher -------------------------------------------
+# One Railway service serves both brands via a single ASGI entrypoint. Requests
+# for the construction domain are handled by the mounted construction sub-app;
+# everything else by this (Broom) app. Shared capabilities — unified chat,
+# the shared phone bot, Stripe webhooks (fixed URLs), checkouts and assets —
+# always resolve to this app. Both apps share one database (company-tagged rows).
+from construction_main import app as _construction_app
+
+_SHARED_PREFIXES = (
+    "/messages", "/api/messages", "/ws", "/comms", "/api/payments/webhook",
+    "/api/payments/connect-webhook", "/payments/success", "/payments/cancel",
+    "/static", "/uploads", "/health", "/sw.js", "/finance",
+)
+
+
+def _is_construction_host(host: str) -> bool:
+    host = (host or "").lower().split(":")[0]
+    return (
+        "buildstackconstruction.com" in host
+        or host.startswith("buildstackconstruction")
+        or host == "construction.bizstackperks.com"
+        or host.startswith("construction.bizstackperks.com")
+    )
+
+
+class _RoutingApp(FastAPI):
+    """Broom app whose __call__ routes construction hosts to the construction app."""
+
+    async def __call__(self, scope, receive, send):
+        host = ""
+        for key, value in scope.get("headers") or []:
+            if key == b"host":
+                host = value.decode("latin-1")
+                break
+        if scope["type"] in ("http", "websocket"):
+            path = scope.get("path") or "/"
+            if _is_construction_host(host) and not path.startswith(_SHARED_PREFIXES):
+                await _construction_app(scope, receive, send)
+                return
+        await super().__call__(scope, receive, send)
+
+
+app.__class__ = _RoutingApp
+application = app
