@@ -13,12 +13,16 @@ from datetime import datetime, timedelta, timezone
 HOSPITABLE_BASE_URL = "https://public.api.hospitable.com/v2"
 HOSPITABLE_CHANNEL = "hospitable"
 
+TURNO_BASE_URL = "https://api.turnoverbnb.com/v2"
+TURNO_CHANNEL = "turno"
+
 CHANNEL_LABELS = {
     "airbnb": "Airbnb",
     "vrbo": "VRBO",
     "booking.com": "Booking.com",
     "booking": "Booking.com",
     "hospitable": "Hospitable",
+    "turno": "Turno",
     "direct": "Direct",
 }
 
@@ -371,4 +375,301 @@ def sync_hospitable(db, pat):
     summary["message"] = message
     summary["reservation_count"] = len(reservations)
     summary["property_count"] = len(hosp_props)
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# Turno (formerly TurnoverBnB) — cleaning/calendar platform that aggregates
+# Airbnb, Vrbo and friends. API v2 at https://api.turnoverbnb.com/v2.
+#
+# Auth is unusual: every request needs BOTH `Authorization: Bearer <secret-key>`
+# and `TBNB-Partner-ID: <partner-uuid>`. Both come from Turno → API → Tokens
+# ("Here is your Partner ID:" is shown at the bottom of that page).
+#
+# Turno sits behind Cloudflare and has been observed to challenge non-browser
+# TLS fingerprints (a 403 HTML interstitial rather than a 401 JSON). We detect
+# that case explicitly so an operator doesn't rotate valid credentials chasing
+# a fingerprint block.
+# ---------------------------------------------------------------------------
+
+
+def _as_list(data, *keys):
+    """Pull a list out of a response that may be bare or wrapped in an envelope."""
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for container in (data, data.get("data")):
+            if isinstance(container, dict):
+                for key in keys:
+                    value = container.get(key)
+                    if isinstance(value, list):
+                        return value
+    return []
+
+
+def _looks_like_cloudflare(body, headers=None):
+    if headers is not None:
+        try:
+            if (headers.get("cf-mitigated") or "").lower() == "challenge":
+                return True
+        except Exception:
+            pass
+    text = (body or "").lower()
+    return "_cf_chl_opt" in text or "challenges.cloudflare.com" in text or "just a moment" in text
+
+
+class TurnoService:
+    def __init__(self, token="", partner_id="", base_url=TURNO_BASE_URL, timeout=30):
+        self.token = (token or "").strip()
+        self.partner_id = (partner_id or "").strip()
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    @property
+    def configured(self):
+        return bool(self.token)
+
+    def _get(self, path, params=None):
+        if not self.configured:
+            raise RuntimeError("Turno API token is not configured.")
+        url = self.base_url + path
+        cleaned = {k: v for k, v in (params or {}).items() if v not in (None, "")}
+        if cleaned:
+            url += "?" + urllib.parse.urlencode(cleaned, doseq=True)
+        headers = {"Authorization": f"Bearer {self.token}", "Accept": "application/json"}
+        if self.partner_id:
+            headers["TBNB-Partner-ID"] = self.partner_id
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            detail = ""
+            try:
+                detail = e.read().decode("utf-8", "replace")[:300]
+            except Exception:
+                pass
+            if e.code == 403 and _looks_like_cloudflare(detail, e.headers):
+                raise RuntimeError(
+                    "Turno blocked the request with a Cloudflare challenge, which is a TLS-fingerprint "
+                    "block rather than a credential problem. Do not rotate the Secret Key. Route Turno "
+                    "requests through a Chrome-impersonating client (e.g. curl_cffi)."
+                ) from None
+            if e.code == 401:
+                raise RuntimeError(
+                    "Turno rejected the credentials (401). Check the API Secret Key and that the "
+                    "TBNB-Partner-ID matches the same Turno account (both are on the Tokens page)."
+                ) from None
+            raise RuntimeError(f"Turno API error {e.code}: {detail or e.reason}") from None
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"Could not reach Turno API: {e.reason}") from None
+
+    def get_properties(self, page=1, limit=100):
+        data = self._get("/properties", {"page": page, "limit": limit})
+        return _as_list(data, "properties", "data", "results", "items")
+
+    def get_bookings(self, checkin_from=None, checkin_to=None, checkout_from=None,
+                     checkout_to=None, property_ids=None, page=1, limit=100):
+        params = {
+            "page": page,
+            "limit": limit,
+            "checkin_from": checkin_from,
+            "checkin_to": checkin_to,
+            "checkout_from": checkout_from,
+            "checkout_to": checkout_to,
+        }
+        if property_ids:
+            params["properties[]"] = [str(p) for p in property_ids]
+        data = self._get("/bookings", params)
+        return _as_list(data, "bookings", "data", "results", "items")
+
+
+def extract_turno_property(p):
+    return {
+        "id": str(p.get("id") or ""),
+        "name": (p.get("alias") or p.get("name") or p.get("address") or "Turno Property").strip(),
+    }
+
+
+def extract_turno_booking(b):
+    guest = b.get("guest_name") or b.get("summary") or b.get("description") or ""
+    return {
+        "id": str(b.get("id") or ""),
+        "external_ref": (str(b.get("external_booking_id") or "").strip() or None),
+        "status": (b.get("status") or "").strip().lower(),
+        "check_in": _parse_ts(b.get("checkin")),
+        "check_out": _parse_ts(b.get("checkout")),
+        "guest_name": (guest or "Channel Guest").strip() or "Channel Guest",
+        "property_ids": [str(b.get("property_id"))] if b.get("property_id") else [],
+        "raw": b,
+    }
+
+
+def sync_turno(db, token, partner_id=""):
+    """Pull properties + bookings from Turno and upsert into calendar_events.
+
+    Bookings are deduplicated by Turno's `external_booking_id` (the underlying
+    OTA reservation id): if a calendar event already carries that external ref
+    from any source, it is updated instead of duplicated. Otherwise the row is
+    keyed on (channel_source='turno', channel_booking_id=<turno id>).
+    """
+    started = datetime.now(timezone.utc)
+    svc = TurnoService(token, partner_id)
+    summary = {
+        "created": 0,
+        "updated": 0,
+        "adopted": 0,
+        "cancelled": 0,
+        "skipped_unmatched": 0,
+        "skipped_no_dates": 0,
+        "unlinked_properties": [],
+    }
+
+    def log_step(status, msg):
+        cur = db.cursor()
+        try:
+            cur.execute(
+                """INSERT INTO channel_sync_logs (channel, status, summary, details, started_at, finished_at)
+                   VALUES (%s, %s, %s, %s, %s, %s);""",
+                (TURNO_CHANNEL, status, msg, json.dumps(summary, default=str), started, datetime.now(timezone.utc)),
+            )
+            db.commit()
+        finally:
+            cur.close()
+
+    if not svc.configured:
+        log_step("failed", "Turno API token is not configured.")
+        return {"status": "failed", "message": "Turno API token not configured.", **summary}
+
+    try:
+        turno_props = svc.get_properties()
+    except RuntimeError as e:
+        log_step("failed", str(e))
+        return {"status": "failed", "message": str(e), **summary}
+
+    with db.cursor() as cur:
+        cur.execute("SELECT id, host_id, name, turno_property_id FROM properties WHERE turno_property_id IS NOT NULL;")
+        link_rows = cur.fetchall()
+    turno_to_local = {str(r["turno_property_id"]): r for r in link_rows}
+
+    for tp in turno_props:
+        tid = str(tp.get("id") or "")
+        if tid and tid not in turno_to_local:
+            summary["unlinked_properties"].append(extract_turno_property(tp)["name"] or tid)
+
+    today = datetime.now(timezone.utc).date()
+    start_date = (today - timedelta(days=365)).isoformat()
+    end_date = (today + timedelta(days=365)).isoformat()
+
+    try:
+        bookings = svc.get_bookings(
+            checkin_from=start_date,
+            checkin_to=end_date,
+            checkout_from=start_date,
+            checkout_to=end_date,
+        )
+    except RuntimeError as e:
+        log_step("failed", str(e))
+        return {"status": "failed", "message": str(e), **summary}
+
+    for booking in bookings:
+        r = extract_turno_booking(booking)
+        if not r["id"] or not r["check_in"] or not r["check_out"]:
+            summary["skipped_no_dates"] += 1
+            continue
+
+        local = None
+        for pid in r["property_ids"]:
+            if pid in turno_to_local:
+                local = turno_to_local[pid]
+                break
+        if local is None:
+            summary["skipped_unmatched"] += 1
+            continue
+
+        status_val = "cancelled" if r["status"] in CANCELLED_STATUSES else "active"
+        if status_val == "cancelled":
+            summary["cancelled"] += 1
+
+        with db.cursor() as cur:
+            cur.execute(
+                """SELECT id, payment_status FROM calendar_events
+                   WHERE channel_source = %s AND channel_booking_id = %s FOR UPDATE;""",
+                (TURNO_CHANNEL, r["id"]),
+            )
+            existing = cur.fetchone()
+            adopted = False
+            if not existing and r["external_ref"]:
+                cur.execute(
+                    """SELECT id, payment_status FROM calendar_events
+                       WHERE channel_external_ref = %s AND channel_booking_id IS NOT NULL
+                       ORDER BY id LIMIT 1 FOR UPDATE;""",
+                    (r["external_ref"],),
+                )
+                existing = cur.fetchone()
+                adopted = existing is not None
+
+            if existing:
+                cur.execute(
+                    """UPDATE calendar_events
+                       SET customer_name = %s, phone = COALESCE(NULLIF(phone, ''), %s),
+                           start_time = %s, end_time = %s, host_id = %s, property_id = %s,
+                           channel_status = %s, channel_external_ref = COALESCE(channel_external_ref, %s)
+                       WHERE id = %s;""",
+                    (
+                        r["guest_name"],
+                        "(channel)",
+                        r["check_in"],
+                        r["check_out"],
+                        local["host_id"],
+                        local["id"],
+                        status_val,
+                        r["external_ref"],
+                        existing["id"],
+                    ),
+                )
+                if status_val == "cancelled" and existing["payment_status"] != "paid":
+                    cur.execute(
+                        "UPDATE calendar_events SET payment_status = 'cancelled' WHERE id = %s;",
+                        (existing["id"],),
+                    )
+                if adopted:
+                    summary["adopted"] += 1
+                else:
+                    summary["updated"] += 1
+            else:
+                cur.execute(
+                    """INSERT INTO calendar_events
+                       (customer_name, phone, start_time, end_time, service_type,
+                        payment_status, host_id, property_id, channel_source, channel_booking_id,
+                        channel_status, channel_external_ref)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);""",
+                    (
+                        r["guest_name"],
+                        "(channel)",
+                        r["check_in"],
+                        r["check_out"],
+                        "Channel Booking",
+                        "cancelled" if status_val == "cancelled" else "unpaid",
+                        local["host_id"],
+                        local["id"],
+                        TURNO_CHANNEL,
+                        r["id"],
+                        status_val,
+                        r["external_ref"],
+                    ),
+                )
+                summary["created"] += 1
+        db.commit()
+
+    message = (
+        f"Synced {len(bookings)} Turno bookings "
+        f"({summary['created']} new, {summary['updated']} updated, {summary['adopted']} merged by external id). "
+        f"{summary['skipped_unmatched']} unmatched, {len(summary['unlinked_properties'])} unlinked properties."
+    )
+    log_step("success", message)
+    summary["status"] = "success"
+    summary["message"] = message
+    summary["reservation_count"] = len(bookings)
+    summary["property_count"] = len(turno_props)
     return summary

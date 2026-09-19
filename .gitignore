@@ -9,3 +9,4 @@ verify_install.py
 .env
 .env.*
 !.env.example
+/bizstack-construction/

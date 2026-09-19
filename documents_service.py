@@ -482,6 +482,86 @@ def mime_type(filename: str):
     return "application/pdf"
 
 
+async def _send_via_resend_api(cfg: dict, to: str, subject: str, body: str, physical: str, api_key: str) -> bool:
+    import asyncio
+    import json as _json
+    import urllib.request
+    import re as _re
+
+    html_body = body.replace("\n", "<br>")
+    text_body = _re.sub(r"<br\s*/?>", "\n", html_body)
+    if physical:
+        html_body += "\n\n" + physical.replace("\n", "<br>")
+        text_body += "\n\n" + physical
+
+    frm = cfg.get("SMTP_FROM") or ""
+    name = (cfg.get("SMTP_NAME") or "").strip()
+    sender = f"{name} <{frm}>" if name else frm
+    payload = _json.dumps(
+        {"from": sender, "to": [to], "subject": subject, "text": text_body, "html": html_body}
+    ).encode()
+
+    def _post() -> bool:
+        import urllib.error
+
+        ureq = urllib.request.Request(
+            "https://api.resend.com/emails",
+            data=payload,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                # Cloudflare in front of api.resend.com rejects non-browser
+                # user agents with error 1010, so present a normal one.
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+                ),
+            },
+        )
+        try:
+            with urllib.request.urlopen(ureq, timeout=30) as resp:
+                if resp.status < 200 or resp.status >= 300:
+                    detail = (resp.read() or b"").decode(errors="replace")[:300]
+                    raise RuntimeError(f"Resend HTTP {resp.status}: {detail}")
+                return True
+        except urllib.error.HTTPError as he:
+            detail = (he.read() or b"").decode(errors="replace")[:400]
+            raise RuntimeError(f"Resend HTTP {he.code}: {detail}") from he
+
+    return await asyncio.to_thread(_post)
+
+
+def ses_configured() -> bool:
+    return bool(
+        os_getenv("AWS_ACCESS_KEY_ID", "").strip()
+        and os_getenv("AWS_SECRET_ACCESS_KEY", "").strip()
+    )
+
+
+def _send_via_ses(cfg: dict, to: str, raw: bytes) -> bool:
+    import boto3
+    from botocore.config import Config as BotoConfig
+
+    region = os_getenv("SES_REGION", "us-east-1").strip() or "us-east-1"
+    client = boto3.client(
+        "ses",
+        region_name=region,
+        config=BotoConfig(
+            connect_timeout=10,
+            read_timeout=20,
+            retries={"max_attempts": 2, "mode": "standard"},
+        ),
+    )
+    resp = client.send_raw_email(
+        Source=formataddr((cfg.get("SMTP_NAME", ""), cfg.get("SMTP_FROM", ""))),
+        Destinations=[to],
+        RawMessage={"Data": raw},
+    )
+    return bool(resp.get("MessageId"))
+
+
 async def send_email(cfg: dict, to: str, subject: str, body: str, attachment: bytes = None, filename: str = ""):
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -497,6 +577,28 @@ async def send_email(cfg: dict, to: str, subject: str, body: str, attachment: by
     host = cfg.get("SMTP_HOST", "")
     port = int(cfg.get("SMTP_PORT") or 587)
     tls = (cfg.get("SMTP_TLS") or "starttls").lower()
+    connect_timeout = int(os_getenv("SMTP_CONNECT_TIMEOUT", "15") or 15)
+    key = os_getenv("RESEND_API_KEY", "").strip()
+    if not key and (host or "").strip() == "smtp.resend.com":
+        key = (cfg.get("SMTP_PASS") or "").strip()
+    resend_key = key
+
+    # Cloud hosts (Railway) frequently block outbound SMTP egress entirely.
+    # Prefer the Resend HTTPS REST API when a key is available, then fall back
+    # to the SMTP ladder below.
+    if resend_key and (cfg.get("SMTP_FROM") or ""):
+        try:
+            sent_ok = await _send_via_resend_api(cfg, to, subject, body, physical, resend_key)
+            if sent_ok:
+                return True
+        except Exception as e:
+            print(f"[EMAIL] Resend API attempt failed: {e}")
+
+    # AWS SES over HTTPS (443): works from cloud hosts whose SMTP egress is
+    # firewalled. When creds are present SES is authoritative, so a failure is
+    # surfaced immediately rather than burning time on unreachable SMTP ports.
+    if ses_configured() and (cfg.get("SMTP_FROM") or ""):
+        return await asyncio.to_thread(_send_via_ses, cfg, to, msg.as_bytes())
 
     # Build a retry ladder of (port, mode) candidates. Namecheap and other
     # providers intermittently drop cloud-host egress, so we race STARTTLS
@@ -516,8 +618,10 @@ async def send_email(cfg: dict, to: str, subject: str, body: str, attachment: by
         ladder.remove(tail[0])
         ladder.insert(0, (port, tls if tls in ("ssl", "starttls") else "starttls"))
 
-    async def _try(port: int, mode: str):
-        kwargs = dict(hostname=host, port=port, validate_certs=False, timeout=10)
+    async def _try(port: int, mode: str, ip: str | None = None):
+        kwargs = dict(hostname=ip or host, port=port, validate_certs=False, timeout=connect_timeout)
+        if ip:
+            kwargs["server_hostname"] = host
         if cfg.get("SMTP_USER"):
             kwargs.update(username=cfg["SMTP_USER"], password=cfg.get("SMTP_PASS", ""))
         if mode == "ssl":
@@ -526,6 +630,18 @@ async def send_email(cfg: dict, to: str, subject: str, body: str, attachment: by
             await aiosmtplib.send(msg, start_tls=True, **kwargs)
         else:
             await aiosmtplib.send(msg, start_tls=False, **kwargs)
+
+    # Some cloud hosts only route IPv4 correctly; resolve IPv4 up front and,
+    # if the hostname attempts fail, retry each candidate against a literal
+    # IPv4 address (SNI kept via server_hostname).
+    ipv4_addresses: list[str] = []
+    try:
+        import socket
+
+        infos = await asyncio.getaddrinfo(host, port, family=socket.AF_INET, type=socket.SOCK_STREAM)
+        ipv4_addresses = list(dict.fromkeys(i[4][0] for i in infos))
+    except Exception:
+        pass
 
     # Try the candidates in priority order and stop at the first success.
     # Racing with FIRST_EXCEPTION was unreliable: a fast refusal (e.g. closed
@@ -539,4 +655,12 @@ async def send_email(cfg: dict, to: str, subject: str, body: str, attachment: by
         except Exception as e:
             last_error = e
             print(f"[EMAIL] SMTP {host}:{port}/{mode} attempt failed: {e}")
+    for ip in ipv4_addresses:
+        for port, mode in ((587, "starttls"), (465, "ssl")):
+            try:
+                await _try(port, mode, ip=ip)
+                return True
+            except Exception as e:
+                last_error = e
+                print(f"[EMAIL] SMTP {host} ({ip}):{port}/{mode} attempt failed: {e}")
     raise last_error or RuntimeError(f"SMTP {host} is unreachable (no candidates left to try).")
