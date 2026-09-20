@@ -190,6 +190,10 @@ def _ensure_bot_calls_table(conn) -> None:
             );
             """
         )
+        try:
+            cur.execute("ALTER TABLE bot_calls ALTER COLUMN status TYPE TEXT;")
+        except Exception:
+            pass
         conn.commit()
 
 
@@ -461,11 +465,18 @@ def call_outstanding_leads() -> int:
                 ("%@lead.local",),
             )
             rows = cur.fetchall()
+            cur.execute(
+                "SELECT DISTINCT recipient FROM comms_logs WHERE channel = 'voice' "
+                "AND direction = 'outbound' AND recipient IS NOT NULL;"
+            )
+            called = {_phone_digits(r["recipient"])[-10:] for r in cur.fetchall() if _phone_digits(r["recipient"])}
         for r in rows:
             if dialed >= CALLS_PER_PASS:
                 break
             digits = _phone_digits(r.get("phone"))
             if len(digits) < 10 or (own and digits[-10:] == own[-10:]):
+                continue
+            if digits[-10:] in called:
                 continue
             with db.cursor() as cur:
                 cur.execute("SELECT 1 FROM bot_calls WHERE lead_id = %s LIMIT 1;", (r["id"],))
@@ -479,6 +490,12 @@ def call_outstanding_leads() -> int:
                 print(f"📞[emailbot] dial failed for lead {r['id']}: {e}")
                 continue
             if sid:
+                with db.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO bot_calls (call_sid, lead_id, direction, status) "
+                        "VALUES (%s, %s, 'outbound', 'dialed') ON CONFLICT (call_sid) DO NOTHING;",
+                        (sid, r["id"]),
+                    )
                 dialed += 1
                 print(f"📞[emailbot] dialed lead {r['id']} {r.get('name') or ''} ({to}) sid={sid}", flush=True)
     finally:
