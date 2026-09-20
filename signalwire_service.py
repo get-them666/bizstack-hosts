@@ -1,5 +1,6 @@
 import os
 
+import requests
 from signalwire.rest.client import RestClient
 
 
@@ -64,12 +65,27 @@ class SignalWireService:
         if not self.is_configured() or not to or not twiml_url:
             return ""
         try:
-            call = self.client.calls.create(
-                from_=self.from_number,
-                to=to,
-                url=twiml_url,
+            host = (self.space_url or "").strip()
+            if host.startswith("http://"):
+                host = host[7:]
+            elif host.startswith("https://"):
+                host = host[8:]
+            url = f"https://{host}/api/laml/2010-04-01/Accounts/{self.project_id}/Calls"
+            resp = requests.post(
+                url,
+                data={
+                    "From": self.from_number,
+                    "To": to,
+                    "Url": twiml_url,
+                },
+                auth=(self.project_id, self.api_token),
+                timeout=30,
             )
-            return str(getattr(call, "sid", "") or "")
+            if not resp.ok:
+                print(f"❌ SignalWire outbound call failure: HTTP {resp.status_code} {resp.text[:400]}")
+                return ""
+            call = resp.json()
+            return str(call.get("sid", "") or "")
         except Exception as e:
             print(f"❌ SignalWire outbound call failure: {e}")
             return ""
