@@ -184,7 +184,7 @@ def _agent_for(company: str, db):
 
         handlers = dict(cm.build_tool_handlers(db, cm.stripe_svc))
         handlers.pop("send_sms_message", None)
-        ctx["agent"] = ConAgent(tool_handlers=handlers)
+        ctx["agent"] = ConAgent(knowledge_path="construction_knowledge.md", tool_handlers=handlers)
     else:
         import ai_agent
         import main as broom_main
