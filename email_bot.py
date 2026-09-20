@@ -176,6 +176,23 @@ def _ensure_table(conn) -> None:
         conn.commit()
 
 
+def _ensure_bot_calls_table(conn) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_calls (
+                call_sid TEXT PRIMARY KEY,
+                lead_id INTEGER,
+                direction TEXT,
+                status TEXT,
+                turns INTEGER DEFAULT 0,
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        conn.commit()
+
+
 def _agent_for(company: str, db):
     ctx = {"db": db}
     if company == "construction":
@@ -435,6 +452,7 @@ def call_outstanding_leads() -> int:
         print(f"📞[emailbot] db failure: {e}")
         return 0
     try:
+        _ensure_bot_calls_table(db)
         with db.cursor() as cur:
             cur.execute(
                 "SELECT id, name, phone FROM leads WHERE company = 'construction' "
