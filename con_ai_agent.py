@@ -59,9 +59,14 @@ class BusinessAIAgent:
             identity = (
                 "You are the Buildstack Construction OPERATOR COPILOT for the owner.\n"
                 "You act with full authority over the owner's business database. You can "
-                "review and update the lead pipeline, summarize business performance, and "
-                "send SMS. Reads are free; before making any database CHANGE, restate the "
-                "change in one short line and confirm with the owner first."
+                "review and update the lead pipeline, summarize business performance, run "
+                "payroll + direct deposit, look up permits & city codes, estimate materials, "
+                "review accounting, and summarize the sister company (Broom Service).\n"
+                "Rule: READs are free. Before any database CHANGE, restate the change in "
+                "one short line and confirm with the owner first.\n"
+                "You also know about Broom Service (bizstackperks.com) — the sister "
+                "short-term-rental turnover-cleaning company. Use sister_business_summary "
+                "to report on it. Never expose tenant or guest data to the public assistant."
             )
         else:
             identity = (
@@ -202,10 +207,142 @@ TOOL USAGE RULES:
             {
                 "type": "function",
                 "function": {
+                    "name": "send_email_message",
+                    "description": "Send a professional email message to any address.",
+                    "parameters": self._props(
+                        {"to": "string", "subject": "string", "body": "string"},
+                        ["to", "subject", "body"],
+                        "E.g. estimate follow-up, thank-you, or contract details.",
+                    ),
+                },
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "create_deposit_link",
                     "description": "Create a Stripe deposit checkout link for a lead (reserves the project).",
                     "parameters": self._props(
                         {"lead_id": "integer"}, ["lead_id"], "Existing lead id."
+                    ),
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup_permits",
+                    "description": "Look up a permit by address/parcel, pull city + county permit info from the job-leads / permit record, or search which cities issue new permits (Shovels feed).",
+                    "parameters": self._props(
+                        {"city": "string", "address": "string"},
+                        [],
+                        "Optional city filter (e.g. Williamsburg, Newport News, Elizabeth City) or address for an exact permit lookup.",
+                    ),
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_crew",
+                    "description": "List crew members (name, role, pay type/rate, active status, direct-deposit / bank status).",
+                    "parameters": self._props({}, [], ""),
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup_crew_timesheets",
+                    "description": "Look up timesheets for a crew member (hours, status) or a project.",
+                    "parameters": self._props(
+                        {"crew_id": "integer", "project_id": "integer", "status": "string"},
+                        [],
+                        "Optional filters: crew_id, project_id, or status (submitted/approved/paid).",
+                    ),
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_payroll_summary",
+                    "description": "Payroll summary for the current open run: crew, hours/overtime, gross, and paid-vs-pending status (direct deposit via Stripe Connect).",
+                    "parameters": self._props({}, [], ""),
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "run_payroll",
+                    "description": "Run payroll now: finalize the open run and pay all approved lines via Stripe direct deposit.",
+                    "parameters": self._props({}, [], ""),
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_accounting_summary",
+                    "description": "Accounting summary: collected deposits, project payments, outstanding / unpaid, and payroll paid total.",
+                    "parameters": self._props({}, [], ""),
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "estimate_materials",
+                    "description": "Estimate material quantities + price book (or live API) for a project type and square footage.",
+                    "parameters": self._props(
+                        {
+                            "project_type": "string",
+                            "sqft": "number",
+                            "include": "array",
+                        },
+                        ["project_type", "sqft"],
+                        "project_type: whole-home, kitchen, bath, roofing, drywall, deck/fence, or handyman. include: optional sku keys (e.g. copper_wire_per_lb, drywall_sheet_1/2).",
+                    ),
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_material_price",
+                    "description": "Look up a single material price (cents → dollars) from the price book or live API.",
+                    "parameters": self._props(
+                        {"sku": "string"}, ["sku"], "Sku key, e.g. copper_wire_per_lb."
+                    ),
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "sister_business_summary",
+                    "description": "Summary report for the sister company (Broom Service — bizstackperks.com STR turnover cleaning): jobs/leads, revenue, crew, payroll, bank status.",
+                    "parameters": self._props({}, [], ""),
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "run_site_health_check",
+                    "description": "Run a health check across both websites (public pages, logins, APIs, Stripe, email/SMS services).",
+                    "parameters": self._props({}, [], ""),
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "generate_training_deck",
+                    "description": "Generate an OSHA-10 / orientation / safety / HR / sexual-harassment / trades-knowledge training deck (worker on-boarding) as a PowerPoint and save it.",
+                    "parameters": self._props(
+                        {"kind": "string"}, ["kind"], "kind: worker."
+                    ),
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "grade_training_quiz",
+                    "description": "Grade a worker's OSHA-10 / orientation quiz; returns pass/fail, score, and missed topics for review.",
+                    "parameters": self._props(
+                        {"crew_id": "integer", "answers": "array"},
+                        ["crew_id", "answers"],
+                        "answers: list of {question_id, answer} dicts. Topics include tape-measure reading, simple math, basic electrical, framing/drywall/roofing/tile/plumbing basics.",
                     ),
                 },
             },

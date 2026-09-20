@@ -6460,9 +6460,7 @@ _SHARED_PREFIXES = (
 def _is_construction_host(host: str) -> bool:
     host = (host or "").lower().split(":")[0]
     return (
-        "buildstackconstruction.com" in host
-        or host.startswith("buildstackconstruction")
-        or host == "construction.bizstackperks.com"
+        host == "construction.bizstackperks.com"
         or host.startswith("construction.bizstackperks.com")
     )
 

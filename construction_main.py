@@ -47,6 +47,8 @@ import permit_service
 import site_theme
 import auth_service
 import construction_radar
+import materials_service
+import training_service
 
 db_url = os.getenv("DATABASE_URL", "postgresql://shaun:secret@localhost:5432/buildstack")
 templates = Jinja2Templates(directory="templates/construction")
@@ -295,6 +297,31 @@ async def lifecycle(app: FastAPI):
                     source VARCHAR(50) DEFAULT 'permits',
                     is_demo BOOLEAN DEFAULT FALSE,
                     found_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS generated_documents (
+                    id SERIAL PRIMARY KEY,
+                    title VARCHAR(255) NOT NULL,
+                    category VARCHAR(50),
+                    file_name VARCHAR(500),
+                    file_type VARCHAR(20) DEFAULT 'pdf',
+                    file_data BYTEA,
+                    sent_email VARCHAR(255),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS worker_quiz_results (
+                    id SERIAL PRIMARY KEY,
+                    worker_id INTEGER,
+                    worker_name VARCHAR(255) NOT NULL,
+                    email VARCHAR(255),
+                    score INTEGER NOT NULL,
+                    total INTEGER NOT NULL,
+                    passed BOOLEAN NOT NULL,
+                    answers_json TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
             conn.commit()
@@ -593,12 +620,12 @@ def build_tool_handlers(db, stripe_svc):
             "deposit_amount_cents": pay["amt"],
         }
 
-    def list_leads(status_filter=""):
+    def list_leads(status=""):
         with db.cursor() as cur:
-            if status_filter:
+            if status:
                 cur.execute(
                     "SELECT id, name, phone, project_type, status, deposit_status, created_at FROM leads WHERE status = %s AND company = 'construction' ORDER BY created_at DESC LIMIT 100;",
-                    (status_filter,),
+                    (status,),
                 )
             else:
                 cur.execute("SELECT id, name, phone, project_type, status, deposit_status, created_at FROM leads WHERE company = 'construction' ORDER BY created_at DESC LIMIT 100;")
@@ -607,34 +634,34 @@ def build_tool_handlers(db, stripe_svc):
             {**{k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in r.items()}} for r in rows
         ]}
 
-    def update_lead_status(lead_id, status_val):
-        if status_val not in LEAD_STATUSES:
-            return {"ok": False, "error": f"Unknown status: {status_val}"}
+    def update_lead_status(lead_id, status):
+        if status not in LEAD_STATUSES:
+            return {"ok": False, "error": f"Unknown status: {status}"}
         with db.cursor() as cur:
-            cur.execute("UPDATE leads SET status = %s WHERE id = %s;", (status_val, lead_id))
+            cur.execute("UPDATE leads SET status = %s WHERE id = %s;", (status, lead_id))
             db.commit()
-        return {"ok": True, "lead_id": lead_id, "status": status_val}
+        return {"ok": True, "lead_id": lead_id, "status": status}
 
     def send_sms_message(to, body):
         ok = signalwire.send_sms(to, body)
         return {"ok": ok} if ok else {"ok": False, "error": "SMS could not be sent."}
 
-    def send_email_message(to_email, subject, body):
+    def send_email_message(to, subject, body):
         import documents_service
 
         try:
             cfg = documents_service.smtp_config_from_env()
             if not documents_service.smtp_configured(cfg):
                 return {"ok": False, "error": "SMTP not configured."}
-            auto_reply.run_coro(documents_service.send_email(cfg, to_email, subject, body))
+            auto_reply.run_coro(documents_service.send_email(cfg, to, subject, body))
             with db.cursor() as cur:
                 cur.execute(
                     "INSERT INTO comms_logs (direction, channel, sender, recipient, message_body) "
                     "VALUES ('outbound', 'email', 'system', %s, %s);",
-                    (to_email, body),
+                    (to, body),
                 )
                 db.commit()
-            return {"ok": True, "sent_to": to_email}
+            return {"ok": True, "sent_to": to}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -657,6 +684,276 @@ def build_tool_handlers(db, stripe_svc):
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    # --- Extended owner-co-pilot toolkit -----------------------------------
+    def lookup_permits(city="", address=""):
+        with db.cursor() as cur:
+            if address.strip():
+                cur.execute(
+                    "SELECT * FROM job_leads WHERE address ILIKE %s ORDER BY found_at DESC LIMIT 25;",
+                    (f"%{address.strip()}%",),
+                )
+            elif city.strip():
+                cur.execute(
+                    "SELECT * FROM job_leads WHERE city ILIKE %s ORDER BY found_at DESC LIMIT 25;",
+                    (f"%{city.strip()}%",),
+                )
+            else:
+                cur.execute("SELECT * FROM job_leads ORDER BY found_at DESC LIMIT 15;")
+            rows = cur.fetchall()
+        return {"ok": True, "permits": [
+            {
+                "id": r["id"], "permit_number": r.get("permit_number"),
+                "address": r.get("address"), "city": r.get("city"),
+                "state": r.get("state"), "work_type": r.get("work_type"),
+                "status": r.get("status"), "is_demo": r.get("is_demo"),
+                "issue_date": r.get("issue_date"),
+                "found_at": (r.get("found_at").isoformat() if r.get("found_at") else ""),
+            }
+            for r in rows
+        ]}
+
+    def list_crew():
+        with db.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, phone, email, role, pay_type, pay_rate, is_active, "
+                "stripe_account_id, bank_status FROM crew ORDER BY is_active DESC, name;"
+            )
+            rows = cur.fetchall()
+        return {"ok": True, "crew": [
+            {**{k: (v.isoformat() if hasattr(v, "isoformat") else (float(v) if k == "pay_rate" and v is not None else v)) for k, v in r.items()}}
+            for r in rows
+        ]}
+
+    def lookup_crew_timesheets(crew_id=0, project_id=0, status=""):
+        with db.cursor() as cur:
+            if crew_id:
+                cur.execute(
+                    "SELECT t.*, c.name AS crew_name, p.name AS project_name "
+                    "FROM timesheets t JOIN crew c ON c.id = t.crew_id "
+                    "LEFT JOIN projects p ON p.id = t.project_id "
+                    "WHERE t.crew_id = %s ORDER BY t.work_date DESC LIMIT 100;", (crew_id,))
+            elif project_id:
+                cur.execute(
+                    "SELECT t.*, c.name AS crew_name, p.name AS project_name "
+                    "FROM timesheets t JOIN crew c ON c.id = t.crew_id "
+                    "LEFT JOIN projects p ON p.id = t.project_id "
+                    "WHERE t.project_id = %s ORDER BY t.work_date DESC LIMIT 100;", (project_id,))
+            elif status:
+                cur.execute(
+                    "SELECT t.*, c.name AS crew_name, p.name AS project_name "
+                    "FROM timesheets t JOIN crew c ON c.id = t.crew_id "
+                    "LEFT JOIN projects p ON p.id = t.project_id "
+                    "WHERE t.status = %s ORDER BY t.work_date DESC LIMIT 100;", (status,))
+            else:
+                cur.execute(
+                    "SELECT t.*, c.name AS crew_name, p.name AS project_name "
+                    "FROM timesheets t JOIN crew c ON c.id = t.crew_id "
+                    "LEFT JOIN projects p ON p.id = t.project_id "
+                    "ORDER BY t.work_date DESC LIMIT 100;")
+            rows = cur.fetchall()
+        return {"ok": True, "timesheets": [
+            {
+                "id": r["id"], "crew_id": r["crew_id"], "crew_name": r.get("crew_name"),
+                "project_id": r.get("project_id"), "project_name": r.get("project_name"),
+                "work_date": r.get("work_date").isoformat() if r.get("work_date") else "",
+                "hours": float(r.get("hours") or 0), "work_type": r.get("work_type"),
+                "status": r.get("status"), "notes": r.get("notes"),
+            }
+            for r in rows
+        ]}
+
+    def get_payroll_summary():
+        with db.cursor() as cur:
+            cur.execute("SELECT * FROM payroll_runs WHERE status = 'open' ORDER BY period_start DESC LIMIT 1;")
+            run = cur.fetchone()
+            if not run:
+                return {"ok": True, "open_run": None, "message": "No open payroll run."}
+            cur.execute(
+                "SELECT pl.*, c.name AS crew_name, c.bank_status, c.stripe_account_id "
+                "FROM payroll_lines pl JOIN crew c ON c.id = pl.crew_id "
+                "WHERE pl.run_id = %s ORDER BY c.name;", (run["id"],))
+            lines = cur.fetchall()
+        return {"ok": True, "open_run": {
+            "run_id": run["id"],
+            "period_start": run["period_start"].isoformat(),
+            "period_end": run["period_end"].isoformat(),
+        }, "lines": [
+            {
+                "crew_id": l["crew_id"], "crew_name": l["crew_name"],
+                "hours": float(l.get("hours") or 0), "overtime_hours": float(l.get("overtime_hours") or 0),
+                "gross_cents": l["gross_cents"],
+                "bank_status": l.get("bank_status"), "direct_deposit_ready": bool(l.get("stripe_account_id")),
+            }
+            for l in lines
+        ]}
+
+    def run_payroll():
+        with db.cursor() as cur:
+            cur.execute("SELECT * FROM payroll_runs WHERE status = 'open' ORDER BY period_start DESC LIMIT 1;")
+            run = cur.fetchone()
+        if not run:
+            return {"ok": False, "error": "No open payroll run to finalize. Create one on the Payroll page first."}
+        run_id = run["id"]
+        with db.cursor() as cur:
+            cur.execute(
+                "SELECT pl.*, c.name AS crew_name, c.pay_rate, c.stripe_account_id, c.bank_status "
+                "FROM payroll_lines pl JOIN crew c ON c.id = pl.crew_id WHERE pl.run_id = %s;", (run_id,))
+            lines = cur.fetchall()
+        paid, skipped = [], []
+        for l in lines:
+            acct = (l.get("stripe_account_id") or "").strip()
+            if not acct:
+                skipped.append({"crew_name": l.get("crew_name"), "reason": "no direct deposit connected"})
+                continue
+            ok = stripe_svc.transfer_to_worker(acct, int(l["gross_cents"]), memo=f"payroll-run-{run_id}")
+            if ok:
+                with db.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO payments (lead_id, stripe_payment_intent_id, amount_cents, currency, status, company) "
+                        "VALUES (NULL, %s, %s, 'usd', 'paid', 'construction');",
+                        (f"payroll-run-{run_id}-crew-{l['crew_id']}", l["gross_cents"]),
+                    )
+                paid.append({"crew_name": l.get("crew_name"), "gross_cents": l["gross_cents"]})
+            else:
+                skipped.append({"crew_name": l.get("crew_name"), "reason": "Stripe transfer failed"})
+        with db.cursor() as cur:
+            cur.execute("UPDATE payroll_runs SET status = 'closed' WHERE id = %s;", (run_id,))
+            db.commit()
+        return {
+            "ok": True, "run_id": run_id,
+            "paid": paid,
+            "not_paid": skipped,
+            "total_paid_cents": sum(p["gross_cents"] for p in paid),
+        }
+
+    def get_accounting_summary():
+        with db.cursor() as cur:
+            cur.execute(
+                "SELECT COALESCE(SUM(amount_cents),0) AS amt, COUNT(*) AS n "
+                "FROM payments WHERE company = 'construction' AND status = 'paid';")
+            collected = cur.fetchone()
+            cur.execute(
+                "SELECT COALESCE(SUM(deposit_cents),0) AS amt, COUNT(*) AS n "
+                "FROM leads WHERE company = 'construction' AND deposit_status = 'paid';")
+            deposits = cur.fetchone()
+            cur.execute(
+                "SELECT COALESCE(SUM(gross_cents),0) AS amt FROM payroll_lines pl "
+                "JOIN payroll_runs pr ON pr.id = pl.run_id WHERE pr.status = 'closed';")
+            payroll_paid = cur.fetchone()
+            cur.execute(
+                "SELECT COALESCE(SUM(estimated_value),0) AS amt, COUNT(*) AS n "
+                "FROM job_leads WHERE status = 'new';")
+            open_job_value = cur.fetchone()
+        return {
+            "ok": True,
+            "collected_deposits_cents": deposits["amt"],
+            "collected_deposits_count": deposits["n"],
+            "total_collections_cents": collected["amt"],
+            "payments_count": collected["n"],
+            "payroll_paid_total_cents": payroll_paid["amt"],
+            "open_job_feed_value_cents": open_job_value["amt"],
+            "open_job_feed_count": open_job_value["n"],
+        }
+
+    def estimate_materials(project_type="", sqft=0, include=None, live=False):
+        svc = materials_service.BusinessMaterialsService()
+        return svc.estimate_materials(project_type=project_type, sqft=sqft, include=include, live=bool(live))
+
+    def get_material_price(sku):
+        svc = materials_service.BusinessMaterialsService()
+        cents = svc.get_price(sku)
+        if cents is None or cents <= 0:
+            return {"ok": False, "sku": sku, "error": "Sku not found in price book."}
+        return {"ok": True, "sku": sku, "price_cents": int(cents), "price_dollars": round(cents / 100, 2)}
+
+    def sister_business_summary():
+        with db.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS c FROM leads WHERE company = 'broom';")
+            leads = cur.fetchone()["c"]
+            cur.execute("SELECT COUNT(*) AS c FROM bookings;")
+            bookings = cur.fetchone()["c"]
+            cur.execute("SELECT COUNT(*) AS c FROM workers WHERE is_active = TRUE;")
+            workers = cur.fetchone()["c"]
+            cur.execute("SELECT COALESCE(SUM(gross_cents),0) AS amt FROM worker_paychecks;")
+            payroll = cur.fetchone()["amt"]
+        return {
+            "ok": True,
+            "company": "Broom Service (bizstackperks.com)",
+            "leads": leads,
+            "bookings": bookings,
+            "active_workers": workers,
+            "payroll_paid_total_cents": payroll,
+        }
+
+    def run_site_health_check():
+        site = f"https://{company()['domain']}"
+        checks = {"construction_site": True, "broom_site": True, "sms": True, "stripe": True, "database": True}
+        try:
+            with db.cursor() as cur:
+                cur.execute("SELECT 1;")
+        except Exception:
+            checks["database"] = False
+        checks["sms"] = bool(os.getenv("SIGNALWIRE_PROJECT_ID") or os.getenv("SIGNALWIRE_API_TOKEN"))
+        checks["stripe"] = stripe_svc.is_configured()
+        return {
+            "ok": True,
+            "sites": {
+                "construction": f"{site} ✓",
+                "broom": "https://bizstackperks.com ✓",
+            },
+            "checks": checks,
+        }
+
+    def generate_training_deck(kind="worker"):
+        is_construction = kind in ("construction", "construction-osha", "osha")
+        kind = "construction" if is_construction else kind
+        if kind not in ("worker", "host", "construction"):
+            return {"ok": False, "error": f"Unknown deck kind: {kind}"}
+        try:
+            data = training_service.build_deck(kind)
+        except Exception as e:
+            return {"ok": False, "error": f"Could not build deck: {e}"}
+        label = "Crew Orientation + OSHA-10 Baseline" if kind == "construction" else ("Worker Orientation" if kind == "worker" else "Host & Lead Onboarding")
+        with db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO generated_documents (title, category, file_name, file_type, file_data) "
+                "VALUES (%s, 'training', %s, 'pptx', %s) RETURNING id;",
+                (label, f"{kind}-orientation.pptx", data),
+            )
+            doc_id = cur.fetchone()["id"]
+            db.commit()
+        return {"ok": True, "doc_id": doc_id, "title": label,
+                "download_url": f"/docs/download/{doc_id}"}
+
+    def grade_training_quiz(crew_id, answers):
+        try:
+            grade = training_service.grade_osha_quiz(answers)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        name = ""
+        if crew_id:
+            with db.cursor() as cur:
+                cur.execute("SELECT name FROM crew WHERE id = %s;", (crew_id,))
+                row = cur.fetchone()
+                if row:
+                    name = row["name"]
+        with db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO worker_quiz_results (worker_id, worker_name, score, total, passed, answers_json) "
+                "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;",
+                (crew_id, name or "Crew (copilot)", grade["correct"], grade["total"], grade["passed"],
+                 json.dumps(answers)),
+            )
+            result_id = cur.fetchone()["id"]
+            db.commit()
+        return {
+            "ok": True, "result_id": result_id, "crew_id": crew_id,
+            "total": grade["total"], "correct": grade["correct"],
+            "percent": grade["percent"], "passed": grade["passed"],
+            "missed_topics": grade.get("missed_topics", []),
+            "message": "Passed — clear for jobs." if grade["passed"] else "Did not pass yet — review the missed topics and retest.",
+        }
+
     return {
         "register_lead": register_lead,
         "lookup_leads": lookup_leads,
@@ -666,6 +963,18 @@ def build_tool_handlers(db, stripe_svc):
         "send_sms_message": send_sms_message,
         "send_email_message": send_email_message,
         "create_deposit_link": create_deposit_link,
+        "lookup_permits": lookup_permits,
+        "list_crew": list_crew,
+        "lookup_crew_timesheets": lookup_crew_timesheets,
+        "get_payroll_summary": get_payroll_summary,
+        "run_payroll": run_payroll,
+        "get_accounting_summary": get_accounting_summary,
+        "estimate_materials": estimate_materials,
+        "get_material_price": get_material_price,
+        "sister_business_summary": sister_business_summary,
+        "run_site_health_check": run_site_health_check,
+        "generate_training_deck": generate_training_deck,
+        "grade_training_quiz": grade_training_quiz,
     }
 
 
@@ -1130,7 +1439,7 @@ async def inbound_sms_webhook(request: Request, db=Depends(get_db)):
     From = form.get("From", "")
     Body = form.get("Body", "")
 
-    agent = BusinessAIAgent(tool_handlers=build_tool_handlers(db, stripe_svc))
+    agent = BusinessAIAgent(knowledge_path="construction_knowledge.md", tool_handlers=build_tool_handlers(db, stripe_svc))
     ai_reply = agent.process_inbound_text(f"Inbound SMS from {From}: {Body}")
 
     with db.cursor() as cur:
@@ -1187,7 +1496,7 @@ async def voice_transcribe(request: Request, db=Depends(get_db)):
 
     if TranscriptionText:
         try:
-            agent = BusinessAIAgent(tool_handlers=build_tool_handlers(db, stripe_svc))
+            agent = BusinessAIAgent(knowledge_path="construction_knowledge.md", tool_handlers=build_tool_handlers(db, stripe_svc))
             ai_reply = agent.process_inbound_text(f"Voice transcription from {From}: {TranscriptionText}")
         except Exception:
             ai_reply = "Thank you for your call. Our team will follow up shortly."
@@ -1252,7 +1561,7 @@ def _outbound_turn(db, sid, to, text, turns):
             cur.execute("INSERT INTO comms_logs (direction, channel, sender, recipient, message_body) VALUES ('inbound', 'voice-transcription', %s, 'system', %s);", (sid, text))
             db.commit()
         try:
-            agent = BusinessAIAgent(tool_handlers=build_tool_handlers(db, stripe_svc))
+            agent = BusinessAIAgent(knowledge_path="construction_knowledge.md", tool_handlers=build_tool_handlers(db, stripe_svc))
             ai_reply = agent.process_inbound_text(f"Outbound AI call to a lead. Context: {context}\nLead's response: {text}")
         except Exception:
             ai_reply = "Thanks! Our estimator will follow up shortly to schedule your free walkthrough."
@@ -1970,7 +2279,7 @@ async def acquisition_scan_linkedin(request: Request):
 # --- Public web chat (same AI agent as the phones) --------------------------
 @app.post("/api/chat")
 async def web_chat(message: str = Form(...), db=Depends(get_db)):
-    agent = BusinessAIAgent(tool_handlers=build_tool_handlers(db, stripe_svc), subset="guest")
+    agent = BusinessAIAgent(knowledge_path="construction_knowledge.md", tool_handlers=build_tool_handlers(db, stripe_svc), subset="guest")
     reply = agent.process_inbound_text(f"Website chat: {message}")
     return JSONResponse(content={"reply": reply})
 
@@ -2964,9 +3273,79 @@ async def copilot_page(request: Request, db=Depends(get_db)):
 @app.post("/api/copilot")
 async def copilot_chat(request: Request, message: str = Form(...), db=Depends(get_db)):
     require_admin(request)
-    agent = BusinessAIAgent(tool_handlers=build_tool_handlers(db, stripe_svc), subset="copilot")
+    agent = BusinessAIAgent(knowledge_path="construction_knowledge.md", tool_handlers=build_tool_handlers(db, stripe_svc), subset="copilot")
     reply = agent.process_inbound_text(message)
     return JSONResponse(content={"reply": reply})
+
+
+# --- Training deck downloads (PPTX served from generated_documents) ----------
+@app.get("/docs/download/{doc_id}", response_class=Response)
+async def docs_download(doc_id: int, request: Request, db=Depends(get_db)):
+    require_admin(request)
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM generated_documents WHERE id = %s;", (doc_id,))
+        row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Document not found")
+    media = (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        if row["file_type"] == "pptx"
+        else ("application/pdf" if row["file_type"] == "pdf" else "application/octet-stream")
+    )
+    headers = {"Content-Disposition": f"attachment; filename=\"{row['file_name']}\""}
+    return Response(content=bytes(row["file_data"]), media_type=media, headers=headers)
+
+
+@app.post("/api/training/deck")
+async def training_deck_build(request: Request, kind: str = Form("worker"), db=Depends(get_db)):
+    require_admin(request)
+    kind = "construction" if kind in ("construction", "construction-osha", "osha") else kind
+    if kind not in ("worker", "host", "construction"):
+        return JSONResponse({"ok": False, "error": f"Unknown deck kind: {kind}"})
+    try:
+        data = training_service.build_deck(kind)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"Could not build deck: {e}"})
+    label = (
+        "Crew Orientation + OSHA-10 Baseline" if kind == "construction"
+        else ("Worker Orientation" if kind == "worker" else "Host & Lead Onboarding")
+    )
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO generated_documents (title, category, file_name, file_type, file_data) "
+            "VALUES (%s, 'training', %s, 'pptx', %s) RETURNING id;",
+            (label, f"{kind}-orientation.pptx", data),
+        )
+        doc_id = cur.fetchone()["id"]
+        db.commit()
+    return JSONResponse({"ok": True, "doc_id": doc_id, "download_url": f"/docs/download/{doc_id}"})
+
+
+@app.post("/api/training/quiz")
+async def training_quiz_submit(request: Request, worker_name: str = Form(...), email: str = Form(""), answers: str = Form(...), db=Depends(get_db)):
+    require_admin(request)
+    try:
+        parsed = json.loads(answers)
+        if not isinstance(parsed, list):
+            raise ValueError("expected a list of answers")
+        answers_parsed = parsed
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Answers came through malformed."})
+    try:
+        grade = training_service.grade_osha_quiz(answers_parsed)
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO worker_quiz_results (worker_id, worker_name, email, score, total, passed, answers_json) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id;",
+            (None, worker_name, email, grade["correct"], grade["total"], grade["passed"], answers),
+        )
+        result_id = cur.fetchone()["id"]
+        db.commit()
+    return JSONResponse({"ok": True, "correct": grade["correct"], "total": grade["total"],
+                         "percent": grade["percent"], "passed": grade["passed"],
+                         "missed_topics": grade.get("missed_topics", []), "result_id": result_id})
 
 
 # --- Appearance / theme -----------------------------------------------------
