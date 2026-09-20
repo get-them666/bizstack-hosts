@@ -179,7 +179,7 @@ def _ensure_table(conn) -> None:
 def _agent_for(company: str, db):
     ctx = {"db": db}
     if company == "construction":
-        import construction_main as cm
+        import construction_bot as cm
         from con_ai_agent import BusinessAIAgent as ConAgent
 
         handlers = dict(cm.build_tool_handlers(db, cm.stripe_svc))
@@ -422,9 +422,9 @@ def call_outstanding_leads() -> int:
     if not (CALL_START_HOUR <= now.hour < CALL_END_HOUR):
         return 0
     try:
-        import construction_main as cm
+        import construction_bot as cm
     except Exception as e:
-        print(f"📞[emailbot] construction import failed: {e}")
+        print(f"📞[emailbot] construction bot import failed: {e}")
         return 0
     own = _phone_digits(getattr(cm, "from_number", None) or cm.signalwire.from_number)
     dialed = 0

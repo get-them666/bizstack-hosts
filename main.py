@@ -47,22 +47,7 @@ _company_var: ContextVar[str] = ContextVar("company_key", default="broom")
 
 
 def _company_config(key: str) -> dict:
-    """Shared identity block for the merged BizStack app."""
-    if key == "construction":
-        return {
-            "key": "construction",
-            "name": os.getenv("CONSTRUCTION_COMPANY_NAME", "Buildstack Construction Co."),
-            "phone": os.getenv("CONSTRUCTION_COMPANY_PHONE", "+1 (757) 846-9275"),
-            "phone_e164": os.getenv("SIGNALWIRE_PHONE", "+17578469275"),
-            "email": os.getenv("CONSTRUCTION_COMPANY_EMAIL", "hello@bizstackperks.com"),
-            "domain": os.getenv("CONSTRUCTION_COMPANY_DOMAIN", "construction.bizstackperks.com"),
-            "license": os.getenv("CONSTRUCTION_CONTRACTOR_LICENSE", ""),
-            "service_area": os.getenv(
-                "CONSTRUCTION_SERVICE_AREA",
-                "Williamsburg–Hampton Roads, VA · Currituck County & Elizabeth City, NC",
-            ),
-            "founded": "2026",
-        }
+    """Identity block for the Broom service."""
     return {
         "key": "broom",
         "name": os.getenv("COMPANY_NAME", "Broom Service"),
@@ -98,17 +83,7 @@ def _money(value):
         return "—"
 
 
-def _money_cents(value):
-    try:
-        return f"${float(value or 0) / 100:,.0f}"
-    except (TypeError, ValueError):
-        return "—"
-
-
 templates.env.filters["money"] = _money
-
-con_templates = Jinja2Templates(directory="templates/construction")
-con_templates.env.filters["money"] = _money_cents
 
 APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "America/New_York"))
 BOOKING_HOURS = int(os.getenv("BOOKING_HOURS", "1"))
@@ -1163,16 +1138,6 @@ async def lifecycle(app: FastAPI):
         except Exception as e:
             print(f"⚠️ Email bot startup skipped: {e}")
 
-    if not os.getenv("DISABLE_PERMIT_IMPORT"):
-        try:
-            from construction_main import _start_permit_importer
-            import permit_service
-            if permit_service.is_configured():
-                _start_permit_importer()
-                print("[permit-scan] importer started from host dispatcher", flush=True)
-        except Exception as e:
-            print(f"⚠️ Permit importer startup skipped: {e}")
-
     yield
 
 app = FastAPI(lifespan=lifecycle, docs_url="/swagger", redoc_url="/redoc")
@@ -1180,10 +1145,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 def resolve_company(request: Request) -> str:
-    """Pick the company from the Host header; default to whatever env sets."""
-    host = (request.headers.get("host") or "").lower().split(":")[0]
-    if _is_construction_host(host):
-        return "construction"
+    """Pick the company; this (Broom) service owns its own brand rows."""
     return os.getenv("COMPANY_KEY", "broom")
 
 
@@ -1417,15 +1379,10 @@ templates.env.globals["current_features"] = _template_features
 templates.env.globals["site_theme_state"] = lambda: site_theme.state()
 templates.env.globals["promo_code"] = lambda: "FIRSTCLEAN"
 
-for _env in (templates.env, con_templates.env):
+for _env in (templates.env,):
     _env.globals["company"] = company
     _env.globals["map_embed"] = _map_embed
     _env.globals["map_directions"] = _map_directions
-
-con_templates.env.globals["current_actor"] = _template_actor
-con_templates.env.globals["current_features"] = _template_features
-con_templates.env.globals["site_theme_state"] = lambda: site_theme.state()
-con_templates.env.globals["promo_code"] = lambda: "FIRSTCLEAN"
 
 # --- PUBLIC LANDING & AUTH ---
 
@@ -1765,8 +1722,6 @@ async def submit_lead(
 # --- Public financing application (both companies share one page) -----------
 @app.get("/finance", response_class=HTMLResponse)
 async def finance_page(request: Request):
-    if resolve_company(request) == "construction":
-        return con_templates.TemplateResponse(request=request, name="finance.html", context={})
     return templates.TemplateResponse(request=request, name="finance.html", context={})
 
 
@@ -1817,9 +1772,8 @@ async def finance_apply(
             "source, status, funding_needed, funding_use, referral_code, partner_id, campaign, company) "
             "VALUES (%s, %s, %s, NULLIF(%s,''), NULLIF(%s,''), NULLIF(%s,''), NULLIF(%s,''), %s, "
             "'finance', 'new', TRUE, %s, NULLIF(%s,''), %s, NULLIF(%s,''), %s) RETURNING id;",
-            (name, (email or "").strip(), phone,
-             project_type if company_key == "construction" else "",
-             address, budget, timeline, use_note,
+(name, (email or "").strip(), phone,
+             "", address, budget, timeline, use_note,
              use_note, ref_code, partner_id, "finance-link", company_key),
         )
         lead_id = cur.fetchone()["id"]
@@ -1834,7 +1788,7 @@ async def finance_apply(
         + (f"\n{use_note[:200]}" if use_note else "")
         + (f"\nRef: {ref_code}" if ref_code else "")
     )
-    owner_phone = _company_config("construction" if company_key == "construction" else "broom")["phone_e164"]
+    owner_phone = _company_config("broom")["phone_e164"]
     try:
         if os.getenv("OWNER_SMS_ENABLED", "0").lower() in ("1", "true", "yes") and signalwire.is_configured():
             signalwire.send_sms(owner_phone, summary[:1500])
@@ -1851,8 +1805,7 @@ async def finance_apply(
     try:
         cfg = documents_service.smtp_config_from_env()
         if documents_service.smtp_configured(cfg):
-            documents_service.send_email(cfg, _company_config(
-                "construction" if company_key == "construction" else "broom")["email"],
+            documents_service.send_email(cfg, _company_config("broom")["email"],
                 f"New financing application #{lead_id}", summary)
     except Exception as e:
         print(f"⚠️ finance owner email failed: {e}", flush=True)
@@ -5539,11 +5492,6 @@ async def create_payment_link(event_id: int, db=Depends(get_db)):
 @app.get("/payments/success", response_class=HTMLResponse)
 async def payments_success(request: Request, db=Depends(get_db)):
     session_id = request.query_params.get("session_id")
-    if resolve_company(request) == "construction" and session_id:
-        with db.cursor() as cur:
-            cur.execute("SELECT * FROM leads WHERE stripe_session_id = %s;", (session_id,))
-            lead = cur.fetchone()
-        return con_templates.TemplateResponse(request=request, name="payment_success.html", context={"lead": lead})
     booking = None
     if session_id:
         with db.cursor() as cur:
@@ -5557,8 +5505,6 @@ async def payments_success(request: Request, db=Depends(get_db)):
 
 @app.get("/payments/cancel", response_class=HTMLResponse)
 async def payments_cancel(request: Request):
-    if resolve_company(request) == "construction":
-        return con_templates.TemplateResponse(request=request, name="payment_cancel.html", context={})
     return templates.TemplateResponse(request=request, name="payment_cancel.html", context={})
 
 @app.post("/api/payments/webhook")
@@ -6442,45 +6388,4 @@ async def legal_page(request: Request):
         "bot_email": "hello@bizstackperks.com",
     })
 
-# --- Multi-company host dispatcher -------------------------------------------
-# One Railway service serves both brands via a single ASGI entrypoint. Requests
-# for the construction domain are handled by the mounted construction sub-app;
-# everything else by this (Broom) app. Shared capabilities — unified chat,
-# the shared phone bot, Stripe webhooks (fixed URLs), checkouts and assets —
-# always resolve to this app. Both apps share one database (company-tagged rows).
-from construction_main import app as _construction_app
-
-_SHARED_PREFIXES = (
-    "/messages", "/api/messages", "/ws", "/comms", "/api/payments/webhook",
-    "/api/payments/connect-webhook", "/payments/success", "/payments/cancel",
-    "/static", "/uploads", "/health", "/sw.js", "/finance",
-)
-
-
-def _is_construction_host(host: str) -> bool:
-    host = (host or "").lower().split(":")[0]
-    return (
-        host == "construction.bizstackperks.com"
-        or host.startswith("construction.bizstackperks.com")
-    )
-
-
-class _RoutingApp(FastAPI):
-    """Broom app whose __call__ routes construction hosts to the construction app."""
-
-    async def __call__(self, scope, receive, send):
-        host = ""
-        for key, value in scope.get("headers") or []:
-            if key == b"host":
-                host = value.decode("latin-1")
-                break
-        if scope["type"] in ("http", "websocket"):
-            path = scope.get("path") or "/"
-            if _is_construction_host(host) and not path.startswith(_SHARED_PREFIXES):
-                await _construction_app(scope, receive, send)
-                return
-        await super().__call__(scope, receive, send)
-
-
-app.__class__ = _RoutingApp
 application = app
