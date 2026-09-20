@@ -3954,9 +3954,9 @@ async def messages_roster(request: Request, db=Depends(get_db)):
         raise HTTPException(status_code=401, detail="Login required")
     roster = []
     with db.cursor() as cur:
-        cur.execute("SELECT id, email, name FROM users WHERE role = 'admin';")
+        cur.execute("SELECT id, email FROM users WHERE role = 'admin';")
         for u in cur.fetchall():
-            roster.append({"role": "admin", "id": u["id"], "name": u.get("name") or u["email"], "company": "all"})
+            roster.append({"role": "admin", "id": u["id"], "name": u["email"], "company": "all"})
         cur.execute("SELECT id, name, email, company FROM workers WHERE is_active = TRUE;")
         for w in cur.fetchall():
             roster.append({"role": "worker", "id": w["id"], "name": w["name"], "company": w.get("company") or "broom"})
