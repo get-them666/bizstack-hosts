@@ -5751,7 +5751,7 @@ async def voice_swml():
                             {
                                 "name": "English",
                                 "code": "en-US",
-                                "voice": "elevenlabs.rachel",
+                                "voice": "openai.onyx",
                                 "speech_fillers": ["one moment please,", "hmm...", "let's see,"],
                             }
                         ],
