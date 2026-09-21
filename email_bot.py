@@ -440,9 +440,31 @@ def _outbound_swml_url() -> str:
     return base.rstrip("/") + "/comms/outbound-voice.swml"
 
 
+def _dial_ai_call(to: str, context: str = "") -> str:
+    """Place an AI outbound call, preferring Vapi (works) over SignalWire (may be unfunded)."""
+    try:
+        import vapi_service
+        v = vapi_service.VapiService()
+        if v.is_configured():
+            return v.create_ai_outbound_call(to, context or "") or ""
+        print("📞[emailbot] Vapi not configured; falling back to SignalWire", flush=True)
+    except Exception as e:
+        print(f"📞[emailbot] Vapi dial failed for {to}: {e}", flush=True)
+    try:
+        import construction_bot as cm
+        sid = cm.signalwire.create_ai_outbound_call(to, _outbound_swml_url())
+        return sid or ""
+    except Exception as e:
+        print(f"📞[emailbot] SignalWire dial failed for {to}: {e}", flush=True)
+    return ""
+
+
 def call_outstanding_leads() -> int:
     """Bot dials every real-phone lead on both companies that hasn't been AI-called yet."""
     if not CALL_LEADS_ENABLED:
+        return 0
+    import auto_reply
+    if auto_reply._review_mode():
         return 0
     from zoneinfo import ZoneInfo
 
@@ -476,7 +498,6 @@ def call_outstanding_leads() -> int:
                 "AND direction = 'outbound' AND recipient IS NOT NULL;"
             )
             called = {_phone_digits(r["recipient"])[-10:] for r in cur.fetchall() if _phone_digits(r["recipient"])}
-        swml_url = _outbound_swml_url()
         for r in rows:
             if dialed >= CALLS_PER_PASS:
                 break
@@ -491,7 +512,7 @@ def call_outstanding_leads() -> int:
                     continue
             to = ("+" + digits) if digits.startswith("1") else ("+1" + digits)
             try:
-                sid = cm.signalwire.create_ai_outbound_call(to, swml_url)
+                sid = _dial_ai_call(to, f"AI lead callback for lead {r['id']} {r.get('name') or ''}")
             except Exception as e:
                 print(f"📞[emailbot] dial failed for lead {r['id']}: {e}")
                 continue
@@ -557,6 +578,9 @@ def follow_up_new_lead(lead_id: int, *, skip_call: bool = False) -> None:
 
             if skip_call or not CALL_LEADS_ENABLED:
                 return
+            import auto_reply
+            if auto_reply._review_mode():
+                return
             from zoneinfo import ZoneInfo
 
             now = datetime.now(ZoneInfo(CALL_TZ))
@@ -571,8 +595,7 @@ def follow_up_new_lead(lead_id: int, *, skip_call: bool = False) -> None:
                     return
             to = ("+" + digits) if digits.startswith("1") else ("+1" + digits)
             try:
-                import construction_bot as cm
-                sid = cm.signalwire.create_ai_outbound_call(to, _outbound_swml_url())
+                sid = _dial_ai_call(to, f"AI immediate callback for new lead {lead_id}")
             except Exception as e:
                 print(f"📞[emailbot] follow-up dial failed for lead {lead_id}: {e}")
                 return
