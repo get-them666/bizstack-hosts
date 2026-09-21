@@ -2524,6 +2524,8 @@ async def hosts_page(request: Request, db=Depends(get_db)):
         channel_stats = cur.fetchall()
         cur.execute("SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status = 'host')::int AS converted FROM leads;")
         lead_totals = cur.fetchone()
+        cur.execute("SELECT COUNT(*)::int AS c FROM leads WHERE draft_reply IS NOT NULL AND LOWER(COALESCE(draft_reply, '')) <> '';")
+        draft_count = cur.fetchone()["c"]
 
         cur.execute("""
             SELECT r.*, COUNT(l.id)::int AS led_count,
@@ -2557,6 +2559,7 @@ async def hosts_page(request: Request, db=Depends(get_db)):
             "unlinked_events": unlinked_events,
             "channel_stats": channel_stats,
             "lead_totals": lead_totals,
+            "draft_count": draft_count,
             "referral_codes": referral_codes,
             "partners": partners,
             "active_source": source_filter,
@@ -2660,6 +2663,13 @@ async def delete_lead(lead_id: int, request: Request, db=Depends(get_db)):
 async def fire_lead_draft_route(lead_id: int, request: Request, db=Depends(get_db)):
     require_admin(request)
     result = auto_reply.fire_lead_draft(db, "broom", lead_id)
+    return RedirectResponse(url=request.headers.get("referer") or "/hosts", status_code=303)
+
+
+@app.post("/api/leads/fire-all-drafts")
+async def fire_all_drafts_route(request: Request, db=Depends(get_db)):
+    require_admin(request)
+    result = auto_reply.fire_all_drafts(db, "broom")
     return RedirectResponse(url=request.headers.get("referer") or "/hosts", status_code=303)
 
 @app.post("/api/customers")

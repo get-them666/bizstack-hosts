@@ -322,10 +322,16 @@
         <div class="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-100 overflow-hidden">
             <div class="p-6 border-b border-slate-100 flex items-center gap-3">
                 <div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 font-bold">🎯</div>
-                <div>
+                <div class="flex-1">
                     <h2 class="text-lg font-bold text-slate-900">Lead Pipeline</h2>
                     <p class="text-xs text-slate-500">Free rental analysis requests from the landing page</p>
                 </div>
+                <form method="post" action="/api/leads/fire-all-drafts" onsubmit="this.querySelector('button').disabled = true; this.querySelector('button').textContent = 'Firing…';" class="flex items-center gap-2">
+                    {% if draft_count %}
+                    <span class="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1.5 rounded-full">{{ draft_count }} draft{{ 's' if draft_count != 1 }} ready</span>
+                    {% endif %}
+                    <button class="px-4 py-2 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors">Fire all drafts</button>
+                </form>
             </div>
                 <table class="w-full text-sm">
                     <thead>
