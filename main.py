@@ -5645,7 +5645,7 @@ async def voice_webhook(request: Request, db=Depends(get_db)):
     greeting = "Thank you for calling Broom Service! Our automated assistant is ready to help with bookings, house rules, or checkout instructions. How can I assist you today?"
     twiml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">{greeting}</Say>
+    <Say voice="Polly.Matthew-Neural">{greeting}</Say>
     <Record maxLength="30" action="/comms/voice-action" transcribe="true" transcribeCallback="/comms/voice-transcribe"/>
 </Response>"""
     return Response(content=twiml_payload, media_type="application/xml")
@@ -5660,7 +5660,7 @@ async def voice_action(request: Request, db=Depends(get_db)):
 
     twiml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">{ai_response}</Say>
+    <Say voice="Polly.Matthew-Neural">{ai_response}</Say>
     <Hangup/>
 </Response>"""
     return Response(content=twiml_payload, media_type="application/xml")
