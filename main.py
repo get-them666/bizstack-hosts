@@ -26,6 +26,7 @@ from fastapi.templating import Jinja2Templates
 import ai_agent
 from ai_agent import BusinessAIAgent
 import lead_sources
+import inbound_email
 from analysis_service import RentalAnalysisService
 from reddit_radar import outreach_draft, scan_reddit
 from linkedin_radar import scan_linkedin, outreach_draft as linkedin_outreach_draft
@@ -734,6 +735,7 @@ async def lifecycle(app: FastAPI):
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
+                inbound_email._ensure_schema(cur)
                 cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id SERIAL PRIMARY KEY,
@@ -2284,6 +2286,10 @@ def _start_lead_source_scheduler():
     except (TypeError, ValueError):
         interval_h = 6
 
+    poll_on = (os.getenv("INBOUND_POLL", "") or "").strip().lower() in ("1", "true", "yes", "on")
+    if poll_on:
+        threading.Thread(target=inbound_email.poll_loop, daemon=True).start()
+
     def _runner():
         print(f"[lead-source] scheduler started (every {interval_h:g}h)", flush=True)
         try:
@@ -2311,6 +2317,25 @@ def _start_lead_source_scheduler():
             time.sleep(interval_h * 3600)
 
     threading.Thread(target=_runner, daemon=True).start()
+
+
+@app.post("/api/email/inbound")
+async def email_inbound_webhook(request: Request):
+    secret = (os.getenv("INBOUND_EMAIL_SECRET", "") or "").strip()
+    if secret:
+        given = request.query_params.get("secret") or ""
+        if not hmac.compare_digest(given, secret):
+            return JSONResponse(content={"ok": False, "error": "unauthorized"}, status_code=401)
+    try:
+        body = await request.json()
+        result = inbound_email.handle_webhook_payload(
+            body, "broom", os.getenv("SMTP_FROM", "") or "hello@bizstackperks.com"
+        )
+        print(f"[email-inbound] webhook ingested: {result}", flush=True)
+        return JSONResponse(content={"ok": True, **result})
+    except Exception as exc:
+        print(f"[email-inbound] webhook error: {exc}", flush=True)
+        return JSONResponse(content={"ok": False, "error": str(exc)[:300]}, status_code=500)
 
 
 @app.post("/lead-sources/scan")
