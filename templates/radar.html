@@ -13,6 +13,16 @@
         <form method="post" action="/radar/scan/linkedin">
             <button type="submit" class="px-5 py-2.5 text-sm font-semibold text-white bg-sky-600 hover:bg-sky-700 rounded-xl shadow-sm">Scan LinkedIn Now</button>
         </form>
+        <form method="post" action="/radar/scan/public">
+            <button type="submit" class="px-5 py-2.5 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm">Scan Contracts Now</button>
+        </form>
+    </div>
+
+    <div class="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+        <b>Public contracts (auto)</b> — federal/state janitorial, grounds, and building-services opportunities near you (VA / NC). Runs automatically every 6h; new ones become leads and notify the owner.
+        <span class="ml-1">{% if lead_source_status.get('running') %}🔄 scanning…{% else %}{{ lead_source_status.get('created', 0) }} new / {{ lead_source_status.get('found', 0) }} found{% endif %}</span>
+        {% if lead_source_status.get('last_run') %}<span class="text-emerald-700">· last run {{ lead_source_status['last_run'][:16].replace('T', ' ') }} UTC</span>{% endif %}
+        {% if lead_source_status.get('errors') %}<div class="mt-1 text-rose-700">{{ lead_source_status['errors'][:200] }}</div>{% endif %}
     </div>
 
     {% if scan_started or scan_running %}

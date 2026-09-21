@@ -90,7 +90,21 @@ Shaun · Broom Service · (757) 846-9275 · bizstackperks.com
 
 ---
 
-## 6. Where Leads Come In
+## 6. Nextdoor Post (both businesses — approved copy)
+
+> Local & family-run: two businesses, one number — (757) 846-9275
+>
+> **Broom Service** — 5-star short-term rental turnover cleaning & co-hosting for Airbnb/Vrbo hosts across Hampton Roads & Currituck County. Guests fund the cleaning at booking, so hosts pay $0 out of pocket. Every clean photo-verified, time-stamped, and location-checked. **Book a clean at bizstackperks.com** — one-time or recurring (weekly, bi-weekly, monthly, priced by home size).
+>
+> **BizStack Construction** — your local crew for framing, drywall, roofing, tile, painting, concrete, and full builds. Crew verified, work tracked, photos on every job. Call or text for a quote — construction.bizstackperks.com
+>
+> Call or text anytime: **+1 (757) 846-9275**
+
+> ⚠️ Note: the recurring-cleaning booking feature is not live on the site yet — post when implemented, or adjust the "Book a clean" line to one-time only.
+
+---
+
+## 7. Where Leads Come In
 
 | Channel | URL param | Status |
 |---------|-----------|--------|

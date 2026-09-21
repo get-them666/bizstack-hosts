@@ -301,6 +301,7 @@ def email_outstanding_leads() -> int:
                     "SELECT id, name, phone, email, project_type, address, budget, timeline, description, status "
                     "FROM leads WHERE company = %s "
                     "AND email IS NOT NULL AND LOWER(email) <> '' AND LOWER(email) NOT LIKE %s "
+                    "AND COALESCE(source, '') NOT IN ('sam-gov') "
                     "ORDER BY id DESC LIMIT 500;",
                     (company, "%@lead.local"),
                 )
