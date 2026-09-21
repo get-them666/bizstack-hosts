@@ -1766,9 +1766,9 @@ async def api_logout():
 
 @app.post("/submit-lead")
 async def submit_lead(
-    name: str = Form(...),
-    email: str = Form(...),
-    phone: str = Form(...),
+    name: str = Form(""),
+    email: str = Form(""),
+    phone: str = Form(""),
     url: str = Form(""),
     funding_needed: str = Form("off"),
     funding_use: str = Form(""),
