@@ -90,6 +90,46 @@ class SignalWireService:
             print(f"❌ SignalWire outbound call failure: {e}")
             return ""
 
+    def create_ai_outbound_call(self, to: str, swml_url: str) -> str:
+        """Place an outbound AI call via the Calling API (SWML url variant); returns the call id."""
+        if not self.is_configured() or not to or not swml_url:
+            return ""
+        try:
+            host = (self.space_url or "").strip()
+            if host.startswith("http://"):
+                host = host[7:]
+            elif host.startswith("https://"):
+                host = host[8:]
+            url = f"https://{host}/api/calling/calls"
+            headers = {"Content-Type": "application/json"}
+            resp = requests.post(
+                url,
+                headers=headers,
+                json={
+                    "command": "dial",
+                    "params": {
+                        "from": self.from_number,
+                        "to": to,
+                        "url": swml_url,
+                    },
+                },
+                auth=(self.project_id, self.api_token),
+                timeout=30,
+            )
+            if not resp.ok:
+                print(f"❌ SignalWire AI outbound call failure: HTTP {resp.status_code} {resp.text[:400]}")
+                return ""
+            body = resp.json()
+            result = body.get("result") or body
+            if isinstance(result, dict):
+                for key in ("call_id", "call_sid", "sid", "id"):
+                    if result.get(key):
+                        return str(result[key])
+            return ""
+        except Exception as e:
+            print(f"❌ SignalWire AI outbound call failure: {e}")
+            return ""
+
     def send_estimate_link(self, to: str, link: str) -> bool:
         """Text a secure link from Buildstack Construction (deposit checkout, estimate, or scheduling page)."""
         body = (

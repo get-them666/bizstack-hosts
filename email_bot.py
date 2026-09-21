@@ -433,8 +433,13 @@ def _poll_inbox() -> list:
     return results
 
 
+def _outbound_swml_url() -> str:
+    base = os.getenv("APP_BASE_URL", "https://bizstackperks.com") or "https://bizstackperks.com"
+    return base.rstrip("/") + "/comms/outbound-voice.swml"
+
+
 def call_outstanding_leads() -> int:
-    """Bot dials phone-only construction leads that haven't been called yet."""
+    """Bot dials every real-phone lead on both companies that hasn't been AI-called yet."""
     if not CALL_LEADS_ENABLED:
         return 0
     from zoneinfo import ZoneInfo
@@ -459,10 +464,9 @@ def call_outstanding_leads() -> int:
         _ensure_bot_calls_table(db)
         with db.cursor() as cur:
             cur.execute(
-                "SELECT id, name, phone FROM leads WHERE company = 'construction' "
-                "AND phone IS NOT NULL AND (email IS NULL OR LOWER(email) = '' OR LOWER(email) LIKE %s) "
-                "ORDER BY id DESC LIMIT 300;",
-                ("%@lead.local",),
+                "SELECT id, name, phone FROM leads "
+                "WHERE phone IS NOT NULL AND LOWER(phone) <> '' "
+                "ORDER BY id DESC LIMIT 500;"
             )
             rows = cur.fetchall()
             cur.execute(
@@ -470,6 +474,7 @@ def call_outstanding_leads() -> int:
                 "AND direction = 'outbound' AND recipient IS NOT NULL;"
             )
             called = {_phone_digits(r["recipient"])[-10:] for r in cur.fetchall() if _phone_digits(r["recipient"])}
+        swml_url = _outbound_swml_url()
         for r in rows:
             if dialed >= CALLS_PER_PASS:
                 break
@@ -483,9 +488,8 @@ def call_outstanding_leads() -> int:
                 if cur.fetchone():
                     continue
             to = ("+" + digits) if digits.startswith("1") else ("+1" + digits)
-            url = f"https://{cm.company()['domain']}/comms/outbound-voice-webhook"
             try:
-                sid = cm.signalwire.create_outbound_call(to, url)
+                sid = cm.signalwire.create_ai_outbound_call(to, swml_url)
             except Exception as e:
                 print(f"📞[emailbot] dial failed for lead {r['id']}: {e}")
                 continue
@@ -496,11 +500,100 @@ def call_outstanding_leads() -> int:
                         "VALUES (%s, %s, 'outbound', 'dialed') ON CONFLICT (call_sid) DO NOTHING;",
                         (sid, r["id"]),
                     )
+                    cur.execute(
+                        "INSERT INTO comms_logs (direction, channel, sender, recipient, message_body) "
+                        "VALUES ('outbound', 'voice', 'system', %s, %s);",
+                        (to, f"AI lead callback for lead {r['id']} {r.get('name') or ''}"),
+                    )
                 dialed += 1
                 print(f"📞[emailbot] dialed lead {r['id']} {r.get('name') or ''} ({to}) sid={sid}", flush=True)
     finally:
         db.close()
     return dialed
+
+
+def follow_up_new_lead(lead_id: int, *, skip_call: bool = False) -> None:
+    """Immediately email and/or AI-call a freshly created lead, in a background thread.
+
+    Emails the lead when it has a real address and hasn't been emailed yet; dials an
+    AI callback when it has a real phone, within call hours, and hasn't been called yet.
+    Safe to call from any lead-insertion site on either company."""
+    def _run():
+        own = ""
+        db = None
+        try:
+            import construction_bot as cm
+            own = _phone_digits(getattr(cm, "from_number", None) or cm.signalwire.from_number)
+        except Exception:
+            pass
+        try:
+            db = psycopg.connect(os.environ["DATABASE_URL"], row_factory=dict_row)
+            db.autocommit = True
+        except Exception as e:
+            print(f"📧[emailbot] follow-up db failure: {e}")
+            return
+        try:
+            _ensure_table(db)
+            _ensure_bot_calls_table(db)
+            with db.cursor() as cur:
+                cur.execute(
+                    "SELECT id, name, phone, email, project_type, address, budget, timeline, description, status, company "
+                    "FROM leads WHERE id = %s;",
+                    (lead_id,),
+                )
+                row = cur.fetchone()
+            if not row:
+                return
+            company = row.get("company") or "broom"
+            email = (row.get("email") or "").strip().lower()
+            if email and not email.endswith("@lead.local") and not _already_emailed(db, email):
+                try:
+                    if _email_lead(db, company, row):
+                        print(f"📧[emailbot] followed-up email lead {lead_id} ({company})", flush=True)
+                except Exception as e:
+                    print(f"📧[emailbot] follow-up email failed for lead {lead_id}: {e}")
+
+            if skip_call or not CALL_LEADS_ENABLED:
+                return
+            from zoneinfo import ZoneInfo
+
+            now = datetime.now(ZoneInfo(CALL_TZ))
+            if not (CALL_START_HOUR <= now.hour < CALL_END_HOUR):
+                return
+            digits = _phone_digits(row.get("phone"))
+            if len(digits) < 10 or (own and digits[-10:] == own[-10:]):
+                return
+            with db.cursor() as cur:
+                cur.execute("SELECT 1 FROM bot_calls WHERE lead_id = %s LIMIT 1;", (lead_id,))
+                if cur.fetchone():
+                    return
+            to = ("+" + digits) if digits.startswith("1") else ("+1" + digits)
+            try:
+                import construction_bot as cm
+                sid = cm.signalwire.create_ai_outbound_call(to, _outbound_swml_url())
+            except Exception as e:
+                print(f"📞[emailbot] follow-up dial failed for lead {lead_id}: {e}")
+                return
+            if sid:
+                with db.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO bot_calls (call_sid, lead_id, direction, status) "
+                        "VALUES (%s, %s, 'outbound', 'dialed') ON CONFLICT (call_sid) DO NOTHING;",
+                        (sid, lead_id),
+                    )
+                    cur.execute(
+                        "INSERT INTO comms_logs (direction, channel, sender, recipient, message_body) "
+                        "VALUES ('outbound', 'voice', 'system', %s, %s);",
+                        (to, f"AI immediate callback for new lead {lead_id}"),
+                    )
+                print(f"📞[emailbot] followed-up call lead {lead_id} ({to}) sid={sid}", flush=True)
+        except Exception as e:
+            print(f"📧[emailbot] follow-up failure for lead {lead_id}: {e}")
+        finally:
+            if db is not None:
+                db.close()
+
+    threading.Thread(target=_run, name=f"lead-followup-{lead_id}", daemon=True).start()
 
 
 def _worker_loop() -> None:

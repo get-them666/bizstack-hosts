@@ -518,6 +518,33 @@ def build_tool_handlers(db, stripe_svc):
         except Exception as e:
             return {"ok": False, "error": f"Email send failed: {e}"}
 
+    def make_outbound_call(to: str, notes: str = ""):
+        digits = "".join(ch for ch in str(to or "") if ch.isdigit())
+        if len(digits) < 10:
+            return {"ok": False, "error": "I need a valid 10-digit phone number."}
+        if not signalwire.is_configured():
+            return {"ok": False, "error": "SignalWire is not configured."}
+        e164 = ("+1" + digits) if not digits.startswith("1") else ("+" + digits)
+        swml_base = (os.getenv("APP_BASE_URL", "https://bizstackperks.com") or "https://bizstackperks.com").rstrip("/")
+        swml_url = f"{swml_base}/comms/outbound-voice.swml"
+        try:
+            sid = signalwire.create_ai_outbound_call(e164, swml_url)
+        except Exception as e:
+            return {"ok": False, "error": f"Call could not be placed: {e}"}
+        if not sid:
+            return {"ok": False, "error": "Call could not be placed right now."}
+        try:
+            with db.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO comms_logs (direction, channel, sender, recipient, message_body) "
+                    "VALUES ('outbound', 'voice', 'assistant', %s, %s);",
+                    (e164, f"[AI outbound call] {str(notes or '')[:500]}"),
+                )
+                db.commit()
+        except Exception:
+            pass
+        return {"ok": True, "call_sid": sid, "to": e164}
+
     def run_site_health_check():
         results = {}
         try:
@@ -617,6 +644,7 @@ def build_tool_handlers(db, stripe_svc):
         "add_ledger_entry": add_ledger_entry,
         "send_sms_message": send_sms_message,
         "send_email_message": send_email_message,
+        "make_outbound_call": make_outbound_call,
         "run_site_health_check": run_site_health_check,
         "generate_training_deck": generate_training_deck,
         "get_rental_analysis": get_rental_analysis,
@@ -1764,6 +1792,12 @@ async def submit_lead(
         lead_id = cur.fetchone()["id"]
         db.commit()
 
+    try:
+        import email_bot
+        email_bot.follow_up_new_lead(lead_id)
+    except Exception as e:
+        print(f"⚠️ submit-lead follow-up start failed: {e}", flush=True)
+
     response = {"status": "success", "lead_id": lead_id}
     if result.get("ok"):
         response["analysis_ready"] = True
@@ -1873,6 +1907,12 @@ async def finance_apply(
         )
     except Exception as e:
         print(f"⚠️ finance auto-reply failed: {e}", flush=True)
+
+    try:
+        import email_bot
+        email_bot.follow_up_new_lead(lead_id)
+    except Exception as e:
+        print(f"⚠️ finance follow-up start failed: {e}", flush=True)
 
     return RedirectResponse(url="/finance?sent=1", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -5859,9 +5899,10 @@ def _swaig_parameters(props: dict, required: list, notes: str = ""):
     }
 
 
-@app.api_route("/voice.swml", methods=["GET", "POST"])
-@app.api_route("/voice-app.swml", methods=["GET", "POST"])
-async def voice_swml():
+def _build_voice_swml(prompt: str, ai_params_extra: dict | None = None) -> dict:
+    ai_params = {"ai_model": "gpt-4.1", "temperature": 0.7, "frequency_penalty": 0.3}
+    if ai_params_extra:
+        ai_params.update(ai_params_extra)
     swml = {
         "version": "1.0.0",
         "sections": {
@@ -5869,7 +5910,7 @@ async def voice_swml():
                 {"answer": {}},
                 {
                     "ai": {
-                        "prompt": {"text": _voice_prompt()},
+                        "prompt": {"text": prompt},
                         "languages": [
                             {
                                 "name": "English",
@@ -5879,7 +5920,7 @@ async def voice_swml():
                                 "params": {"stability": 0.6, "similarity": 0.85},
                             }
                         ],
-                        "params": {"ai_model": "gpt-4.1", "temperature": 0.7, "frequency_penalty": 0.3},
+                        "params": ai_params,
                         "post_prompt_url": (os.getenv("APP_BASE_URL", "https://bizstackperks.com") or "") + "/api/voice/debug",
                         "pronounce": [
                             {"replace": "Broom Service", "with": "broom service", "ignore_case": True},
@@ -6108,6 +6149,17 @@ async def voice_swml():
                                         ["to", "subject", "body"],
                                     ),
                                 },
+                                {
+                                    "function": "make_outbound_call",
+                                    "description": "Place an outgoing phone call to a number RIGHT NOW and answer it as the voice agent (AI). Text checks this too. Use when you promised to call someone back, someone this isn't the caller wants a callback or a reminder, or the owner asks the bot to reach out by phone.",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "to": {"type": "string", "description": "Destination phone number in E.164 format, e.g. +17558469275."},
+                                            "notes": {"type": "string", "description": "Optional reminder of why the call is being placed."},
+                                        },
+                                        ["to"],
+                                    ),
+                                },
                             ],
                         },
                     }
@@ -6115,7 +6167,58 @@ async def voice_swml():
             ]
         },
     }
-    return JSONResponse(content=swml)
+    return swml
+
+
+@app.api_route("/voice.swml", methods=["GET", "POST"])
+@app.api_route("/voice-app.swml", methods=["GET", "POST"])
+async def voice_swml():
+    return JSONResponse(content=_build_voice_swml(_voice_prompt()))
+
+
+@app.api_route("/comms/outbound-voice.swml", methods=["GET", "POST"])
+async def outbound_voice_swml(request: Request, db=Depends(get_db)):
+    to = request.query_params.get("to") or request.query_params.get("To") or ""
+    if not to:
+        try:
+            form = dict(await request.form())
+            to = form.get("to") or form.get("To") or ""
+        except Exception:
+            pass
+    digits = "".join(ch for ch in str(to or "") if ch.isdigit())
+    greeting = ""
+    if len(digits) >= 10:
+        try:
+            with db.cursor() as cur:
+                cur.execute(
+                    "SELECT id, name, phone, email, project_type, address, budget, timeline, description, status, company "
+                    "FROM leads WHERE phone IS NOT NULL ORDER BY id DESC LIMIT 300;"
+                )
+                for r in cur.fetchall():
+                    p = "".join(ch for ch in str(r.get("phone") or "") if ch.isdigit())
+                    if p and p[-10:] == digits[-10:]:
+                        which = "Broom Service" if r.get("company") == "broom" else "Buildstack Construction"
+                        greeting = (
+                            f"OUTBOUND CALL — you are the {which} voice assistant. "
+                            f"You are calling {r.get('name') or 'this lead'}"
+                            + (f" ({r.get('email') or r.get('phone')})" if (r.get('email') or r.get('phone')) else "")
+                            + (f" about a {r.get('project_type')} project" if r.get("project_type") else "")
+                            + (f" at {r.get('address')}" if r.get("address") else "")
+                            + f" (lead #{r['id']}). Greet them by first name, briefly remind them why you are calling, "
+                              f"and keep it quick, friendly, and low-pressure. Work the conversation from there — it is a live human."
+                        )
+                        break
+        except Exception as e:
+            print(f"⚠️ OUTBOUND-SWML lead lookup failed: {e}", flush=True)
+    prompt = (greeting + "\n\n" if greeting else "") + _voice_prompt()
+    return JSONResponse(content=_build_voice_swml(
+        prompt,
+        ai_params_extra={
+            "direction": "outbound",
+            "wait_for_user": True,
+            "outbound_attention_timeout": 20000,
+        },
+    ))
 
 
 VOICE_ALLOWED_TOOLS = {
@@ -6140,6 +6243,7 @@ VOICE_ALLOWED_TOOLS = {
     "get_accounting_summary",
     "get_business_summary",
     "send_email_message",
+    "make_outbound_call",
 }
 
 
@@ -6266,6 +6370,10 @@ def _swaig_tool_response_text(name: str, result) -> str:
         if result.get("ok"):
             return f"Email sent to {result.get('to')}."
         return str(result.get("error") or "Email couldn't be sent.")
+    if name == "make_outbound_call":
+        if result.get("ok"):
+            return f"I'm calling {result.get('to')} now."
+        return str(result.get("error") or "I couldn't place that call right now.")
     return json.dumps(result, default=str, ensure_ascii=False)
 
 
