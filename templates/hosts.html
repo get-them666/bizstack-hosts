@@ -337,6 +337,7 @@
                             <th class="px-6 py-4">Listing URL</th>
                             <th class="px-6 py-4">Received</th>
                             <th class="px-6 py-4">Status</th>
+                            <th class="px-6 py-4">Draft</th>
                             <th class="px-6 py-4">Action</th>
                         </tr>
                     </thead>
@@ -362,6 +363,22 @@
                                     {% endif %}
                                 </td>
                                 <td class="px-6 py-4">
+                                    {% if lead.get('draft_reply') %}
+                                    <div class="max-w-[260px]">
+                                        <p class="text-[11px] text-slate-500 leading-snug whitespace-pre-wrap line-clamp-3">{{ lead['draft_reply'] }}</p>
+                                        <details class="mt-1">
+                                            <summary class="text-[10px] text-indigo-500 cursor-pointer hover:underline">view full</summary>
+                                            <p class="mt-1 text-[11px] text-slate-600 whitespace-pre-wrap bg-slate-50 p-2 rounded-md">{{ lead['draft_reply'] }}</p>
+                                        </details>
+                                        <form method="post" action="/api/leads/{{ lead['id'] }}/fire-draft">
+                                            <button class="mt-1.5 px-2 py-1 text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-md">Send this reply</button>
+                                        </form>
+                                    </div>
+                                    {% else %}
+                                    <span class="text-xs text-slate-300">—</span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-6 py-4">
                                     <div class="flex items-center gap-2">
                                         {% if lead['status'] != 'host' %}
                                         <form method="post" action="/api/hosts/from-lead/{{ lead['id'] }}">
@@ -379,7 +396,7 @@
                             {% endfor %}
                         {% else %}
                             <tr>
-                                <td colspan="8" class="px-6 py-12 text-center text-slate-400">
+                                <td colspan="9" class="px-6 py-12 text-center text-slate-400">
                                     <p class="text-3xl mb-2">📭</p>
                                     <p class="text-sm">No leads yet.</p>
                                     <p class="text-xs mt-1">Leads from the landing page analysis form will appear here.</p>

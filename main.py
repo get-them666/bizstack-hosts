@@ -1101,6 +1101,7 @@ async def lifecycle(app: FastAPI):
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS deposit_cents INTEGER;")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS stripe_session_id VARCHAR(255);")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS notes TEXT;")
+                cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS draft_reply TEXT;")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS property_sqft INTEGER;")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS estimate_low_cents INTEGER;")
                 cur.execute("ALTER TABLE leads ADD COLUMN IF NOT EXISTS estimate_high_cents INTEGER;")
@@ -2654,6 +2655,12 @@ async def delete_lead(lead_id: int, request: Request, db=Depends(get_db)):
         cur.execute("DELETE FROM leads WHERE id = %s;", (lead_id,))
         db.commit()
     return RedirectResponse(url="/hosts", status_code=303)
+
+@app.post("/api/leads/{lead_id}/fire-draft")
+async def fire_lead_draft_route(lead_id: int, request: Request, db=Depends(get_db)):
+    require_admin(request)
+    result = auto_reply.fire_lead_draft(db, "broom", lead_id)
+    return RedirectResponse(url=request.headers.get("referer") or "/hosts", status_code=303)
 
 @app.post("/api/customers")
 async def create_customer(name: str = Form(...), email: str = Form(""), phone: str = Form(""), source: str = Form("manual"), db=Depends(get_db)):
