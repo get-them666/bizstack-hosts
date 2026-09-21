@@ -3845,10 +3845,14 @@ def _message_visible(m: dict, actor: dict) -> bool:
         return False
     kind = m.get("kind") or "announcement"
     if kind == "dm":
-        return bool(
-            (m.get("author_role") == actor.get("role") and m.get("author_id") == actor.get("id"))
-            or (m.get("recipient_role") == actor.get("role") and m.get("recipient_id") == actor.get("id"))
+        author_match = m.get("author_role") == actor.get("role") and m.get("author_id") == actor.get("id")
+        recipient_role = m.get("recipient_role")
+        recipient_id = m.get("recipient_id")
+        recipient_match = recipient_role == actor.get("role") and (
+            recipient_id == actor.get("id")
+            or (recipient_id is None and recipient_role == "admin")
         )
+        return bool(author_match or recipient_match)
     scope = m.get("scope") or "all"
     if actor.get("role") == "admin" or actor.get("company") == "all":
         return True
