@@ -34,6 +34,7 @@ from stripe_service import StripeService
 import stripe
 import site_theme
 from signalwire_service import SignalWireService
+import vapi_service
 import channel_sync
 import legal_forms
 import documents_service
@@ -46,6 +47,7 @@ db_url = os.getenv("DATABASE_URL", "postgresql://shaun:secret@localhost:5432/biz
 templates = Jinja2Templates(directory="templates")
 stripe_svc = StripeService()
 signalwire = SignalWireService()
+vapi = vapi_service.VapiService()
 rental_analysis = RentalAnalysisService()
 
 _company_var: ContextVar[str] = ContextVar("company_key", default="broom")
@@ -526,8 +528,27 @@ def build_tool_handlers(db, stripe_svc):
         digits = "".join(ch for ch in str(to or "") if ch.isdigit())
         if len(digits) < 10:
             return {"ok": False, "error": "I need a valid 10-digit phone number."}
+        e164 = ("+1" + digits) if not digits.startswith("1") else ("+" + digits)
+        if vapi.is_configured():
+            try:
+                sid = vapi.create_ai_outbound_call(e164, notes or "")
+            except Exception as e:
+                return {"ok": False, "error": f"Call could not be placed: {e}"}
+            if not sid:
+                return {"ok": False, "error": "Call could not be placed right now."}
+            try:
+                with db.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO comms_logs (direction, channel, sender, recipient, message_body) "
+                        "VALUES ('outbound', 'voice', 'assistant', %s, %s);",
+                        (e164, f"[AI outbound call] {str(notes or '')[:500]}"),
+                    )
+                    db.commit()
+            except Exception:
+                pass
+            return {"ok": True, "call_sid": sid, "to": e164}
         if not signalwire.is_configured():
-            return {"ok": False, "error": "SignalWire is not configured."}
+            return {"ok": False, "error": "Vapi and SignalWire are both unconfigured."}
         e164 = ("+1" + digits) if not digits.startswith("1") else ("+" + digits)
         swml_base = (os.getenv("APP_BASE_URL", "https://bizstackperks.com") or "https://bizstackperks.com").rstrip("/")
         swml_url = f"{swml_base}/comms/outbound-voice.swml"
@@ -6479,6 +6500,130 @@ async def outbound_voice_swml(request: Request, db=Depends(get_db)):
             "outbound_attention_timeout": 20000,
         },
     ))
+
+
+def _voice_openai_tools() -> list:
+    """Derive OpenAI function schemas from the canonical SWAIG function list."""
+    try:
+        sw = _build_voice_swml(_voice_prompt())
+        funcs = sw["sections"]["main"][1]["ai"]["SWAIG"].get("functions", [])
+    except Exception:
+        funcs = []
+    out = []
+    for f in funcs:
+        name = f.get("function")
+        if not name or name not in VOICE_ALLOWED_TOOLS:
+            continue
+        out.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": f.get("description", ""),
+                "parameters": f.get("parameters") or {"type": "object", "properties": {}},
+            },
+        })
+    return out
+
+
+def _voice_tool_dispatch(db, name: str, args: dict) -> str:
+    """Run one voice tool and turn its result into spoken text."""
+    if name not in VOICE_ALLOWED_TOOLS:
+        return "I'm not able to do that yet, but the team will follow up by text."
+    if not isinstance(args, dict):
+        return "I didn't catch all the details. Could you repeat the date and time?"
+    try:
+        handlers = build_tool_handlers(db, stripe_svc)
+        result = handlers[name](**args)
+    except TypeError as e:
+        print(f"⚠️ VAPI-TOOL bad args: {e}", flush=True)
+        return "I didn't catch all the details. Could you repeat the date and time?"
+    except Exception as e:
+        print(f"⚠️ VAPI-TOOL error: {e}", flush=True)
+        return "That hit a snag — I'll have the team follow up by text."
+    return _swaig_tool_response_text(name, result)
+
+
+def _vapi_messages_to_openai(payload: dict) -> list:
+    """Convert Vapi customLLM messages into OpenAI-format messages with our voice prompt."""
+    conversation = [{"role": "system", "content": _voice_prompt()}]
+    seen_system = False
+    for m in payload.get("messages") or []:
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role")
+        content = m.get("content")
+        if isinstance(content, list):
+            parts = []
+            for seg in content:
+                if isinstance(seg, dict):
+                    parts.append(str(seg.get("text") or seg.get("value") or ""))
+                elif isinstance(seg, str):
+                    parts.append(seg)
+            content = " ".join(p for p in parts if p)
+        elif content is None:
+            continue
+        if role == "system":
+            if seen_system:
+                continue
+            seen_system = True
+            conversation[0] = {"role": "system", "content": str(content)}
+            continue
+        if role not in ("user", "assistant", "tool"):
+            continue
+        item = {"role": role, "content": str(content)}
+        if role == "tool":
+            item["tool_call_id"] = m.get("toolCallId") or m.get("tool_call_id") or "vapi_call"
+        conversation.append(item)
+    return conversation
+
+
+@app.api_route("/vapi/llm", methods=["POST"])
+async def vapi_llm(request: Request, db=Depends(get_db)):
+    """OpenAI-compatible chat completion served to Vapi's customLLM provider.
+
+    Runs the same voice prompt + tool harness as the SWML agent, so the brains
+    stay entirely in this app. Vapi only supplies the transcript + audio.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    from openai import OpenAI
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    model = os.getenv("OPENAI_VOICE_MODEL", "gpt-4o-mini")
+    messages = _vapi_messages_to_openai(payload)
+    tools = _voice_openai_tools() or None
+
+    for _ in range(6):
+        resp = client.chat.completions.create(model=model, messages=messages, tools=tools, temperature=0.7)
+        msg = resp.choices[0].message
+        tool_calls = getattr(msg, "tool_calls", None)
+        if not tool_calls:
+            text = (msg.content or "").strip()
+            return {"choices": [{"message": {"role": "assistant", "content": text or "One moment — let me check that for you."}}]}
+        calls = []
+        for tc in tool_calls:
+            calls.append({"id": tc.id, "type": "function",
+                          "function": {"name": tc.function.name, "arguments": tc.function.arguments}})
+        messages.append({"role": "assistant", "content": msg.content or "", "tool_calls": calls})
+        for tc in tool_calls:
+            try:
+                args = json.loads(tc.function.arguments or "{}")
+            except Exception:
+                args = {}
+            if not isinstance(args, dict):
+                args = {}
+            try:
+                result = _voice_tool_dispatch(db, tc.function.name, args)
+            except Exception as e:
+                print(f"⚠️ VAPI-TOOL {tc.function.name} crash: {e}", flush=True)
+                result = "That hit a snag — the team will follow up by text."
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": str(result)})
+
+    return {"choices": [{"message": {"role": "assistant", "content": "Let me pass this to the team to get you squared away — they'll follow up by text."}}]}
 
 
 VOICE_ALLOWED_TOOLS = {
