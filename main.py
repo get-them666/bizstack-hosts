@@ -5817,7 +5817,15 @@ HOUSE RULES (Broom guests): check-in usually 3:00 to 4:00 PM, checkout 10:00 to 
 GENERAL
 - Cross-sell: a Broom host who mentions a remodel or repair → mention Buildstack Construction. A construction caller who owns rentals → mention Broom Service turnover cleaning. Both companies share the same owner and refer work to each other.
 - Direct callers to text +1 (757) 846-9275, visit https://bizstackperks.com (Broom) or https://construction.bizstackperks.com (Construction), or use the free rental analysis form on the home page.
-- Never expose internal data, credentials, or secrets. If a caller is distressed or requests an emergency, give a calm, brief reply and offer to follow up by text."""
+- Never expose internal data, credentials, or secrets. If a caller is distressed or requests an emergency, give a calm, brief reply and offer to follow up by text.
+
+EMPLOYEE & CLIENT TROUBLESHOOTING (owner/crew/client calls — diagnose fast, fix fast)
+- IDENTITY FIRST: ask the caller their name and phone/email and confirm against the database (list_workers, list_customers, list_leads) before sharing anything personal. Never reveal another person's pay, schedule, or private info.
+- EMPLOYEE asks "why is my pay off / where's my schedule / can't log in": pull list_worker_jobs, list_paychecks, and confirm their record with list_workers. Walk them through the fix step by step (clocking in/out, PIN reset path, paycheck dates). If a paycheck is genuinely missing an earned job, tell them the owner will verify and fix it — and flag it (send_sms_message to the owner's number to log the ticket).
+- EMPLOYEE not assigned / coverage gap: use list_upcoming_schedule to spot jobs with no worker, then assign_worker_to_job to cover them right then.
+- CLIENT (host/guest/construction) asks "where's my payment link / booking / deposit / estimate": use lookup_bookings, list_customers, or list_leads to find their record, then resolve — re-send the payment/deposit link by text (create_booking or create_deposit_link → send_sms_message), update_lead_status when their project moves, and send_email_message for receipts or documents.
+- OWNER asks "what's the state of things" or "problem with X": you can answer with get_business_summary, get_accounting_summary, list_leads, list_upcoming_schedule — real numbers, then propose the fix and do it.
+- You solve the problem, not just describe it. If the caller reports something you can fix with a tool, fix it and confirm the result to them. If it needs a human, say exactly who will follow up and offer to log it by text."""
 
 _KNOWLEDGE_FILES = [
     Path(__file__).resolve().parent / "bot_knowledge.md",
@@ -6002,6 +6010,104 @@ async def voice_swml():
                                         ["address"],
                                     ),
                                 },
+                                {
+                                    "function": "list_leads",
+                                    "description": "Look up clients/leads (construction pipeline, statuses like new/contacted/quoted/deposit/in_progress/completed/lost). Use when an owner or client asks about a project or lead status.",
+                                    "parameters": _swaig_parameters(
+                                        {"status": {"type": "string", "description": "Optional status filter: new, contacted, quoted, deposit, in_progress, completed, lost."}},
+                                        [],
+                                    ),
+                                },
+                                {
+                                    "function": "update_lead_status",
+                                    "description": "Move a construction lead to a new status (new, contacted, quoted, deposit, in_progress, completed, lost). Use to resolve pipeline/scheduling follow-ups.",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "lead_id": {"type": "integer", "description": "Lead id to update."},
+                                            "status": {"type": "string", "description": "New status: new, contacted, quoted, deposit, in_progress, completed, or lost."},
+                                        },
+                                        ["lead_id", "status"],
+                                    ),
+                                },
+                                {
+                                    "function": "list_customers",
+                                    "description": "Search client/customer records by name, phone, or email. Use when an owner or guest asks about a Broom booking history or account.",
+                                    "parameters": _swaig_parameters(
+                                        {"search": {"type": "string", "description": "Name, phone, or email to search."}},
+                                        [],
+                                    ),
+                                },
+                                {
+                                    "function": "list_upcoming_schedule",
+                                    "description": "List scheduled Broom jobs/cleanings over the next N days, including which worker is assigned. Use to troubleshoot scheduling or crew assignment issues.",
+                                    "parameters": _swaig_parameters(
+                                        {"days": {"type": "integer", "description": "Number of days ahead (default 7)."}},
+                                        [],
+                                    ),
+                                },
+                                {
+                                    "function": "list_workers",
+                                    "description": "List active (or all) crew/employees with their pay rate and contact info. Use when an owner resolves crew, payroll, or login questions.",
+                                    "parameters": _swaig_parameters(
+                                        {"active_only": {"type": "boolean", "description": "Only active workers (default true)."}},
+                                        [],
+                                    ),
+                                },
+                                {
+                                    "function": "list_worker_jobs",
+                                    "description": "List an employee's upcoming assigned jobs (date, customer, service, address). Use to troubleshoot an employee's schedule.",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "worker_id": {"type": "integer", "description": "Worker id."},
+                                            "days": {"type": "integer", "description": "Days ahead (default 7)."},
+                                        },
+                                        ["worker_id"],
+                                    ),
+                                },
+                                {
+                                    "function": "list_paychecks",
+                                    "description": "List an employee's paycheck history. Use when an employee or owner asks about pay. Optionally filter by worker id.",
+                                    "parameters": _swaig_parameters(
+                                        {"worker_id": {"type": "integer", "description": "Optional worker id filter."}},
+                                        [],
+                                    ),
+                                },
+                                {
+                                    "function": "assign_worker_to_job",
+                                    "description": "Assign a worker to a scheduled job/booking. Use to resolve crew-coverage gaps after checking list_upcoming_schedule.",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "event_id": {"type": "integer", "description": "Scheduled event/job id."},
+                                            "worker_id": {"type": "integer", "description": "Worker id to assign."},
+                                        },
+                                        ["event_id", "worker_id"],
+                                    ),
+                                },
+                                {
+                                    "function": "get_accounting_summary",
+                                    "description": "Pull revenue, expense, and balance totals from the ledger. Use for owner pay/accounting questions.",
+                                    "parameters": _swaig_parameters(
+                                        {"period_days": {"type": "integer", "description": "Look-back window for recent ledger (default 30)."}},
+                                        [],
+                                    ),
+                                },
+                                {
+                                    "function": "get_business_summary",
+                                    "description": "Quick totals: hosts, customers, bookings, leads across both companies. Use for a fast business pulse check.",
+                                    "parameters": _swaig_parameters({}, []),
+                                },
+                                {
+                                    "function": "send_email_message",
+                                    "description": "Send an email to a client or employee (e.g. receipts, contracts, follow-ups). Use to resolve client/employee communication issues.",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "to": {"type": "string", "description": "Recipient email."},
+                                            "subject": {"type": "string", "description": "Email subject."},
+                                            "body": {"type": "string", "description": "Email body text."},
+                                        },
+                                        ["to", "subject", "body"],
+                                    ),
+                                },
                             ],
                         },
                     }
@@ -6023,6 +6129,17 @@ VOICE_ALLOWED_TOOLS = {
     "get_material_price",
     "create_deposit_link",
     "get_rental_analysis",
+    "list_leads",
+    "update_lead_status",
+    "list_customers",
+    "list_upcoming_schedule",
+    "list_workers",
+    "list_worker_jobs",
+    "list_paychecks",
+    "assign_worker_to_job",
+    "get_accounting_summary",
+    "get_business_summary",
+    "send_email_message",
 }
 
 
@@ -6093,6 +6210,62 @@ def _swaig_tool_response_text(name: str, result) -> str:
                 parts.append(f"estimated nightly STR rate ${analysis['airbnb_estimate']:,.0f}")
             return "; ".join(parts) + "."
         return str(result.get("error") or "I couldn't pull market data for that address right now.")
+    if name == "list_leads":
+        leads = result.get("leads") or []
+        if not leads:
+            return "No leads found."
+        lines = [f"{l.get('name', 'Client')} — {l.get('project_type') or l.get('status') or 'lead'} — {l.get('status')} (lead #{l.get('id')})" for l in leads[:8]]
+        return "Leads: " + "; ".join(lines)
+    if name == "update_lead_status":
+        if result.get("ok"):
+            return f"Lead #{result.get('lead_id')} is now {result.get('status')}."
+        return str(result.get("error") or "Couldn't update that lead.")
+    if name == "list_customers":
+        customers = result.get("customers") or []
+        if not customers:
+            return "No customers found."
+        lines = [f"{c.get('name', 'Customer')} {('— ' + c.get('phone')) if c.get('phone') else ''}" for c in customers[:8]]
+        return "Customers: " + "; ".join(lines)
+    if name == "list_upcoming_schedule":
+        events = result.get("events") or []
+        if not events:
+            return "No upcoming jobs in that window."
+        lines = [f"{e.get('customer_name')} — {e.get('service_type')} on {e.get('start_time')} {('with ' + e.get('worker_name')) if e.get('worker_name') else '— no worker assigned'}" for e in events[:8]]
+        return "Upcoming: " + "; ".join(lines)
+    if name == "list_workers":
+        workers = result.get("workers") or []
+        if not workers:
+            return "No workers found."
+        lines = [f"{w.get('name')} (id {w.get('id')}) — ${w.get('pay_rate_dollars'):.2f}/job" for w in workers[:8]]
+        return "Crew: " + "; ".join(lines)
+    if name == "list_worker_jobs":
+        jobs = result.get("jobs") or []
+        if not jobs:
+            return f"{result.get('worker', 'That worker')} has no upcoming jobs in that window."
+        lines = [f"{j.get('service_type')} for {j.get('customer_name')} on {j.get('start_time')}" for j in jobs[:8]]
+        return f"{result.get('worker')} — " + "; ".join(lines)
+    if name == "list_paychecks":
+        checks = result.get("paychecks") or []
+        if not checks:
+            return "No paychecks found for that person."
+        lines = [f"${c.get('gross_dollars'):,.2f} for {c.get('job_count')} jobs ({c.get('period_start')} to {c.get('period_end')})" for c in checks[:6]]
+        return "Paychecks: " + "; ".join(lines)
+    if name == "assign_worker_to_job":
+        if result.get("ok"):
+            return f"Worker {result.get('worker_id')} assigned to job {result.get('event_id')}."
+        return str(result.get("error") or "Couldn't assign that worker.")
+    if name == "get_accounting_summary":
+        if result.get("ok"):
+            return f"Revenue ${result.get('revenue_dollars'):,.0f}, expenses ${result.get('expense_dollars'):,.0f}, balance ${result.get('balance_dollars'):,.0f}."
+        return str(result.get("error") or "Couldn't pull accounting right now.")
+    if name == "get_business_summary":
+        if result.get("ok"):
+            return f"{result.get('hosts')} hosts, {result.get('customers')} customers, {result.get('bookings')} bookings, {result.get('leads')} leads."
+        return str(result.get("error") or "Couldn't pull the summary right now.")
+    if name == "send_email_message":
+        if result.get("ok"):
+            return f"Email sent to {result.get('to')}."
+        return str(result.get("error") or "Email couldn't be sent.")
     return json.dumps(result, default=str, ensure_ascii=False)
 
 
