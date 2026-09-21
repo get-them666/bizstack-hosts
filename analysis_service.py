@@ -86,6 +86,7 @@ class RentalAnalysisService:
             avm = avm_resp.get("data") or {}
         except Exception as e:
             print(f"⚠️ AVM lookup skipped: {e}")
+        avm = avm or {}
 
         props = data.get("propertyInfo") or {}
         demographics = data.get("demographics") or {}
