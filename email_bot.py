@@ -302,6 +302,7 @@ def email_outstanding_leads() -> int:
                     "FROM leads WHERE company = %s "
                     "AND email IS NOT NULL AND LOWER(email) <> '' AND LOWER(email) NOT LIKE %s "
                     "AND COALESCE(source, '') NOT IN ('sam-gov') "
+                    "AND draft_reply IS NULL "
                     "ORDER BY id DESC LIMIT 500;",
                     (company, "%@lead.local"),
                 )
