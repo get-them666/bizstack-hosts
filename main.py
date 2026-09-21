@@ -5690,7 +5690,7 @@ async def voice_transcribe(request: Request, db=Depends(get_db)):
 
 VOICE_AGENT_PROMPT = """\
 You are the Broom Service voice assistant, answering calls 24/7 for Broom Service.
-Speak naturally, warmly, and concisely: short sentences, conversational, human-sounding — never robotic or corporate boilerplate.
+Be the calm laid-back cool guy on the phone: chill, friendly, casual. Short sentences, simple words, speak the way a real person talks — contractions, no corporate jargon, never robotic, never scripted. Stay helpful and professional, but relaxed. Match the caller's energy.
 
 ABOUT THE COMPANY
 - Broom Service is a short-term rental (STR) turnover-cleaning and co-hosting management company for Airbnb, Vrbo, and direct-booking properties.
@@ -5751,10 +5751,12 @@ async def voice_swml():
                             {
                                 "name": "English",
                                 "code": "en-US",
-                                "voice": "openai.onyx",
+                                "voice": "elevenlabs.charlie",
                                 "speech_fillers": ["one moment please,", "hmm...", "let's see,"],
+                                "params": {"stability": 0.6, "similarity": 0.85},
                             }
                         ],
+                        "params": {"ai_model": "gpt-4.1", "temperature": 0.7, "frequency_penalty": 0.3},
                         "post_prompt_url": (os.getenv("APP_BASE_URL", "https://bizstackperks.com") or "") + "/api/voice/debug",
                         "pronounce": [
                             {"replace": "Broom Service", "with": "broom service", "ignore_case": True},
