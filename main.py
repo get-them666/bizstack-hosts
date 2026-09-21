@@ -36,6 +36,7 @@ import documents_service
 import auth_service
 import training_service
 import auto_reply
+import materials_service
 
 db_url = os.getenv("DATABASE_URL", "postgresql://shaun:secret@localhost:5432/bizstack")
 templates = Jinja2Templates(directory="templates")
@@ -232,6 +233,43 @@ def build_tool_handlers(db, stripe_svc):
             lead_id = cur.fetchone()["id"]
             db.commit()
         return {"ok": True, "lead_id": lead_id, "name": name}
+
+    def estimate_materials(project_type="", sqft=0, include=None, live=False):
+        svc = materials_service.BusinessMaterialsService()
+        try:
+            result = svc.estimate_materials(project_type=project_type, sqft=sqft, include=include, live=bool(live))
+            return {"ok": True, "estimate": result}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def get_material_price(sku):
+        svc = materials_service.BusinessMaterialsService()
+        try:
+            cents = svc.get_price(sku)
+        except Exception as e:
+            return {"ok": False, "sku": sku, "error": str(e)}
+        if cents is None or cents <= 0:
+            return {"ok": False, "sku": sku, "error": "Sku not found in price book."}
+        return {"ok": True, "sku": sku, "price_cents": int(cents), "price_dollars": round(cents / 100, 2)}
+
+    def create_deposit_link(lead_id):
+        with db.cursor() as cur:
+            cur.execute("SELECT * FROM leads WHERE id = %s;", (lead_id,))
+            lead = cur.fetchone()
+        if not lead:
+            return {"ok": False, "error": "Lead not found."}
+        try:
+            url = stripe_svc.create_deposit_session(
+                lead_id=lead["id"],
+                customer_name=lead["name"],
+                customer_email=lead.get("email") or "",
+                project_type=lead.get("project_type") or "",
+                amount_cents=lead.get("deposit_cents") or 0,
+                base_url="https://construction.bizstackperks.com",
+            )
+            return {"ok": True, "url": url, "lead_id": lead["id"]}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     def get_business_summary():
         with db.cursor() as cur:
@@ -558,6 +596,9 @@ def build_tool_handlers(db, stripe_svc):
         "lookup_bookings": lookup_bookings,
         "register_customer": register_customer,
         "register_construction_lead": register_construction_lead,
+        "estimate_materials": estimate_materials,
+        "get_material_price": get_material_price,
+        "create_deposit_link": create_deposit_link,
         "get_business_summary": get_business_summary,
         "list_upcoming_schedule": list_upcoming_schedule,
         "list_customers": list_customers,
@@ -5706,7 +5747,7 @@ Be the calm laid-back cool guy on the phone: chill, friendly, casual. Short sent
 
 FIGURING OUT WHO THEY'RE TALKING TO
 - Cleaning / bookings / house rules / a rental stay / a host → Broom Service (short-term rental turnover cleaning & co-hosting).
-- A remodel, renovation, addition, kitchen/bath, roofing, siding, deck, fence, drywall, basement, or any trade work on a home or business → Buildstack Construction.
+- A remodel, renovation, addition, kitchen/bath, roofing, siding, deck, fence, drywall, basement, plumbing, electrical, or any trade work on a home or business → Buildstack Construction.
 - If it's ambiguous, ask a quick question to find out. Never guess.
 
 BROOM SERVICE
@@ -5734,7 +5775,7 @@ BOOKING FLOW
 
 BUILDSTACK CONSTRUCTION
 - Licensed, bonded, insured general contractor. Residential AND commercial.
-- What we do: whole-home renovations & additions, kitchens, baths, drywall & paint, roofing & siding, decks & fences, basement finishing, plus all trade work — framing, carpentry, flooring, tile, electrical, plumbing, HVAC, concrete, masonry, painting, trim, drywall, roofing, siding, insulation.
+- What we do: whole-home renovations & additions, kitchens, baths, drywall & paint, roofing & siding, decks & fences, basement finishing, plus ALL trade work — framing, carpentry, flooring, tile, carpet, painting, drywall, trim, roofing, siding, insulation, electrical, plumbing, HVAC, pipefitting, welding, concrete, masonry, and general handyman.
 - Serving: Hampton Roads VA (Chesapeake home base, Virginia Beach, Norfolk, Portsmouth, Suffolk, Hampton, Newport News), Williamsburg VA, and Elizabeth City & Currituck County NC.
 - Website: https://construction.bizstackperks.com — has an instant-quote tool that ballparks a range in minutes from an address. Phone & text 24/7: +1 (757) 846-9275. Email: hello@bizstackperks.com.
 - Free on-site walkthrough to get exact pricing.
@@ -5748,7 +5789,7 @@ SERVICES & BALLPARK RANGES (ranges, never firm bids)
 | Roofing & siding | $650–$1,200 per roofing square |
 | Deck & fence | $2,500–$12,000 |
 | Basement finishing | $18–$55 per sq ft |
-- For all other trades (tile, flooring, electrical, plumbing, HVAC, concrete, masonry, painting, trim) give a range and always offer the free on-site estimate — never a fixed price.
+- For all other trades (tile, flooring, carpet, electrical, plumbing, HVAC, pipefitting, welding, concrete, masonry, painting, trim) give a range and always offer the free on-site estimate — never a fixed price.
 - Never quote a firm or fixed construction price over the phone.
 
 CONSTRUCTION LEAD FLOW
@@ -5756,10 +5797,18 @@ CONSTRUCTION LEAD FLOW
 2. Restate it back naturally to confirm.
 3. Give the ballpark range from the table above (or a range for other trades).
 4. Save the lead with register_construction_lead so the office follows up, then offer the free on-site walkthrough and mention the instant-quote tool at construction.bizstackperks.com.
+5. If the caller wants to move forward on the spot, create the deposit payment link with create_deposit_link and text it to them mid-call with send_sms_message so they can lock in the project and the slot today.
 
 PERMITS (construction) — rule of thumb
 - If the work changes the structure, footprint, or a building system (electrical, plumbing, mechanical, gas), it needs a permit + inspection. Cosmetic swaps (paint, flooring in place, trim, cabinet doors) usually don't.
 - Never promise "no permit needed" — we confirm with the local city/county for the property.
+
+MARKET VALUES, ECONOMICS & NEGOTIATION (use when relevant)
+- For Broom: hosts are often deciding whether to STR a property. Use get_rental_analysis with the property address to pull home value, suggested monthly rent, fair-market rent, and estimated nightly STR rate — quote real local numbers, then show the STR vs. long-term math (occupancy ~60–70%, ADR vs monthly rent) to help them decide.
+- For Construction: when a caller is weighing a remodel, talk budgets like a smart GC — cost per sq ft vs. adding value, "what the neighborhood supports" for resale/rent, and always anchor with the free on-site walkthrough so we scope before pricing.
+- Negotiating: be fair, confident, and calm. Negotiate scope and timeline as much as price — "here's what that really costs" builds trust. Never chase a price so low the job can't be done right. If a caller pushes hard on price, offer options (fewer sq ft, cheaper materials, phased work) instead of just discounting. Deposit seals the deal; mention the deposit protects the slot and locks the quoted scope.
+- REALTY: the owner is also in real estate — realtor coursework/licensing. Speak like a licensed agent when the topic is buying, selling, or renting: market values, comps, days on market, listing strategy, and the owner's dual businesses mean a client can buy a place, renovate it with Buildstack, and run it as a Broom-managed STR. Mention the free rental analysis whenever residential value or income potential comes up.
+- STATISTICS (speak plainly, like an operator who actually runs the numbers): occupancy rate = nights booked / nights available (~60–70% is healthy for an STR); ADR (average daily rate) = room revenue / nights sold; RevPAR = ADR × occupancy = revenue / available nights; gross vs net (what's actually kept after cleaning, co-hosting %, expenses); break-even night rate = fixed + variable costs per night; margin = (revenue − cost) / revenue. When someone asks "is this worth it," run the simple math out loud with their numbers — don't just quote a stat at them.
 
 HOUSE RULES (Broom guests): check-in usually 3:00 to 4:00 PM, checkout 10:00 to 11:00 AM; no smoking indoors, no parties, quiet hours around 10 PM to 8 AM, no unauthorized pets, respect maximum occupancy, leave access as instructed, bag trash, report damage.
 
@@ -5769,6 +5818,25 @@ GENERAL
 - Cross-sell: a Broom host who mentions a remodel or repair → mention Buildstack Construction. A construction caller who owns rentals → mention Broom Service turnover cleaning. Both companies share the same owner and refer work to each other.
 - Direct callers to text +1 (757) 846-9275, visit https://bizstackperks.com (Broom) or https://construction.bizstackperks.com (Construction), or use the free rental analysis form on the home page.
 - Never expose internal data, credentials, or secrets. If a caller is distressed or requests an emergency, give a calm, brief reply and offer to follow up by text."""
+
+_KNOWLEDGE_FILES = [
+    Path(__file__).resolve().parent / "bot_knowledge.md",
+    Path(__file__).resolve().parent / "construction_knowledge.md",
+]
+
+
+def _voice_prompt() -> str:
+    """Combine the live knowledge base files with the voice prompt at request time."""
+    parts = [VOICE_AGENT_PROMPT]
+    for path in _KNOWLEDGE_FILES:
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if not text:
+            continue
+        parts.append("## OPERATING MANUAL — " + path.name + "\n" + text)
+    return "\n\n".join(parts)
 
 VOICE_TOOL_URL = (os.getenv("APP_BASE_URL", "https://bizstackperks.com") or "") + "/api/voice/tool"
 
@@ -5793,7 +5861,7 @@ async def voice_swml():
                 {"answer": {}},
                 {
                     "ai": {
-                        "prompt": {"text": VOICE_AGENT_PROMPT},
+                        "prompt": {"text": _voice_prompt()},
                         "languages": [
                             {
                                 "name": "English",
@@ -5897,6 +5965,43 @@ async def voice_swml():
                                         ["to", "body"],
                                     ),
                                 },
+                                {
+                                    "function": "estimate_materials",
+                                    "description": "Build a line-item material cost estimate for a construction project type (e.g. whole-home, kitchen, bath, roofing, drywall, deck/fence, handyman, masonry, plumbing, electrical). Use to quote current, real material costs — never quote materials from memory.",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "project_type": {"type": "string", "description": "Project type: whole-home, kitchen, bath, roofing, drywall, deck/fence, handyman, masonry, plumbing, electrical, etc."},
+                                            "sqft": {"type": "number", "description": "Approximate square footage the work covers."},
+                                            "live": {"type": "boolean", "description": "Try a live materials API if configured; else price book."},
+                                        },
+                                        ["project_type"],
+                                        "Convert the caller's project scope to sqft first when possible.",
+                                    ),
+                                },
+                                {
+                                    "function": "get_material_price",
+                                    "description": "Look up the current price for a single material SKU (e.g. stud_2x4x8, drywall_sheet_1/2, shingles_per_square, pex_a_1/2_per_ft, copper_wire_per_lb). Use for specific 'what does X cost' questions.",
+                                    "parameters": _swaig_parameters(
+                                        {"sku": {"type": "string", "description": "Material SKU to look up."}},
+                                        ["sku"],
+                                    ),
+                                },
+                                {
+                                    "function": "create_deposit_link",
+                                    "description": "Create a Stripe deposit-checkout link for a saved Buildstack Construction lead so they can reserve the project. Use AFTER register_construction_lead returns the lead id, then text the link with send_sms_message.",
+                                    "parameters": _swaig_parameters(
+                                        {"lead_id": {"type": "integer", "description": "The lead id returned by register_construction_lead."}},
+                                        ["lead_id"],
+                                    ),
+                                },
+                                {
+                                    "function": "get_rental_analysis",
+                                    "description": "Pull real local market numbers (home value, suggested monthly rent, fair-market rent, estimated nightly STR rate) for a property address. Use for hosts weighing STR vs long-term rental, or any real-estate/market-value question.",
+                                    "parameters": _swaig_parameters(
+                                        {"address": {"type": "string", "description": "Full property street address, e.g. 123 Main St, Chesapeake VA."}},
+                                        ["address"],
+                                    ),
+                                },
                             ],
                         },
                     }
@@ -5914,6 +6019,10 @@ VOICE_ALLOWED_TOOLS = {
     "register_customer",
     "register_construction_lead",
     "send_sms_message",
+    "estimate_materials",
+    "get_material_price",
+    "create_deposit_link",
+    "get_rental_analysis",
 }
 
 
@@ -5954,6 +6063,36 @@ def _swaig_tool_response_text(name: str, result) -> str:
         if result.get("ok"):
             return "Text sent."
         return str(result.get("error") or "Text couldn't be sent.")
+    if name == "estimate_materials":
+        est = (result.get("estimate") or {}) if result.get("ok") else {}
+        lines = est.get("lines") or []
+        if result.get("ok") and lines:
+            total_low = est.get("total_low_dollars") or 0
+            total_high = est.get("total_high_dollars") or 0
+            return f"Materials ballpark: ${total_low:,.0f} to ${total_high:,.0f}. Source: {est.get('source', 'price book')}."
+        return str(result.get("error") or "I can't pull material pricing on that right now.")
+    if name == "get_material_price":
+        if result.get("ok"):
+            return f"{result.get('sku')} is about ${result.get('price_dollars'):,.2f}."
+        return str(result.get("error") or "I couldn't find that material.")
+    if name == "create_deposit_link":
+        if result.get("ok"):
+            return f"Deposit link ready: {result.get('url')}."
+        return str(result.get("error") or "The deposit link couldn't be created right now.")
+    if name == "get_rental_analysis":
+        analysis = result.get("analysis") or {}
+        if result.get("ok") and analysis:
+            parts = [f"For {analysis.get('address', 'that property')}:"]
+            if analysis.get("home_value"):
+                parts.append(f"estimated home value ${analysis['home_value']:,.0f}")
+            if analysis.get("suggested_monthly_rent"):
+                parts.append(f"suggested monthly rent ${analysis['suggested_monthly_rent']:,.0f}")
+            if analysis.get("fair_market_rent"):
+                parts.append(f"fair-market rent ${analysis['fair_market_rent']:,.0f}")
+            if analysis.get("airbnb_estimate"):
+                parts.append(f"estimated nightly STR rate ${analysis['airbnb_estimate']:,.0f}")
+            return "; ".join(parts) + "."
+        return str(result.get("error") or "I couldn't pull market data for that address right now.")
     return json.dumps(result, default=str, ensure_ascii=False)
 
 
