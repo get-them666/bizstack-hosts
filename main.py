@@ -222,6 +222,17 @@ def build_tool_handlers(db, stripe_svc):
             db.commit()
         return {"ok": True, "customer_id": customer_id}
 
+    def register_construction_lead(name: str, phone: str, project_type: str = "", address: str = "", budget: str = "", timeline: str = "", notes: str = ""):
+        with db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO leads (name, phone, email, project_type, address, budget, timeline, description, source, status, company, deposit_status) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'ai-assistant', 'new', 'construction', 'none') RETURNING id;",
+                (name, phone, "", project_type, address, budget, timeline, notes),
+            )
+            lead_id = cur.fetchone()["id"]
+            db.commit()
+        return {"ok": True, "lead_id": lead_id, "name": name}
+
     def get_business_summary():
         with db.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM hosts"); hosts = cur.fetchone()["count"]
@@ -546,6 +557,7 @@ def build_tool_handlers(db, stripe_svc):
         "create_booking": create_booking,
         "lookup_bookings": lookup_bookings,
         "register_customer": register_customer,
+        "register_construction_lead": register_construction_lead,
         "get_business_summary": get_business_summary,
         "list_upcoming_schedule": list_upcoming_schedule,
         "list_customers": list_customers,
@@ -5689,12 +5701,17 @@ async def voice_transcribe(request: Request, db=Depends(get_db)):
 # --- SWML live voice agent (SignalWire AI conversation with full site knowledge) ---
 
 VOICE_AGENT_PROMPT = """\
-You are the Broom Service voice assistant, answering calls 24/7 for Broom Service.
+You answer the shared business line 24/7 for BOTH companies: Broom Service AND Buildstack Construction.
 Be the calm laid-back cool guy on the phone: chill, friendly, casual. Short sentences, simple words, speak the way a real person talks — contractions, no corporate jargon, never robotic, never scripted. Stay helpful and professional, but relaxed. Match the caller's energy.
 
-ABOUT THE COMPANY
-- Broom Service is a short-term rental (STR) turnover-cleaning and co-hosting management company for Airbnb, Vrbo, and direct-booking properties.
-- Website: https://bizstackperks.com. Assistant number, call or text 24/7: +1 (757) 846-9275. Email: hello@bizstackperks.com.
+FIGURING OUT WHO THEY'RE TALKING TO
+- Cleaning / bookings / house rules / a rental stay / a host → Broom Service (short-term rental turnover cleaning & co-hosting).
+- A remodel, renovation, addition, kitchen/bath, roofing, siding, deck, fence, drywall, basement, or any trade work on a home or business → Buildstack Construction.
+- If it's ambiguous, ask a quick question to find out. Never guess.
+
+BROOM SERVICE
+- STR turnover-cleaning and co-hosting company for Airbnb, Vrbo, and direct-booking properties.
+- Website: https://bizstackperks.com. Phone & text 24/7: +1 (757) 846-9275. Email: hello@bizstackperks.com.
 - Core promises: zero upfront cost to hosts (the guest funds the operational fee at booking), no long-term contracts (unbundled modular services), 24/7 AI assistant, photo-verified cleaning with time-stamped room photos, calendar sync, and secure Stripe payments collected from guests at checkout.
 
 SERVICES & PRICING (confirm exact figures at booking time)
@@ -5715,12 +5732,42 @@ BOOKING FLOW
 - The booking belongs to the caller's phone number; use it to look up existing bookings.
 - Never invent prices, policies, or availability. Use tools first; if unsure, say the team will follow up by text.
 
-HOUSE RULES (for guests): check-in usually 3:00 to 4:00 PM, checkout 10:00 to 11:00 AM; no smoking indoors, no parties, quiet hours around 10 PM to 8 AM, no unauthorized pets, respect maximum occupancy, leave access as instructed, bag trash, report damage.
+BUILDSTACK CONSTRUCTION
+- Licensed, bonded, insured general contractor. Residential AND commercial.
+- What we do: whole-home renovations & additions, kitchens, baths, drywall & paint, roofing & siding, decks & fences, basement finishing, plus all trade work — framing, carpentry, flooring, tile, electrical, plumbing, HVAC, concrete, masonry, painting, trim, drywall, roofing, siding, insulation.
+- Serving: Hampton Roads VA (Chesapeake home base, Virginia Beach, Norfolk, Portsmouth, Suffolk, Hampton, Newport News), Williamsburg VA, and Elizabeth City & Currituck County NC.
+- Website: https://construction.bizstackperks.com — has an instant-quote tool that ballparks a range in minutes from an address. Phone & text 24/7: +1 (757) 846-9275. Email: hello@bizstackperks.com.
+- Free on-site walkthrough to get exact pricing.
+
+SERVICES & BALLPARK RANGES (ranges, never firm bids)
+| Service | Typical range |
+| Full home renovation / additions | $95–$175 per interior sq ft |
+| Kitchen remodel | $18,000–$45,000 |
+| Bathroom remodel | $9,000–$25,000 |
+| Drywall & paint | $7–$15 per interior sq ft |
+| Roofing & siding | $650–$1,200 per roofing square |
+| Deck & fence | $2,500–$12,000 |
+| Basement finishing | $18–$55 per sq ft |
+- For all other trades (tile, flooring, electrical, plumbing, HVAC, concrete, masonry, painting, trim) give a range and always offer the free on-site estimate — never a fixed price.
+- Never quote a firm or fixed construction price over the phone.
+
+CONSTRUCTION LEAD FLOW
+1. Collect the caller's name, phone, what they want done (project type), and if they'll share it, the property address and rough budget/timeline.
+2. Restate it back naturally to confirm.
+3. Give the ballpark range from the table above (or a range for other trades).
+4. Save the lead with register_construction_lead so the office follows up, then offer the free on-site walkthrough and mention the instant-quote tool at construction.bizstackperks.com.
+
+PERMITS (construction) — rule of thumb
+- If the work changes the structure, footprint, or a building system (electrical, plumbing, mechanical, gas), it needs a permit + inspection. Cosmetic swaps (paint, flooring in place, trim, cabinet doors) usually don't.
+- Never promise "no permit needed" — we confirm with the local city/county for the property.
+
+HOUSE RULES (Broom guests): check-in usually 3:00 to 4:00 PM, checkout 10:00 to 11:00 AM; no smoking indoors, no parties, quiet hours around 10 PM to 8 AM, no unauthorized pets, respect maximum occupancy, leave access as instructed, bag trash, report damage.
 
 5-STAR CLEANING STANDARD (if asked): remove all trash, strip and replace all linens, sanitize bathrooms and kitchen, care for floors, dust surfaces, restock supplies, stage the space, take time-stamped photos of every room, and report any damage or issues immediately.
 
 GENERAL
-- Direct callers to text +1 (757) 846-9275, visit https://bizstackperks.com, or use the free rental analysis form on the home page.
+- Cross-sell: a Broom host who mentions a remodel or repair → mention Buildstack Construction. A construction caller who owns rentals → mention Broom Service turnover cleaning. Both companies share the same owner and refer work to each other.
+- Direct callers to text +1 (757) 846-9275, visit https://bizstackperks.com (Broom) or https://construction.bizstackperks.com (Construction), or use the free rental analysis form on the home page.
 - Never expose internal data, credentials, or secrets. If a caller is distressed or requests an emergency, give a calm, brief reply and offer to follow up by text."""
 
 VOICE_TOOL_URL = (os.getenv("APP_BASE_URL", "https://bizstackperks.com") or "") + "/api/voice/tool"
@@ -5824,6 +5871,22 @@ async def voice_swml():
                                     ),
                                 },
                                 {
+                                    "function": "register_construction_lead",
+                                    "description": "Save a new Buildstack Construction lead (remodel, renovation, kitchen, bath, roofing, siding, deck, fence, drywall, basement, or any trade work). Use when a caller wants construction work done.",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "name": {"type": "string", "description": "Caller's full name."},
+                                            "phone": {"type": "string", "description": "Caller's phone number in E.164, e.g. +17558469275."},
+                                            "project_type": {"type": "string", "description": "What they want done: e.g. kitchen remodel, bathroom remodel, addition, roofing, deck, basement, drywall."},
+                                            "address": {"type": "string", "description": "Optional property address."},
+                                            "budget": {"type": "string", "description": "Optional rough budget."},
+                                            "timeline": {"type": "string", "description": "Optional desired timeline."},
+                                            "notes": {"type": "string", "description": "Optional extra notes."},
+                                        },
+                                        ["name", "phone", "project_type"],
+                                    ),
+                                },
+                                {
                                     "function": "send_sms_message",
                                     "description": "Send a text message (e.g. a Stripe payment link) to a phone number. Use after creating a booking so the guest receives the payment link.",
                                     "parameters": _swaig_parameters(
@@ -5849,6 +5912,7 @@ VOICE_ALLOWED_TOOLS = {
     "create_booking",
     "lookup_bookings",
     "register_customer",
+    "register_construction_lead",
     "send_sms_message",
 }
 
@@ -5884,6 +5948,8 @@ def _swaig_tool_response_text(name: str, result) -> str:
         return "Bookings: " + "; ".join(lines)
     if name == "register_customer":
         return f"New customer profile saved."
+    if name == "register_construction_lead":
+        return f"Thanks {result.get('name', '')} — your construction lead is saved and our estimator will follow up."
     if name == "send_sms_message":
         if result.get("ok"):
             return "Text sent."
