@@ -535,6 +535,56 @@ def fire_lead_draft(db, company_key, lead_id, *, force=False):
     return result
 
 
+def auto_flush_drafts(db, company_key=None):
+    """Auto-fire staged drafts once the email provider is back under quota.
+
+    Called from the worker loop. Unlike fire_all_drafts (owner blast, force=True),
+    this honors the daily caps (EMAIL_DAILY_CAP / TEXT_DAILY_CAP) and skips email
+    drafts while Resend's daily quota is exhausted, so drafts flush as soon as
+    the quota resets rather than exploding the provider. Text drafts (SignalWire)
+    are not held back by the Resend quota and fire immediately. Returns
+    {"pending": n, "sent": m, "skipped": k, "reasons": {reason: count}}."""
+    _ensure_draft_column(db)
+    from documents_service import _resend_quota_blocked, _mark_resend_quota_exhausted
+    companies = [company_key] if company_key in COMPANIES else list(COMPANIES)
+    pending = []
+    try:
+        with db.cursor() as cur:
+            for ck in companies:
+                cur.execute(
+                    "SELECT id, draft_reply FROM leads WHERE company = %s AND draft_reply IS NOT NULL "
+                    "AND LOWER(COALESCE(draft_reply, '')) <> '' ORDER BY id;",
+                    (ck,),
+                )
+                for r in cur.fetchall():
+                    draft = (r.get("draft_reply") or "").strip()
+                    is_email_draft = not draft.startswith("[BOT DRAFT REPLY – text")
+                    pending.append((ck, r["id"], is_email_draft))
+    except Exception as exc:
+        print(f"[auto-reply] auto-flush query failed: {exc}", flush=True)
+        return {"pending": 0, "sent": 0, "skipped": 0, "errors": [f"query failed: {exc}"]}
+    held = sum(1 for *_ , is_email in pending if is_email and _resend_quota_blocked())
+    target = [(ck, lid) for ck, lid, is_email in pending if not (is_email and _resend_quota_blocked())]
+    if held:
+        print(f"[auto-reply] auto-flush: {held} email drafts held for mail quota reset", flush=True)
+    if not target:
+        return {"pending": len(pending), "sent": 0, "skipped": len(pending), "reasons": {"waiting for provider quota": len(pending)}}
+    sent = 0
+    skipped = 0
+    reasons = {}
+    for ck, lead_id in target:
+        res = fire_lead_draft(db, ck, lead_id, force=False)
+        if res.get("sent"):
+            sent += 1
+        else:
+            skipped += 1
+            why = res.get("why") or "unknown"
+            reasons[why] = reasons.get(why, 0) + 1
+    print(f"[auto-reply] auto-flush: {len(target)} attempted, {sent} sent, {skipped} skipped "
+          f"({held} email drafts held for quota)", flush=True)
+    return {"pending": len(pending), "sent": sent, "skipped": skipped, "reasons": reasons}
+
+
 def fire_all_drafts(db, company_key=None):
     """Owner action: fire every staged review draft at once.
 

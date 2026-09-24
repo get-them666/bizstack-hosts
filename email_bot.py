@@ -660,6 +660,17 @@ def _worker_loop() -> None:
             calls = call_outstanding_leads()
             if calls:
                 print(f"📞[emailbot] dialed {calls} leads this pass", flush=True)
+            try:
+                import auto_reply
+                flush_db = psycopg.connect(os.environ["DATABASE_URL"], row_factory=dict_row)
+                try:
+                    flush = auto_reply.auto_flush_drafts(flush_db)
+                    if flush.get("sent"):
+                        print(f"📧[emailbot] auto-flushed {flush['sent']} staged drafts", flush=True)
+                finally:
+                    flush_db.close()
+            except Exception as e:
+                print(f"📧[emailbot] auto-flush failure: {e}", flush=True)
         except Exception as e:
             print(f"📧[emailbot] poll pass failure: {e}")
         time.sleep(POLL_SECONDS)
