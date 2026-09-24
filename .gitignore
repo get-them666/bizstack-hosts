@@ -10,3 +10,6 @@ verify_install.py
 .env.*
 !.env.example
 /bizstack-construction/
+
+# contains a live admin password; keep local only
+SESSION_HANDOFF.md
