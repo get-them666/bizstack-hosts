@@ -18,6 +18,8 @@ IMAP_PASS = os.getenv("IMAP_PASSWORD", os.getenv("IMAP_PASS", os.getenv("SMTP_PA
 POLL_SECONDS = int(os.getenv("EMAIL_BOT_POLL_SECONDS", "45"))
 EMAIL_BOT_ENABLED = os.getenv("EMAIL_BOT_ENABLED", "1").lower() in ("1", "true", "yes")
 
+EMAIL_FOLLOWUP_DAYS = int(os.getenv("EMAIL_FOLLOWUP_DAYS", "2"))
+
 CALL_LEADS_ENABLED = os.getenv("CALL_LEADS_ENABLED", "1").lower() in ("1", "true", "yes")
 CALLS_PER_PASS = int(os.getenv("CALLS_PER_PASS", "5"))
 CALL_START_HOUR = int(os.getenv("CALL_START_HOUR", "9"))
@@ -240,38 +242,49 @@ def _mark_seen(M, num) -> None:
         pass
 
 
-def _already_emailed(conn, email_addr: str) -> bool:
+def _email_due(conn, email_addr: str) -> bool:
+    """True if a lead address should be emailed now: never contacted, or last outbound contact was
+    more than EMAIL_FOLLOWUP_DAYS ago. This emails EVERY lead (first touch) and re-engages
+    unconverted leads on a cadence, WITHOUT re-emailing every poll pass (which would be spam)."""
+    days = EMAIL_FOLLOWUP_DAYS
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT 1 FROM comms_logs WHERE channel = 'email' AND direction = 'outbound' "
-                "AND LOWER(recipient) = %s LIMIT 1;",
-                (email_addr,),
+                "AND LOWER(recipient) = %s AND created_at > now() - make_interval(days => %s) LIMIT 1;",
+                (email_addr, days),
             )
-            return cur.fetchone() is not None
+            return cur.fetchone() is None
     except Exception:
-        return False
+        return True
 
 
 def _email_lead(conn, company: str, row: dict) -> bool:
     import auto_reply
 
     try:
+        meta = {}
+        try:
+            import json as _json
+            meta = _json.loads(row.get("analysis_json") or "{}")
+        except Exception:
+            pass
+        address = row.get("address") or meta.get("address") or ""
         msg = auto_reply.auto_reply_to_lead(
             conn,
             company,
             name=row.get("name") or "",
             phone=row.get("phone") or "",
             email=row.get("email") or "",
-            service=row.get("project_type") or row.get("service") or "",
-            address=row.get("address") or "",
-            budget=row.get("budget") or "",
+            service=row.get("project_type") or row.get("service") or meta.get("work_type") or "",
+            address=address,
+            budget=row.get("budget") or meta.get("value") or "",
             timeline=row.get("timeline") or "",
-            message=row.get("description") or "",
-            source="get-started",
+            message=row.get("description") or meta.get("job_description") or "",
+            source=(row.get("source") or "get-started").lower(),
             lead_id=row["id"],
         )
-        if not msg:
+        if not msg or not msg.get("sent"):
             return False
         with conn.cursor() as cur:
             cur.execute(
@@ -286,7 +299,12 @@ def _email_lead(conn, company: str, row: dict) -> bool:
 
 
 def email_outstanding_leads() -> int:
-    """Email every lead on both sites that has a real address and hasn't been emailed yet."""
+    """Email every lead on both sites that has a real address and a follow-up is due.
+
+    "Email ALL leads": each lead gets a first-touch email, and unconverted leads get
+    re-engaged on the EMAIL_FOLLOWUP_DAYS cadence. Never re-emails someone contacted
+    within the window (that would be spam every 45s poll).
+    """
     sent = 0
     try:
         db = psycopg.connect(os.environ["DATABASE_URL"], row_factory=dict_row)
@@ -298,19 +316,16 @@ def email_outstanding_leads() -> int:
         for company in ("construction", "broom"):
             with db.cursor() as cur:
                 cur.execute(
-                    "SELECT id, name, phone, email, project_type, address, budget, timeline, description, status "
+                    "SELECT id, name, phone, email, project_type, address, budget, timeline, description, status, source, analysis_json "
                     "FROM leads WHERE company = %s "
                     "AND email IS NOT NULL AND LOWER(email) <> '' AND LOWER(email) NOT LIKE %s "
-                    "AND COALESCE(source, '') NOT IN ('sam-gov') "
                     "AND draft_reply IS NULL "
-                    "ORDER BY id DESC LIMIT 500;",
+                    "ORDER BY id DESC LIMIT 1000;",
                     (company, "%@lead.local"),
                 )
                 rows = cur.fetchall()
             for r in rows:
-                if _already_emailed(db, r["email"]):
-                    continue
-                if _email_lead(db, company, r):
+                if r["email"] and _email_due(db, r["email"]) and _email_lead(db, company, r):
                     sent += 1
                     print(f"📧[emailbot] emailed lead {r['id']} ({company})", flush=True)
     finally:
@@ -435,28 +450,18 @@ def _poll_inbox() -> list:
     return results
 
 
-def _outbound_swml_url() -> str:
-    base = os.getenv("APP_BASE_URL", "https://bizstackperks.com") or "https://bizstackperks.com"
-    return base.rstrip("/") + "/comms/outbound-voice.swml"
-
-
 def _dial_ai_call(to: str, context: str = "") -> str:
-    """Place an AI outbound call, preferring Vapi (works) over SignalWire (may be unfunded)."""
+    """Place an AI outbound call via Vapi (voice is Vapi-only; no SignalWire fallback)."""
     try:
         import vapi_service
         v = vapi_service.VapiService()
-        if v.is_configured():
-            return v.create_ai_outbound_call(to, context or "") or ""
-        print("📞[emailbot] Vapi not configured; falling back to SignalWire", flush=True)
+        if not v.is_configured():
+            print("📞[emailbot] Vapi not configured — skipping call", flush=True)
+            return ""
+        return v.create_ai_outbound_call(to, context or "") or ""
     except Exception as e:
         print(f"📞[emailbot] Vapi dial failed for {to}: {e}", flush=True)
-    try:
-        import construction_bot as cm
-        sid = cm.signalwire.create_ai_outbound_call(to, _outbound_swml_url())
-        return sid or ""
-    except Exception as e:
-        print(f"📞[emailbot] SignalWire dial failed for {to}: {e}", flush=True)
-    return ""
+        return ""
 
 
 def call_outstanding_leads() -> int:
@@ -569,7 +574,7 @@ def follow_up_new_lead(lead_id: int, *, skip_call: bool = False) -> None:
                 return
             company = row.get("company") or "broom"
             email = (row.get("email") or "").strip().lower()
-            if email and not email.endswith("@lead.local") and not _already_emailed(db, email):
+            if email and not email.endswith("@lead.local") and _email_due(db, email):
                 try:
                     if _email_lead(db, company, row):
                         print(f"📧[emailbot] followed-up email lead {lead_id} ({company})", flush=True)
@@ -624,6 +629,13 @@ def follow_up_new_lead(lead_id: int, *, skip_call: bool = False) -> None:
 def _worker_loop() -> None:
     print(f"📧[emailbot] worker started (poll every {POLL_SECONDS}s)")
     try:
+        import enrichment
+        enriched = enrichment.enrich_pending_leads(limit=40)
+        if enriched:
+            print(f"📡[pdl] first pass enriched {enriched} leads", flush=True)
+    except Exception as e:
+        print(f"📡[pdl] initial enrichment failure: {e}")
+    try:
         n = email_outstanding_leads()
         if n:
             print(f"📧[emailbot] first pass emailed {n} outstanding leads", flush=True)
@@ -631,6 +643,13 @@ def _worker_loop() -> None:
         print(f"📧[emailbot] initial lead sweep failure: {e}")
     while True:
         try:
+            try:
+                import enrichment
+                enriched = enrichment.enrich_pending_leads(limit=15)
+                if enriched:
+                    print(f"📡[pdl] enriched {enriched} leads this pass", flush=True)
+            except Exception as e:
+                print(f"📡[pdl] enrichment pass failure: {e}")
             results = _poll_inbox()
             for r in results:
                 if r["status"] != "skipped":
