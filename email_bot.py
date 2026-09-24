@@ -284,7 +284,7 @@ def _email_lead(conn, company: str, row: dict) -> bool:
             source=(row.get("source") or "get-started").lower(),
             lead_id=row["id"],
         )
-        if not msg or not msg.get("sent"):
+        if not msg:
             return False
         with conn.cursor() as cur:
             cur.execute(
