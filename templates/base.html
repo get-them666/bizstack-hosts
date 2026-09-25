@@ -5,15 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Broom Service | Automated Short-Term Rental Operations{% endblock %}</title>
     {% block meta %}
-    <meta name="description" content="Professional 5-star short-term rental turnover cleaning and premium co-hosting management for Airbnb and Vrbo hosts. Guests fund the cleaning fee at booking — zero out-of-pocket costs.">
+     <meta name="description" content="Professional short-term rental turnover cleaning and co-hosting for Airbnb and Vrbo hosts. Guests fund the cleaning fee at booking.">
+
     <meta name="robots" content="noindex, nofollow">
     {% endblock %}
-    <link rel="canonical" href="{{ request.base_url }}">
+    <link rel="canonical" href="https://{{ company().domain }}{{ request.url.path }}">
     <meta name="theme-color" content="#4f46e5">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Broom Service">
     <meta property="og:title" content="Broom Service | Short-Term Rental Operations">
-    <meta property="og:url" content="{{ request.base_url }}">
+    <meta property="og:description" content="Professional short-term rental turnover cleaning and co-hosting management for Airbnb and Vrbo hosts.">
+    <meta property="og:url" content="https://{{ company().domain }}{{ request.url.path }}">
+    <meta property="og:image" content="https://{{ company().domain }}/static/og.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Broom Service | Short-Term Rental Operations">
+    <meta name="twitter:description" content="Professional short-term rental turnover cleaning and co-hosting management for Airbnb and Vrbo hosts.">
+    <meta name="twitter:image" content="https://{{ company().domain }}/static/og.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>

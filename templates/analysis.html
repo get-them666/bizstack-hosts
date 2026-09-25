@@ -12,6 +12,7 @@
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900 antialiased">
+{% set prices = service_prices or {} %}
 
     <header class="sticky top-0 z-50 bg-white/70 backdrop-blur-xl border-b border-slate-200/70 shadow-sm shadow-slate-900/[0.04]">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -170,14 +171,16 @@
                 <h2 class="text-lg font-bold text-slate-900">Guest-Funded Cleaning Add-Ons</h2>
             </div>
             <p class="text-sm text-slate-600 leading-relaxed">
-                Add 5-star turnover service to your existing booking funnel. The guest pays the fee at
+                 Add turnover service to your existing booking funnel. The guest pays the fee at
+
                 checkout through a secure Stripe link — zero out-of-pocket cost to you.
             </p>
             <div class="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div class="rounded-2xl bg-slate-50 border border-slate-100 p-5"><p class="text-sm font-bold text-slate-900">Turnover Cleaning</p><p class="text-lg font-extrabold text-indigo-600 mt-1">$160</p></div>
-                <div class="rounded-2xl bg-slate-50 border border-slate-100 p-5"><p class="text-sm font-bold text-slate-900">Deep Cleaning</p><p class="text-lg font-extrabold text-indigo-600 mt-1">$275</p></div>
-                <div class="rounded-2xl bg-slate-50 border border-slate-100 p-5"><p class="text-sm font-bold text-slate-900">Linen Restock</p><p class="text-lg font-extrabold text-indigo-600 mt-1">$70</p></div>
-                <div class="rounded-2xl bg-slate-50 border border-slate-100 p-5"><p class="text-sm font-bold text-slate-900">Inspection</p><p class="text-lg font-extrabold text-indigo-600 mt-1">$95</p></div>
+                 <div class="rounded-2xl bg-slate-50 border border-slate-100 p-5"><p class="text-sm font-bold text-slate-900">Turnover Cleaning</p><p class="text-lg font-extrabold text-indigo-600 mt-1">{{ prices.get('Turnover Cleaning', 'Contact for pricing') }}</p></div>
+                 <div class="rounded-2xl bg-slate-50 border border-slate-100 p-5"><p class="text-sm font-bold text-slate-900">Deep Cleaning</p><p class="text-lg font-extrabold text-indigo-600 mt-1">{{ prices.get('Deep Cleaning', 'Contact for pricing') }}</p></div>
+                 <div class="rounded-2xl bg-slate-50 border border-slate-100 p-5"><p class="text-sm font-bold text-slate-900">Linen Restock</p><p class="text-lg font-extrabold text-indigo-600 mt-1">{{ prices.get('Linen Restock', 'Contact for pricing') }}</p></div>
+                 <div class="rounded-2xl bg-slate-50 border border-slate-100 p-5"><p class="text-sm font-bold text-slate-900">Inspection</p><p class="text-lg font-extrabold text-indigo-600 mt-1">{{ prices.get('Inspection', 'Contact for pricing') }}</p></div>
+
             </div>
             <div class="mt-6 flex flex-col sm:flex-row gap-3">
                 <a href="tel:+17579087121" class="inline-flex justify-center px-6 py-3 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-all">Book Cleaning Now</a>
