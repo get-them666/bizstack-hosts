@@ -447,6 +447,18 @@ TOOL USAGE RULES:
                     "parameters": {"type": "object", "properties": {}},
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_materials",
+                    "description": "Search the building-materials brand catalog (Home Depot / Lowe's) by category, brand, store, or free text — returns real products with store item numbers and current prices. Never fabricate a brand or SKU.",
+                    "parameters": self._props(
+                        {"category": "string", "brand": "string", "query": "string", "store": "string", "limit": "integer"},
+                        [],
+                        "brand e.g. GAF, Hampton Bay, MOEN, TrafficMaster. query: free-text product lookup.",
+                    ),
+                },
+            },
         ]
         return tools
 

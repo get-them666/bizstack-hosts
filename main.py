@@ -1,6 +1,7 @@
 import os
 import json
 import math
+import uuid
 import secrets
 import hashlib
 import asyncio
@@ -19,7 +20,7 @@ from contextvars import ContextVar
 import psycopg
 from psycopg.rows import dict_row
 from fastapi import FastAPI, Request, Form, Response, Depends, HTTPException, status, File, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -42,6 +43,8 @@ import auth_service
 import training_service
 import auto_reply
 import materials_service
+import estimating_service
+import property_service
 
 db_url = os.getenv("DATABASE_URL", "postgresql://shaun:secret@localhost:5432/bizstack")
 templates = Jinja2Templates(directory="templates")
@@ -58,8 +61,8 @@ def _company_config(key: str) -> dict:
     return {
         "key": "broom",
         "name": os.getenv("COMPANY_NAME", "Broom Service"),
-        "phone": os.getenv("COMPANY_PHONE", "+1 (757) 846-9275"),
-        "phone_e164": os.getenv("SIGNALWIRE_PHONE", "+17578469275"),
+        "phone": os.getenv("COMPANY_PHONE", "+1 (757) 908-7121"),
+        "phone_e164": os.getenv("VAPI_PHONE", "+17579087121"),
         "email": os.getenv("COMPANY_EMAIL", "hello@bizstackperks.com"),
         "domain": os.getenv("COMPANY_DOMAIN", "bizstackperks.com"),
         "license": os.getenv("CONTRACTOR_LICENSE", ""),
@@ -257,6 +260,13 @@ def build_tool_handlers(db, stripe_svc):
         if cents is None or cents <= 0:
             return {"ok": False, "sku": sku, "error": "Sku not found in price book."}
         return {"ok": True, "sku": sku, "price_cents": int(cents), "price_dollars": round(cents / 100, 2)}
+
+    def search_materials(category="", brand="", query="", store="", limit=8):
+        svc = materials_service.BusinessMaterialsService()
+        try:
+            return svc.search_materials(category=category, brand=brand, query=query, store=store, limit=limit)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     def create_deposit_link(lead_id):
         with db.cursor() as cur:
@@ -621,6 +631,338 @@ def build_tool_handlers(db, stripe_svc):
             r["funding_amount_dollars"] = round((r.get("funding_amount_cents") or 0) / 100, 2)
         return {"ok": True, "leads": rows}
 
+    def lookup_property(address: str):
+        """Look up a property by street address (sqft, beds, baths, year, stories)."""
+        if not address:
+            return {"ok": False, "error": "I need the property street address to look that up."}
+        prop = property_service.lookup_address(address)
+        if not prop:
+            return {
+                "ok": False,
+                "configured": property_service.is_configured(),
+                "error": "I couldn't pull that property right now.",
+            }
+        out = {k: prop.get(k) for k in ("address", "sqft", "beds", "baths", "year_built", "stories", "property_type", "source")}
+        out["ok"] = True
+        return out
+
+    def quote_project(project_type, address="", sqft=0, materials="", name="", phone="", notes="", lead_id=0):
+        """Real ballpark bid for any construction trade using live property facts.
+        Material grades (shingles/countertop/lumber) narrow the range."""
+        prop = None
+        manual = 0.0
+        try:
+            manual = max(float(sqft or 0), 0)
+        except (TypeError, ValueError):
+            manual = 0.0
+        if manual <= 0 and address:
+            prop = property_service.lookup_address(address)
+        est = estimating_service.estimate(project_type, prop, manual if manual > 0 else None, materials or "")
+        if est is None:
+            est = estimating_service.auto_quote(project_type, manual if manual > 0 else None)
+        if est is None:
+            return {"ok": False, "error": "I don't have a pricing model for that kind of work yet — the estimator will follow up."}
+        assumed = bool(est.get("assumed_sqft")) or (not prop and manual <= 0 and est.get("quantifier") and "sq ft" in est.get("quantifier", "").lower())
+        needs_sqft = assumed and manual <= 0
+        out = {
+            "ok": True,
+            "project_type": project_type,
+            "label": est.get("label"),
+            "quantifier": est.get("quantifier"),
+            "low_est": est.get("low_est"),
+            "high_est": est.get("high_est"),
+            "sqft": est.get("sqft"),
+            "material_notes": est.get("material_notes") or [],
+            "notes": est.get("notes") or [],
+            "assumed_sqft": assumed,
+            "needs_sqft": needs_sqft,
+            "property": ({"address": prop.get("address"), "sqft": prop.get("sqft"), "beds": prop.get("beds"), "baths": prop.get("baths"), "year_built": prop.get("year_built")} if prop else None),
+        }
+        if lead_id:
+            try:
+                with db.cursor() as cur:
+                    cur.execute(
+                        "UPDATE leads SET estimate_low_cents = %s, estimate_high_cents = %s, status = COALESCE(NULLIF(status,''),'quoted') WHERE id = %s RETURNING id;",
+                        (est.get("low_cents"), est.get("high_cents"), lead_id),
+                    )
+                    cur.fetchone()
+                    db.commit()
+            except Exception:
+                db.rollback()
+        return out
+
+    def quote_cleaning(service_type, bedrooms=0, bathrooms=0, sqft=0, frequency=""):
+        """Flat-rate Broom quote for a cleaning, scaled modestly for larger homes."""
+        flat = {
+            "turnover cleaning": (120, 120),
+            "turnover": (120, 120),
+            "deep cleaning": (200, 240),
+            "deep": (200, 240),
+            "linen restock": (50, 50),
+            "inspection": (75, 75),
+        }
+        key = str(service_type or "").strip().lower()
+        low, high = flat.get(key, (None, None))
+        if low is None:
+            # try fuzzy contains
+            for k, (lo, hi) in flat.items():
+                if k in key or key in k:
+                    low, high = lo, hi
+                    break
+        if low is None:
+            return {"ok": False, "error": "I can quote Turnover Cleaning, Deep Cleaning, Linen Restock, or Inspection."}
+        try:
+            s = max(float(sqft or 0), 0)
+            b = max(int(bedrooms or 0), 0)
+        except (TypeError, ValueError):
+            s, b = 0, 0
+        factor = 1.0
+        if s > 3500 or b >= 8:
+            factor = 1.35
+        elif s > 2500 or b >= 6:
+            factor = 1.2
+        def doll(c):
+            return int(round(c * factor / 5) * 5)
+        return {
+            "ok": True,
+            "service_type": service_type or key,
+            "low_est": doll(low),
+            "high_est": doll(high),
+            "bedrooms": b,
+            "sqft": round(s),
+            "frequency": frequency or "",
+            "note": "Flat rate, funds from the guest, no charge to the host." if factor == 1.0 else "Adjusted for a larger home.",
+        }
+
+    def quote_hosting(package="", avg_nightly=0, nights=0, monthly_rent=0):
+        """Co-hosting quote (% of gross) + simple monthly math on the spot."""
+        pkg = str(package or "").strip().lower()
+        pct = None
+        if "full" in pkg or "full-service" in pkg or "management" in pkg:
+            pct = (0.20, 0.30, "full-service")
+        elif "digital" in pkg or "co-host" in pkg or "cohost" in pkg:
+            pct = (0.10, 0.15, "digital")
+        elif "cleaning only" in pkg or "cleaning" in pkg:
+            return {"ok": True, "package": "Cleaning launch", "pct_low": None, "pct_high": None, "message": "Cleaning is flat-rate, funded by the guest — no percentage."}
+        if pct is None:
+            pct = (0.10, 0.15, "digital")
+        try:
+            adr = max(float(avg_nightly or 0), 0)
+            n = max(int(nights or 0), 0)
+        except (TypeError, ValueError):
+            adr, n = 0, 0
+        est_monthly = None
+        if adr > 0 and n > 0:
+            gross = adr * n
+            est_monthly = {"gross": round(gross), "fee_low": round(gross * pct[0]), "fee_high": round(gross * pct[1])}
+        return {
+            "ok": True,
+            "package": pkg or "digital co-hosting",
+            "pct_low": int(round(pct[0] * 100)),
+            "pct_high": int(round(pct[1] * 100)),
+            "label": pct[2],
+            "est_monthly": est_monthly,
+        }
+
+    def get_host_intel(name="", property_name="", address=""):
+        """Look up a host/property and return allergens, supplies, instructions on file."""
+        with db.cursor() as cur:
+            rows = []
+            if name:
+                cur.execute("SELECT * FROM hosts WHERE name ILIKE %s ORDER BY created_at DESC LIMIT 10;", (f"%{name}%",))
+                rows = cur.fetchall()
+            if not rows and address:
+                cur.execute("SELECT * FROM hosts WHERE property_address ILIKE %s ORDER BY created_at DESC LIMIT 10;", (f"%{address}%",))
+                rows = cur.fetchall()
+            if not rows and property_name:
+                cur.execute("SELECT * FROM hosts WHERE property_name ILIKE %s ORDER BY created_at DESC LIMIT 10;", (f"%{property_name}%",))
+                rows = cur.fetchall()
+            if not rows and address:
+                cur.execute("SELECT h.* FROM hosts h JOIN properties p ON p.host_id = h.id WHERE p.address ILIKE %s LIMIT 10;", (f"%{address}%",))
+                rows = cur.fetchall()
+        out = []
+        for h in rows:
+            props = []
+            with db.cursor() as cur:
+                cur.execute("SELECT * FROM properties WHERE host_id = %s ORDER BY created_at DESC;", (h["id"],))
+                props = cur.fetchall()
+            out.append({
+                "id": h["id"],
+                "name": h["name"],
+                "property_name": h["property_name"],
+                "property_address": h.get("property_address"),
+                "phone": h.get("phone"),
+                "allergens": h.get("allergens"),
+                "cleaning_supplies": h.get("cleaning_supplies"),
+                "special_instructions": h.get("special_instructions"),
+                "properties": [{
+                    "id": p["id"], "name": p["name"], "address": p.get("address"),
+                    "allergens": p.get("allergens"), "cleaning_supplies": p.get("cleaning_supplies"),
+                } for p in props],
+            })
+        if not out:
+            return {"ok": False, "error": f"No host on file for {name or property_name or address or 'that search'}."}
+        return {"ok": True, "hosts": out}
+
+    def set_host_intel(name, property_name="", allergens="", cleaning_supplies="", special_instructions="", address=""):
+        """Record/update a host's allergen and supply intel so every stay is prepped."""
+        if not name:
+            return {"ok": False, "error": "I need the host's name."}
+        with db.cursor() as cur:
+            cur.execute("SELECT id FROM hosts WHERE name = %s ORDER BY created_at DESC LIMIT 1;", (name,))
+            h = cur.fetchone()
+            if h:
+                host_id = h["id"]
+                cur.execute(
+                    "UPDATE hosts SET allergens = COALESCE(%s, allergens), cleaning_supplies = COALESCE(%s, cleaning_supplies), special_instructions = COALESCE(%s, special_instructions), property_address = COALESCE(%s, property_address) WHERE id = %s;",
+                    (allergens or None, cleaning_supplies or None, special_instructions or None, address or None, host_id),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO hosts (name, property_name, phone, property_address, allergens, cleaning_supplies, special_instructions) VALUES (%s, %s, NULL, %s, %s, %s, %s) RETURNING id;",
+                    (name, property_name or "", address or None, allergens or None, cleaning_supplies or None, special_instructions or None),
+                )
+                host_id = cur.fetchone()["id"]
+            if address:
+                cur.execute("SELECT id FROM properties WHERE host_id = %s AND address ILIKE %s LIMIT 1;", (host_id, f"%{address}%"))
+                p = cur.fetchone()
+                if p:
+                    cur.execute("UPDATE properties SET allergens = COALESCE(%s, allergens), cleaning_supplies = COALESCE(%s, cleaning_supplies) WHERE id = %s;", (allergens or None, cleaning_supplies or None, p["id"]))
+            db.commit()
+        return {"ok": True, "host_id": host_id, "name": name, "recorded": bool(allergens or cleaning_supplies or special_instructions)}
+
+    def get_inventory(company="broom", category="", low_only=False):
+        """List current supply inventory for a company, optionally filtered to reorder-level items."""
+        comp = str(company or "broom").strip().lower()
+        if comp in ("construction", "buildstack", "bizstack construction"):
+            comp = "construction"
+        else:
+            comp = "broom"
+        with db.cursor() as cur:
+            sql = "SELECT * FROM supplies_inventory WHERE company = %s"
+            params = [comp]
+            if category:
+                sql += " AND category ILIKE %s"
+                params.append(f"%{category}%")
+            if low_only:
+                sql += " AND qty_on_hand <= reorder_level"
+            sql += " ORDER BY category, item_name;"
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        for r in rows:
+            r["low"] = bool(float(r.get("qty_on_hand") or 0) <= float(r.get("reorder_level") or 0))
+        return {"ok": True, "company": comp, "items": rows}
+
+    def update_inventory(item_name, qty_delta=0, company="broom", category="", set_qty=0):
+        """Increment/decrement supply quantity (or set absolute with set_qty) for a company."""
+        comp = str(company or "broom").strip().lower()
+        if comp in ("construction", "buildstack", "bizstack construction"):
+            comp = "construction"
+        else:
+            comp = "broom"
+        try:
+            delta = float(qty_delta or 0)
+            abs_qty = float(set_qty or 0)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Quantity must be a number."}
+        with db.cursor() as cur:
+            if abs_qty > 0:
+                cur.execute(
+                    """
+                    INSERT INTO supplies_inventory (company, item_name, category, qty_on_hand, reorder_level)
+                    VALUES (%s, %s, %s, %s, 0)
+                    ON CONFLICT DO NOTHING
+                    """, (comp, item_name, category or "general", abs_qty),
+                )
+                cur.execute("UPDATE supplies_inventory SET qty_on_hand = %s, updated_at = NOW() WHERE company = %s AND item_name = %s RETURNING id;", (abs_qty, comp, item_name))
+                updated = cur.fetchone()
+            else:
+                cur.execute("UPDATE supplies_inventory SET qty_on_hand = qty_on_hand + %s, updated_at = NOW() WHERE company = %s AND item_name = %s RETURNING id;", (delta, comp, item_name))
+                updated = cur.fetchone()
+                if not updated:
+                    db.rollback()
+                    return {"ok": False, "error": f"No inventory item named {item_name!r} for {comp}. Use an exact item name."}
+            db.commit()
+        with db.cursor() as cur:
+            cur.execute("SELECT item_name, qty_on_hand, reorder_level FROM supplies_inventory WHERE id = %s;", (updated["id"],))
+            row = cur.fetchone()
+        return {"ok": True, "company": comp, "item": row["item_name"], "qty_on_hand": float(row["qty_on_hand"]), "low": float(row["qty_on_hand"]) <= float(row["reorder_level"])}
+
+    def reorder_report(company="broom"):
+        """Everything a company is at-or-below the reorder level for."""
+        return get_inventory(company=company, low_only=True)
+
+    def find_people(query="", company="broom"):
+        """Search employees, customers, hosts by name/phone/email across both companies."""
+        q = str(query or "").strip()
+        if not q:
+            return {"ok": False, "error": "Give me a name or number to look up."}
+        like = lambda col: f"{col} ILIKE %s"
+        matches = []
+        with db.cursor() as cur:
+            cur.execute(f"SELECT id, name, phone, email, 'worker' AS kind FROM workers WHERE {like('name')} OR {like('phone')} OR {like('email')} LIMIT 20;", (f"%{q}%", f"%{q}%", f"%{q}%"))
+            for r in cur.fetchall():
+                r["company"] = "broom"
+                matches.append(r)
+            cur.execute(f"SELECT id, name, phone, email, 'customer' AS kind FROM customers WHERE {like('name')} OR {like('phone')} OR {like('email')} LIMIT 20;", (f"%{q}%", f"%{q}%", f"%{q}%"))
+            for r in cur.fetchall():
+                r["company"] = "broom"
+                matches.append(r)
+            cur.execute(f"SELECT id, name, phone, email, 'host' AS kind FROM hosts WHERE {like('name')} OR {like('phone')} OR {like('email')} LIMIT 20;", (f"%{q}%", f"%{q}%", f"%{q}%"))
+            for r in cur.fetchall():
+                r["company"] = "broom"
+                matches.append(r)
+            cur.execute(f"SELECT id, name, phone, email, project_type, 'lead' AS kind FROM leads WHERE {like('name')} OR {like('phone')} OR {like('email')} LIMIT 20;", (f"%{q}%", f"%{q}%", f"%{q}%"))
+            for r in cur.fetchall():
+                r["company"] = r.get("company") or "construction"
+                matches.append(r)
+        if not matches:
+            return {"ok": False, "error": f"No employee, customer, or host matching '{q}'."}
+        return {"ok": True, "people": matches[:25]}
+
+    def navigation_guide(role="", company=""):
+        """How to navigate the websites/apps for an employee, host, customer, or owner."""
+        role = str(role or "").strip().lower()
+        if "work" in role or "employ" in role or "crew" in role or "staff" in role:
+            role = "employee"
+        elif "host" in role or "propert" in role:
+            role = "host"
+        elif "own" in role or "admin" in role or "boss" in role or "shaun" in role:
+            role = "owner"
+        elif "customer" in role or "guest" in role or "client" in role:
+            role = "customer"
+        else:
+            role = "anyone"
+        guide = {
+            "employee": [
+                "Broom website: bizstackperks.com — log in at /worker-portal (your crew dashboard: today's jobs, clock in/out, paychecks).",
+                "Construction site: construction.bizstackperks.com — crew tools at /construction/crew (roles, timesheets, schedule) and the owner dashboard at /construction.",
+                "Text the office any time; the same number you call is on the SMS line.",
+            ],
+            "host": [
+                "Broom host portal: bizstackperks.com/host-portal — your properties, cleaning schedules, photo verification, and guest payment status.",
+                "Log in with the email + code we issue you for the property. You can also check a listing's status by texting the office.",
+            ],
+            "customer": [
+                "Broom booking link: bizstackperks.com — pick a service, and we text you a secure Stripe payment link.",
+                "Construction free-estimate form: construction.bizstackperks.com — instant-quote tool ballparks a range in minutes from an address, or text us.",
+            ],
+            "owner": [
+                "Master dashboard: bizstackperks.com — accounting, labor, payroll, hosts, customers, leads, documents, and both companies' tools.",
+                "Construction dashboard: construction.bizstackperks.com — project pipeline, deposits, crew, accounting, permits, radar.",
+            ],
+            "anyone": [
+                "Broom: bizstackperks.com — book cleanings, host portal, pay by link.",
+                "Construction: construction.bizstackperks.com — instant-quote from an address, free-estimate form, crew tools.",
+                "Call or text the same number any time: +1 (757) 908-7121.",
+            ],
+        }
+        if company:
+            if str(company).lower() in ("construction", "buildstack"):
+                return {"ok": True, "role": role, "pages": [g for g in guide.get(role, []) if "construction" in g.lower() or "owner" in g.lower()] or guide["owner"]}
+            return {"ok": True, "role": role, "pages": [g for g in guide.get(role, []) if "construction" not in g.lower()] or guide["owner"]}
+        return {"ok": True, "role": role, "pages": guide.get(role, guide["anyone"])}
+
     return {
         "check_booking_availability": check_booking_availability,
         "create_booking": create_booking,
@@ -629,6 +971,7 @@ def build_tool_handlers(db, stripe_svc):
         "register_construction_lead": register_construction_lead,
         "estimate_materials": estimate_materials,
         "get_material_price": get_material_price,
+        "search_materials": search_materials,
         "create_deposit_link": create_deposit_link,
         "get_business_summary": get_business_summary,
         "list_upcoming_schedule": list_upcoming_schedule,
@@ -654,6 +997,17 @@ def build_tool_handlers(db, stripe_svc):
         "get_rental_analysis": get_rental_analysis,
         "list_documents": list_documents,
         "list_funding_ready_leads": list_funding_ready_leads,
+        "lookup_property": lookup_property,
+        "quote_project": quote_project,
+        "quote_cleaning": quote_cleaning,
+        "quote_hosting": quote_hosting,
+        "get_host_intel": get_host_intel,
+        "set_host_intel": set_host_intel,
+        "get_inventory": get_inventory,
+        "update_inventory": update_inventory,
+        "reorder_report": reorder_report,
+        "find_people": find_people,
+        "navigation_guide": navigation_guide,
     }
 
 @asynccontextmanager
@@ -894,6 +1248,29 @@ async def lifecycle(app: FastAPI):
                 );
                 """)
                 cur.execute("ALTER TABLE hosts ADD COLUMN IF NOT EXISTS property_address VARCHAR(500);")
+                # Host/property intel: allergens, supplies on hand, special instructions
+                # (the voice assistant reads these per host so every stay is prepped).
+                cur.execute("ALTER TABLE hosts ADD COLUMN IF NOT EXISTS allergens TEXT;")
+                cur.execute("ALTER TABLE hosts ADD COLUMN IF NOT EXISTS cleaning_supplies TEXT;")
+                cur.execute("ALTER TABLE hosts ADD COLUMN IF NOT EXISTS special_instructions TEXT;")
+                cur.execute("ALTER TABLE properties ADD COLUMN IF NOT EXISTS allergens TEXT;")
+                cur.execute("ALTER TABLE properties ADD COLUMN IF NOT EXISTS cleaning_supplies TEXT;")
+                cur.execute("""
+                CREATE TABLE IF NOT EXISTS supplies_inventory (
+                    id SERIAL PRIMARY KEY,
+                    company VARCHAR(20) NOT NULL DEFAULT 'broom',
+                    item_name VARCHAR(255) NOT NULL,
+                    sku VARCHAR(255),
+                    category VARCHAR(120),
+                    qty_on_hand NUMERIC(12,2) NOT NULL DEFAULT 0,
+                    unit VARCHAR(40) DEFAULT 'each',
+                    reorder_level NUMERIC(12,2) NOT NULL DEFAULT 0,
+                    notes TEXT,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_supplies_company ON supplies_inventory (company, category);")
                 cur.execute("""
                 CREATE TABLE IF NOT EXISTS custom_forms (
                     id SERIAL PRIMARY KEY,
@@ -1216,6 +1593,11 @@ async def lifecycle(app: FastAPI):
                 cur.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS scope VARCHAR(20) NOT NULL DEFAULT 'all';")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_dm ON messages (kind, recipient_role, recipient_id);")
                 conn.commit()
+            try:
+                count = materials_service.refresh_catalog(conn)
+                print(f"📦 materials_catalog ready ({count} rows).")
+            except Exception as e:
+                print(f"⚠️ materials_catalog refresh skipped: {e}")
         print("🚀 Database connectivity and tables validated successfully.")
     except Exception as e:
         print(f"❌ Structural database connection failure: {e}")
@@ -1896,7 +2278,7 @@ async def finance_apply(
         + (f"\n{use_note[:200]}" if use_note else "")
         + (f"\nRef: {ref_code}" if ref_code else "")
     )
-    owner_phone = _company_config("broom")["phone_e164"]
+    owner_phone = os.getenv("SIGNALWIRE_PHONE", "+17578469275")
     try:
         if os.getenv("OWNER_SMS_ENABLED", "0").lower() in ("1", "true", "yes") and signalwire.is_configured():
             signalwire.send_sms(owner_phone, summary[:1500])
@@ -2614,6 +2996,82 @@ async def lead_to_host(lead_id: int, db=Depends(get_db)):
         cur.execute("UPDATE leads SET status = 'host' WHERE id = %s;", (lead_id,))
         db.commit()
     return RedirectResponse(url=f"/hosts?pw={urllib.parse.quote(password)}", status_code=303)
+
+@app.get("/inventory", response_class=HTMLResponse)
+async def inventory_page(request: Request, company: str = "broom", db=Depends(get_db)):
+    is_authed, user_email = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    co = "construction" if company and company.lower() == "construction" else "broom"
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM supplies_inventory WHERE company = %s ORDER BY category, item_name;", (co,))
+        rows = cur.fetchall()
+    items = []
+    for r in rows:
+        qty = float(r.get("qty_on_hand") or 0)
+        reorder = float(r.get("reorder_level") or 0)
+        items.append({
+            "id": r["id"], "item_name": r["item_name"], "category": r.get("category"),
+            "qty_on_hand": qty, "unit": r.get("unit"), "reorder_level": reorder,
+            "low": qty <= reorder,
+        })
+    return templates.TemplateResponse(request=request, name="inventory.html", context={
+        "active_company": co, "items": items, "user": {"email": user_email},
+    })
+
+
+@app.post("/inventory/update")
+async def inventory_update(
+    request: Request,
+    item_id: int = Form(0),
+    item_name: str = Form(""),
+    company: str = Form("broom"),
+    delta: str = Form(""),
+    quantity: str = Form(""),
+    reorder_level: str = Form(""),
+    category: str = Form(""),
+    db=Depends(get_db),
+):
+    is_authed, _ = require_auth(request)
+    if not is_authed:
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    co = "construction" if company and company.lower() == "construction" else "broom"
+    try:
+        change = float(delta or quantity or "0")
+    except ValueError:
+        change = 0.0
+    try:
+        reorder_f = float(reorder_level) if reorder_level else None
+    except ValueError:
+        reorder_f = None
+    with db.cursor() as cur:
+        if item_id:
+            cur.execute("SELECT * FROM supplies_inventory WHERE id = %s;", (item_id,))
+            row = cur.fetchone()
+        elif item_name.strip():
+            cur.execute("SELECT * FROM supplies_inventory WHERE company = %s AND item_name ILIKE %s;", (co, item_name.strip()))
+            row = cur.fetchone()
+            if not row:
+                cur.execute(
+                    "INSERT INTO supplies_inventory (company, item_name, category, reorder_level) VALUES (%s, %s, %s, %s) RETURNING *;",
+                    (co, item_name.strip(), category or "general", reorder_f or 0),
+                )
+                row = cur.fetchone()
+        else:
+            row = None
+        if not row:
+            return RedirectResponse(url=f"/inventory?company={co}", status_code=303)
+        new_qty = float(row.get("qty_on_hand") or 0) + change
+        if reorder_f is not None:
+            cur.execute(
+                "UPDATE supplies_inventory SET qty_on_hand = %s, reorder_level = %s, category = COALESCE(NULLIF(%s,''), category), updated_at = NOW() WHERE id = %s;",
+                (new_qty, reorder_f, category or "", row["id"]),
+            )
+        else:
+            cur.execute("UPDATE supplies_inventory SET qty_on_hand = %s, updated_at = NOW() WHERE id = %s;", (new_qty, row["id"]))
+        db.commit()
+    return RedirectResponse(url=f"/inventory?company={co}", status_code=303)
+
 
 @app.post("/api/hosts/{host_id}/link-booking")
 async def link_host_booking(host_id: int, event_id: int = Form(...), db=Depends(get_db)):
@@ -6084,7 +6542,7 @@ FIGURING OUT WHO THEY'RE TALKING TO
 
 BROOM SERVICE
 - STR turnover-cleaning and co-hosting company for Airbnb, Vrbo, and direct-booking properties.
-- Website: https://bizstackperks.com. Phone & text 24/7: +1 (757) 846-9275. Email: hello@bizstackperks.com.
+- Website: https://bizstackperks.com. Phone & text 24/7: +1 (757) 908-7121. Email: hello@bizstackperks.com.
 - Core promises: zero upfront cost to hosts (the guest funds the operational fee at booking), no long-term contracts (unbundled modular services), 24/7 AI assistant, photo-verified cleaning with time-stamped room photos, calendar sync, and secure Stripe payments collected from guests at checkout.
 
 SERVICES & PRICING (confirm exact figures at booking time)
@@ -6109,27 +6567,18 @@ BUILDSTACK CONSTRUCTION
 - Licensed, bonded, insured general contractor. Residential AND commercial.
 - What we do: whole-home renovations & additions, kitchens, baths, drywall & paint, roofing & siding, decks & fences, basement finishing, plus ALL trade work — framing, carpentry, flooring, tile, carpet, painting, drywall, trim, roofing, siding, insulation, electrical, plumbing, HVAC, pipefitting, welding, concrete, masonry, and general handyman.
 - Serving: Hampton Roads VA (Chesapeake home base, Virginia Beach, Norfolk, Portsmouth, Suffolk, Hampton, Newport News), Williamsburg VA, and Elizabeth City & Currituck County NC.
-- Website: https://construction.bizstackperks.com — has an instant-quote tool that ballparks a range in minutes from an address. Phone & text 24/7: +1 (757) 846-9275. Email: hello@bizstackperks.com.
+- Website: https://construction.bizstackperks.com — has an instant-quote tool that ballparks a range in minutes from an address. Phone & text 24/7: +1 (757) 908-7121. Email: hello@bizstackperks.com.
 - Free on-site walkthrough to get exact pricing.
 
-SERVICES & BALLPARK RANGES (ranges, never firm bids)
-| Service | Typical range |
-| Full home renovation / additions | $95–$175 per interior sq ft |
-| Kitchen remodel | $18,000–$45,000 |
-| Bathroom remodel | $9,000–$25,000 |
-| Drywall & paint | $7–$15 per interior sq ft |
-| Roofing & siding | $650–$1,200 per roofing square |
-| Deck & fence | $2,500–$12,000 |
-| Basement finishing | $18–$55 per sq ft |
-- For all other trades (tile, flooring, carpet, electrical, plumbing, HVAC, pipefitting, welding, concrete, masonry, painting, trim) give a range and always offer the free on-site estimate — never a fixed price.
-- Never quote a firm or fixed construction price over the phone.
-
-CONSTRUCTION LEAD FLOW
-1. Collect the caller's name, phone, what they want done (project type), and if they'll share it, the property address and rough budget/timeline.
-2. Restate it back naturally to confirm.
-3. Give the ballpark range from the table above (or a range for other trades).
-4. Save the lead with register_construction_lead so the office follows up, then offer the free on-site walkthrough and mention the instant-quote tool at construction.bizstackperks.com.
-5. If the caller wants to move forward on the spot, create the deposit payment link with create_deposit_link and text it to them mid-call with send_sms_message so they can lock in the project and the slot today.
+HOW TO QUOTE CONSTRUCTION WORK (real numbers, right on the call):
+1. ALWAYS get the property street address first and run lookup_property to pull the real square footage, beds, baths, and year built. Ground the quote in the actual home, never a guess.
+2. Ask what they want done in plain words (kitchen, bath, whole-home, roof, etc.) and WHAT MATERIAL they have in mind. Ask directly: for a roof ask "3-tab, architectural, or architectural 30- or 40-year?" and "any metal?"; for counters ask "laminate, quartz, granite, or marble?"; for framing/deck ask "standard, premium, or engineered lumber?"; for siding, flooring, tile, windows, cabinets ask the style/brand they're considering. The caller may not know — offer the standard/entry choice as the default and note what upgrading does to the price.
+3. Call quote_project with project_type + address (+ materials text combining their answers) to get a ballpark range computed from the real property and the grades they chose. Speak the range plainly, e.g. "for an architectural 30-year shingle roof on a ~1,800 sq ft home, ballpark is about $19,000 to $33,000 — final price comes from the free on-site walkthrough."
+4. If lookup_property finds the address but comes back with NO square footage (the property records may only give address/geo data), ask the caller for the approximate square footage — or the general home size ("small, medium, large") if they don't know — and pass that into quote_project via the sqft field. Only when the caller truly can't give any size at all should you rely on the assumed-size estimate, and still tell them it's based on an assumed home size.
+5. Save the lead with register_construction_lead (name, phone, project_type, address, notes = their material choices + the range we quoted). Quote_project returns a range; feel free to repeat it in the lead notes.
+6. If the caller wants to move forward on the spot, create the deposit payment link with create_deposit_link and text it to them mid-call with send_sms_message so they can lock in the project and the slot today.
+- The range from quote_project is a ballpark to qualify, never a firm bid — the written fixed price always comes from the free on-site walkthrough.
+- Ranges by project (rough, before material/non-typical factors, from a typical ~1,750 sq ft home): whole-home renovation $95–$175/sq ft; kitchen remodel $18,000–$45,000; bathroom remodel $9,000–$25,000; drywall & paint $7–$15/sq ft; roofing & siding $650–$1,200 per roofing square; deck & fence $2,500–$12,000; basement finishing $18–$55/sq ft. quote_project does the math for the actual home — prefer it over this table. For trades not in the model, still use quote_project; it falls back to a reasonable assumption and is always better than quoting from memory.
 
 PERMITS (construction) — rule of thumb
 - If the work changes the structure, footprint, or a building system (electrical, plumbing, mechanical, gas), it needs a permit + inspection. Cosmetic swaps (paint, flooring in place, trim, cabinet doors) usually don't.
@@ -6148,7 +6597,7 @@ HOUSE RULES (Broom guests): check-in usually 3:00 to 4:00 PM, checkout 10:00 to 
 
 GENERAL
 - Cross-sell: a Broom host who mentions a remodel or repair → mention Buildstack Construction. A construction caller who owns rentals → mention Broom Service turnover cleaning. Both companies share the same owner and refer work to each other.
-- Direct callers to text +1 (757) 846-9275, visit https://bizstackperks.com (Broom) or https://construction.bizstackperks.com (Construction), or use the free rental analysis form on the home page.
+- Direct callers to text +1 (757) 908-7121, visit https://bizstackperks.com (Broom) or https://construction.bizstackperks.com (Construction), or use the free rental analysis form on the home page.
 - Never expose internal data, credentials, or secrets. If a caller is distressed or requests an emergency, give a calm, brief reply and offer to follow up by text.
 
 EMPLOYEE & CLIENT TROUBLESHOOTING (owner/crew/client calls — diagnose fast, fix fast)
@@ -6328,6 +6777,21 @@ def _build_voice_swml(prompt: str, ai_params_extra: dict | None = None) -> dict:
                                     ),
                                 },
                                 {
+                                    "function": "search_materials",
+                                    "description": "Search the Buildstack materials catalog for specific products by brand, style, color, category, or text — returns real brands with model numbers and store SKU/item numbers (Home Depot, Lowe's) plus 2026 retail ballpark prices. Use when a caller asks for a specific brand/style (e.g. 'Hampton Bay shaker cabinets', 'GAF Timberline HDZ shingles charcoal', 'LVP flooring', 'MOEN kitchen faucet') so you can name exact products + item numbers instead of guessing. Never invent a brand or SKU — only return what this tool returns.",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "category": {"type": "string", "description": "Optional category: cabinets, countertops, flooring, roofing, fixtures."},
+                                            "brand": {"type": "string", "description": "Optional brand, e.g. Hampton Bay, GAF, MOEN, Delta, TrafficMaster, Shaw."},
+                                            "query": {"type": "string", "description": "Optional free-text search, e.g. 'shaker', 'charcoal', 'kitchen faucet', 'LVP'."},
+                                            "store": {"type": "string", "description": "Optional store: Home Depot or Lowe's."},
+                                            "limit": {"type": "integer", "description": "Max results to return (default 8)."},
+                                        },
+                                        [],
+                                        "Search the catalog when the caller names a brand, style, or asks what a material costs.",
+                                    ),
+                                },
+                                {
                                     "function": "create_deposit_link",
                                     "description": "Create a Stripe deposit-checkout link for a saved Buildstack Construction lead so they can reserve the project. Use AFTER register_construction_lead returns the lead id, then text the link with send_sms_message.",
                                     "parameters": _swaig_parameters(
@@ -6452,6 +6916,152 @@ def _build_voice_swml(prompt: str, ai_params_extra: dict | None = None) -> dict:
                                         ["to"],
                                     ),
                                 },
+                                {
+                                    "function": "lookup_property",
+                                    "description": "Look up a US property by street address and return square footage, beds, baths, year built, and stories. Use for any construction quote or rental analysis to size the job instead of guessing.",
+                                    "parameters": _swaig_parameters(
+                                        {"address": {"type": "string", "description": "Full property street address, e.g. 456 Oak Ave, Virginia Beach VA."}},
+                                        ["address"],
+                                    ),
+                                },
+                                {
+                                    "function": "quote_project",
+                                    "description": "Give a REAL ballpark quote for any construction trade (kitchen, bath, whole-home, roof, drywall, deck/fence, plus all trades). Looks up the property's square footage from the address, applies material grades the caller names (shingles 3-tab/architectural/20/30/40yr, countertop laminate/quartz/granite/marble, lumber standard/premium/engineered), stamps the lead with the range, and returns a spoken quote.",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "project_type": {"type": "string", "description": "Type of work: kitchen, bath, whole-home, roof, drywall, deck/fence, basement, electrical, plumbing, etc."},
+                                            "address": {"type": "string", "description": "Optional property street address. Use it so we can look up sqft."},
+                                            "sqft": {"type": "number", "description": "Optional square footage if already known."},
+                                            "materials": {"type": "string", "description": "Material choices the caller names, free text, e.g. 'architectural 30-year shingles, marble countertops, premium lumber'."},
+                                            "name": {"type": "string", "description": "Optional caller name to attach."},
+                                            "phone": {"type": "string", "description": "Optional caller phone in E.164."},
+                                            "notes": {"type": "string", "description": "Optional project details."},
+                                            "lead_id": {"type": "integer", "description": "Optional lead id to stamp the quoted range onto."},
+                                        },
+                                        ["project_type"],
+                                        "Ask for the property address first so we can pull real sqft; then ask what materials/grade they want.",
+                                    ),
+                                },
+                                {
+                                    "function": "quote_cleaning",
+                                    "description": "Quote a Broom cleaning service (Turnover Cleaning, Deep Cleaning, Linen Restock, Inspection) at flat rate, optionally scaled for larger homes.",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "service_type": {"type": "string", "description": "Turnover Cleaning, Deep Cleaning, Linen Restock, or Inspection."},
+                                            "bedrooms": {"type": "integer", "description": "Optional bedroom count."},
+                                            "bathrooms": {"type": "integer", "description": "Optional bathroom count."},
+                                            "sqft": {"type": "number", "description": "Optional square footage."},
+                                            "frequency": {"type": "string", "description": "Optional frequency, e.g. weekly, after each stay."},
+                                        },
+                                        ["service_type"],
+                                    ),
+                                },
+                                {
+                                    "function": "quote_hosting",
+                                    "description": "Quote Broom co-hosting packages (Digital Co-Hosting 10-15%, Full-Service 20-30% of gross) and, given average nightly rate and nights, estimate monthly gross and fees.",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "package": {"type": "string", "description": "digital, full-service, or cleaning-only."},
+                                            "avg_nightly": {"type": "number", "description": "Optional average nightly rate."},
+                                            "nights": {"type": "integer", "description": "Optional nights booked per month."},
+                                            "monthly_rent": {"type": "number", "description": "Optional long-term monthly rent to compare."},
+                                        },
+                                        [],
+                                    ),
+                                },
+                                {
+                                    "function": "get_host_intel",
+                                    "description": "Look up a Broom host/property and read any allergens, special cleaning supplies, and instructions we have on file so the crew preps the property right.",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "name": {"type": "string", "description": "Host name."},
+                                            "property_name": {"type": "string", "description": "Optional property/listing name."},
+                                            "address": {"type": "string", "description": "Optional property street address."},
+                                        },
+                                        [],
+                                    ),
+                                },
+                                {
+                                    "function": "set_host_intel",
+                                    "description": "Record/update a Broom host's allergens, special cleaning supplies, and instructions on file (e.g. the owner updating details for a host's property).",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "name": {"type": "string", "description": "Host name."},
+                                            "property_name": {"type": "string", "description": "Optional property/listing name."},
+                                            "address": {"type": "string", "description": "Optional property street address."},
+                                            "allergens": {"type": "string", "description": "Optional allergens guests listed."},
+                                            "cleaning_supplies": {"type": "string", "description": "Optional special supplies to use."},
+                                            "special_instructions": {"type": "string", "description": "Optional special instructions."},
+                                        },
+                                        ["name"],
+                                    ),
+                                },
+                                {
+                                    "function": "get_inventory",
+                                    "description": "List supply inventory on hand for a company (broom or construction), optionally by category or only items at/below reorder level. Use for 'what supplies do we have' / 'what do we need' questions.",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "company": {"type": "string", "description": "broom or construction."},
+                                            "category": {"type": "string", "description": "Optional category filter, e.g. cleaning, roofing."},
+                                            "low_only": {"type": "boolean", "description": "Only show items at or below reorder level."},
+                                        },
+                                        [],
+                                    ),
+                                },
+                                {
+                                    "function": "update_inventory",
+                                    "description": "Adjust supply quantity on hand for a company (broom or construction). Pass qty_delta to add/remove, or set_qty to set an absolute value. Use when supplies are used, restocked, or purchased.",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "item_name": {"type": "string", "description": "Exact inventory item name."},
+                                            "qty_delta": {"type": "number", "description": "Signed change: +5 for restock, -2 for used."},
+                                            "company": {"type": "string", "description": "broom or construction."},
+                                            "category": {"type": "string", "description": "Optional category when creating the item."},
+                                            "set_qty": {"type": "number", "description": "Optional absolute quantity to set."},
+                                        },
+                                        ["item_name"],
+                                    ),
+                                },
+                                {
+                                    "function": "reorder_report",
+                                    "description": "List every supply for a company (broom or construction) at or below its reorder level — the restock shopping list.",
+                                    "parameters": _swaig_parameters(
+                                        {"company": {"type": "string", "description": "broom or construction."}},
+                                        [],
+                                    ),
+                                },
+                                {
+                                    "function": "list_documents",
+                                    "description": "List documents on file (contracts, invoices, PDFs) from the document library. Use when the owner asks about docs sent or received.",
+                                    "parameters": _swaig_parameters(
+                                        {"category": {"type": "string", "description": "Optional category filter."}},
+                                        [],
+                                    ),
+                                },
+                                {
+                                    "function": "list_funding_ready_leads",
+                                    "description": "List construction or Broom hosts/leads that look ready for bank funding (partner capital). Use when the owner reviews the partners/funding pipeline or a lead asks about financing options.",
+                                    "parameters": _swaig_parameters({}, []),
+                                },
+                                {
+                                    "function": "find_people",
+                                    "description": "Search employees, customers, and hosts by name, phone, or email across both companies. Use to recognize who's on the phone or to pull up a person's record.",
+                                    "parameters": _swaig_parameters(
+                                        {"query": {"type": "string", "description": "Name, phone, or email to search."}},
+                                        ["query"],
+                                    ),
+                                },
+                                {
+                                    "function": "navigation_guide",
+                                    "description": "Explain how to navigate our websites/apps for employees, hosts, customers, or the owner (worker portal, host portal, booking, instant-quote, dashboards).",
+                                    "parameters": _swaig_parameters(
+                                        {
+                                            "role": {"type": "string", "description": "employee, host, customer, or owner."},
+                                            "company": {"type": "string", "description": "Optional: broom or construction to narrow."},
+                                        },
+                                        [],
+                                    ),
+                                },
                             ],
                         },
                     }
@@ -6555,13 +7165,19 @@ def _voice_tool_dispatch(db, name: str, args: dict) -> str:
 
 
 def _vapi_messages_to_openai(payload: dict) -> list:
-    """Convert Vapi customLLM messages into OpenAI-format messages with our voice prompt."""
+    """Convert Vapi customLLM messages into OpenAI-format messages with our voice prompt.
+
+    Vapi always injects its own generic system message ("You are an assistant."),
+    which would otherwise overwrite our voice brain — so inbound system messages
+    are dropped and our `_voice_prompt()` stays authoritative.
+    """
     conversation = [{"role": "system", "content": _voice_prompt()}]
-    seen_system = False
     for m in payload.get("messages") or []:
         if not isinstance(m, dict):
             continue
         role = m.get("role")
+        if role == "system":
+            continue
         content = m.get("content")
         if isinstance(content, list):
             parts = []
@@ -6573,12 +7189,6 @@ def _vapi_messages_to_openai(payload: dict) -> list:
             content = " ".join(p for p in parts if p)
         elif content is None:
             continue
-        if role == "system":
-            if seen_system:
-                continue
-            seen_system = True
-            conversation[0] = {"role": "system", "content": str(content)}
-            continue
         if role not in ("user", "assistant", "tool"):
             continue
         item = {"role": role, "content": str(content)}
@@ -6588,7 +7198,65 @@ def _vapi_messages_to_openai(payload: dict) -> list:
     return conversation
 
 
+def _vapi_assistant_text(client, model, messages, tools, db) -> str:
+    """Run the voice conversation through OpenAI, executing allowed tools, and
+    return the final assistant text. Mirrors the SWML tool loop."""
+    for _ in range(6):
+        resp = client.chat.completions.create(model=model, messages=messages, tools=tools, temperature=0.7)
+        msg = resp.choices[0].message
+        tool_calls = getattr(msg, "tool_calls", None)
+        if not tool_calls:
+            return (msg.content or "").strip() or "One moment — let me check that for you."
+        calls = []
+        for tc in tool_calls:
+            calls.append({"id": tc.id, "type": "function",
+                          "function": {"name": tc.function.name, "arguments": tc.function.arguments}})
+        messages.append({"role": "assistant", "content": msg.content or "", "tool_calls": calls})
+        for tc in tool_calls:
+            try:
+                args = json.loads(tc.function.arguments or "{}")
+            except Exception:
+                args = {}
+            if not isinstance(args, dict):
+                args = {}
+            try:
+                result = _voice_tool_dispatch(db, tc.function.name, args)
+            except Exception as e:
+                print(f"⚠️ VAPI-TOOL {tc.function.name} crash: {e}", flush=True)
+                result = "That hit a snag — the team will follow up by text."
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": str(result)})
+    return "Let me pass this to the team to get you squared away — they'll follow up by text."
+
+
+def _vapi_sse_response(text: str, model: str, completion_id: str) -> StreamingResponse:
+    """Stream assistant text back to Vapi as OpenAI-format SSE chunks."""
+    def gen():
+        created = int(time.time())
+        for word in (text + " ").split(" "):
+            chunk = {
+                "id": completion_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [{"index": 0, "delta": {"content": word + " "},
+                             "logprobs": None, "finish_reason": None}],
+            }
+            yield f"data: {json.dumps(chunk)}\n\n"
+        done = {
+            "id": completion_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": {}, "logprobs": None, "finish_reason": "stop"}],
+        }
+        yield f"data: {json.dumps(done)}\n\n"
+        yield "data: [DONE]\n\n"
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
+
+
 @app.api_route("/vapi/llm", methods=["POST"])
+@app.api_route("/vapi/llm/chat/completions", methods=["POST"])
 async def vapi_llm(request: Request, db=Depends(get_db)):
     """OpenAI-compatible chat completion served to Vapi's customLLM provider.
 
@@ -6608,33 +7276,21 @@ async def vapi_llm(request: Request, db=Depends(get_db)):
     messages = _vapi_messages_to_openai(payload)
     tools = _voice_openai_tools() or None
 
-    for _ in range(6):
-        resp = client.chat.completions.create(model=model, messages=messages, tools=tools, temperature=0.7)
-        msg = resp.choices[0].message
-        tool_calls = getattr(msg, "tool_calls", None)
-        if not tool_calls:
-            text = (msg.content or "").strip()
-            return {"choices": [{"message": {"role": "assistant", "content": text or "One moment — let me check that for you."}}]}
-        calls = []
-        for tc in tool_calls:
-            calls.append({"id": tc.id, "type": "function",
-                          "function": {"name": tc.function.name, "arguments": tc.function.arguments}})
-        messages.append({"role": "assistant", "content": msg.content or "", "tool_calls": calls})
-        for tc in tool_calls:
-            try:
-                args = json.loads(tc.function.arguments or "{}")
-            except Exception:
-                args = {}
-            if not isinstance(args, dict):
-                args = {}
-            try:
-                result = _voice_tool_dispatch(db, tc.function.name, args)
-            except Exception as e:
-                print(f"⚠️ VAPI-TOOL {tc.function.name} crash: {e}", flush=True)
-                result = "That hit a snag — the team will follow up by text."
-            messages.append({"role": "tool", "tool_call_id": tc.id, "content": str(result)})
-
-    return {"choices": [{"message": {"role": "assistant", "content": "Let me pass this to the team to get you squared away — they'll follow up by text."}}]}
+    text = _vapi_assistant_text(client, model, messages, tools, db)
+    completion_id = "chatcmpl-" + str(uuid.uuid4()).replace("-", "")
+    if payload.get("stream"):
+        return _vapi_sse_response(text, model, completion_id)
+    created = int(time.time())
+    return {
+        "id": completion_id,
+        "object": "chat.completion",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0,
+                     "message": {"role": "assistant", "content": text},
+                     "logprobs": None,
+                     "finish_reason": "stop"}],
+    }
 
 
 VOICE_ALLOWED_TOOLS = {
@@ -6646,6 +7302,7 @@ VOICE_ALLOWED_TOOLS = {
     "send_sms_message",
     "estimate_materials",
     "get_material_price",
+    "search_materials",
     "create_deposit_link",
     "get_rental_analysis",
     "list_leads",
@@ -6660,6 +7317,19 @@ VOICE_ALLOWED_TOOLS = {
     "get_business_summary",
     "send_email_message",
     "make_outbound_call",
+    "list_documents",
+    "list_funding_ready_leads",
+    "lookup_property",
+    "quote_project",
+    "quote_cleaning",
+    "quote_hosting",
+    "get_host_intel",
+    "set_host_intel",
+    "get_inventory",
+    "update_inventory",
+    "reorder_report",
+    "find_people",
+    "navigation_guide",
 }
 
 
@@ -6712,6 +7382,30 @@ def _swaig_tool_response_text(name: str, result) -> str:
         if result.get("ok"):
             return f"{result.get('sku')} is about ${result.get('price_dollars'):,.2f}."
         return str(result.get("error") or "I couldn't find that material.")
+    if name == "search_materials":
+        items = result.get("items") or []
+        if not items:
+            return "I don't have that exact product in the catalog yet, but the builder gives exact brands and item numbers on the free in-person quote."
+        spoken = []
+        for it in items[:5]:
+            name = it.get("brand") or ""
+            model = it.get("model") or ""
+            color = it.get("color") or ""
+            sku = it.get("sku") or ""
+            how = f" (item {sku})" if sku else f" (model {model})" if model else ""
+            if it.get("unit") == "sqft":
+                if it.get("price_high_dollars"):
+                    spoken.append(f"{name} {it.get('name', '')} {color} at roughly ${it.get('price_dollars'):.0f} to ${it.get('price_high_dollars'):.0f} per square foot{how}")
+                else:
+                    spoken.append(f"{name} {it.get('name', '')} {color} at about ${it.get('price_dollars'):.2f} per square foot{how}")
+            else:
+                if it.get("price_high_dollars"):
+                    spoken.append(f"{name} {it.get('name', '')} {color} roughly ${it.get('price_dollars'):,.0f} to ${it.get('price_high_dollars'):,.0f} each{how}")
+                else:
+                    spoken.append(f"{name} {it.get('name', '')} {color} about ${it.get('price_dollars'):,.2f} each{how}")
+        return "; next, ".join(spoken[:3]) + (
+            f". Available at {items[0].get('store')}." if items and items[0].get("store") else ""
+        ) + (" Tell me the style or brand you want and I'll check more." if len(items) > 3 else "")
     if name == "create_deposit_link":
         if result.get("ok"):
             return f"Deposit link ready: {result.get('url')}."
@@ -6790,6 +7484,107 @@ def _swaig_tool_response_text(name: str, result) -> str:
         if result.get("ok"):
             return f"I'm calling {result.get('to')} now."
         return str(result.get("error") or "I couldn't place that call right now.")
+    if name == "lookup_property":
+        if not result.get("ok"):
+            if result.get("configured") is False:
+                return "I don't have property records hooked up yet — could you tell me the approximate square footage instead?"
+            return str(result.get("error") or "I couldn't pull that property right now.")
+        parts = [f"{result.get('address') or 'That property'}"]
+        if result.get("sqft"):
+            parts.append(f"about {result['sqft']:,.0f} square feet")
+        if result.get("beds"):
+            parts.append(f"{result['beds']:,.0f} bedrooms")
+        if result.get("baths"):
+            parts.append(f"{result['baths']:,.0f} baths")
+        if result.get("year_built"):
+            parts.append(f"built {result['year_built']:,.0f}")
+        return ". ".join(parts) + "."
+    if name == "quote_project":
+        if not result.get("ok"):
+            return str(result.get("error") or "I couldn't pull that quote right now.")
+        words = [f"Ballpark for {result.get('label') or result.get('project_type')}"]
+        words.append(f"({result.get('quantifier') or 'project'})")
+        words.append(f"is ${result.get('low_est', 0):,.0f} to ${result.get('high_est', 0):,.0f}")
+        if result.get("material_notes"):
+            words.append("based on " + ", ".join(result["material_notes"]))
+        if result.get("assumed_sqft"):
+            words.append("— I assumed a typical ~1,750 square foot home since I didn't have the property size")
+        if result.get("needs_sqft"):
+            words.append("If you can give me the approximate square footage I'll tighten that range right away.")
+        words.append("Final price comes from a free on-site walkthrough.")
+        return " ".join(words)
+    if name == "quote_cleaning":
+        if not result.get("ok"):
+            return str(result.get("error") or "I can quote Turnover, Deep, Linen, or Inspection.")
+        return (f"{result.get('service_type')} is ${result.get('low_est'):,.0f}"
+                + (f" to ${result.get('high_est'):,.0f}" if result.get("high_est") != result.get("low_est") else "")
+                + f". {result.get('note', '')}")
+    if name == "quote_hosting":
+        if not result.get("ok"):
+            return str(result.get("error") or "I can quote co-hosting packages.")
+        if result.get("message"):
+            return result["message"]
+        line = f"{result.get('label')} co-hosting runs {result.get('pct_low')}% to {result.get('pct_high')}% of gross bookings."
+        em = result.get("est_monthly")
+        if em:
+            line += f" At that pace that's roughly ${em['fee_low']:,.0f} to ${em['fee_high']:,.0f} a month on ${em['gross']:,.0f} gross."
+        return line
+    if name == "get_host_intel":
+        if not result.get("ok"):
+            return str(result.get("error") or "No host intel found.")
+        h = result["hosts"][0]
+        bits = [f"{h.get('name') or 'This host'}{(' — ' + str(h.get('property_address') or h.get('property_name'))) if (h.get('property_address') or h.get('property_name')) else ''}"]
+        if h.get("allergens"):
+            bits.append(f"allergens on file: {h['allergens']}")
+        if h.get("cleaning_supplies"):
+            bits.append(f"uses special supplies: {h['cleaning_supplies']}")
+        if h.get("special_instructions"):
+            bits.append(h["special_instructions"])
+        for p in (h.get("properties") or []):
+            extra = []
+            if p.get("allergens"):
+                extra.append(f"allergens: {p['allergens']}")
+            if p.get("cleaning_supplies"):
+                extra.append(f"supplies: {p['cleaning_supplies']}")
+            if extra:
+                bits.append(f"for {p.get('name') or p.get('address')}: " + "; ".join(extra))
+        if len(bits) == 1:
+            return f"{h.get('name')} has no special intel on file yet."
+        return ". ".join(bits) + "."
+    if name == "set_host_intel":
+        if result.get("ok"):
+            return f"Got it — noted for {result.get('name')}."
+        return str(result.get("error") or "Couldn't save that intel right now.")
+    if name in ("get_inventory", "reorder_report"):
+        items = result.get("items") or []
+        if not items:
+            return f"No {result.get('company', '')} inventory on record."
+        lines = [f"{i.get('item_name')}: {i.get('qty_on_hand'):g} {i.get('unit') or ''} on hand" + (" (reorder!)" if i.get("low") else "") for i in items[:10]]
+        return f"{result.get('company')} supplies — " + "; ".join(lines)
+    if name == "update_inventory":
+        if result.get("ok"):
+            return f"{result.get('item')} is now {result.get('qty_on_hand'):g}" + (" — at reorder level, time to restock" if result.get("low") else "") + "."
+        return str(result.get("error") or "Couldn't update inventory.")
+    if name == "list_documents":
+        docs = result.get("documents") or result.get("docs") or []
+        if not docs:
+            return "No documents on file."
+        return "Documents: " + "; ".join(f"{d.get('title') or d.get('name') or d}" for d in docs[:8])
+    if name == "list_funding_ready_leads":
+        leads = result.get("leads") or result.get("items") or []
+        if not leads:
+            return "No funding-ready leads right now."
+        return "Funding-ready: " + "; ".join(f"{l.get('name') or l.get('project_type') or l}" for l in leads[:8])
+    if name == "find_people":
+        if not result.get("ok"):
+            return str(result.get("error") or "No one found.")
+        lines = [f"{p.get('name')} — {p.get('kind')} ({p.get('company')})" + (f" — {p.get('phone')}" if p.get("phone") else "") for p in result["people"][:6]]
+        return "Found: " + "; ".join(lines)
+    if name == "navigation_guide":
+        pages = result.get("pages") or []
+        if not pages:
+            return "I can walk you through any of our sites — what would you like?"
+        return "Here's how to get around: " + " ".join(pages[:4])
     return json.dumps(result, default=str, ensure_ascii=False)
 
 
@@ -7291,7 +8086,7 @@ async def legal_page(request: Request):
     return templates.TemplateResponse(request=request, name="legal.html", context={
         "site": site,
         "site_name": "Broom Service",
-        "phone": "+1 (757) 846-9275",
+        "phone": "+1 (757) 908-7121",
         "email": "hello@bizstackperks.com",
         "bot_email": "hello@bizstackperks.com",
     })

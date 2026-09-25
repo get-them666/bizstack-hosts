@@ -13,12 +13,9 @@ import json
 import os
 import re
 import time
-import urllib.parse
 
 import psycopg
 from psycopg.rows import dict_row
-
-PDL_ENDPOINT = "https://api.peopledatalab.com/v5/person/search"
 
 
 def pdl_enabled() -> bool:
@@ -81,26 +78,23 @@ def _enrich_address(address: str) -> dict:
         return {}
     if not address:
         return {}
-    queried = urllib.parse.quote(
+    try:
+        from peopledatalabs import PDLPY
+    except ImportError:
+        print("[pdl] peopledatalabs package not installed", flush=True)
+        return {}
+    sql = (
         f'datasets="person" AND location.address="{address}" AND '
         f'(location.location_type="Residence" OR residential="true")'
     )
-    headers = {
-        "X-Api-Key": os.getenv("PDL_API_KEY", ""),
-        "Accept": "application/json",
-    }
-    url = f"{PDL_ENDPOINT}?sql={queried}&size=1&pretty=false"
     try:
-        import urllib.request
-
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        client = PDLPY(api_key=os.getenv("PDL_API_KEY", ""))
+        resp = client.person.search(sql=sql, size=1, pretty=False)
+        data = resp.json() if hasattr(resp, "json") else resp
     except Exception as e:
         print(f"[pdl] lookup failed for {address!r}: {e}", flush=True)
         return {}
-    total = data.get("total") or 0
-    if not total or not data.get("data"):
+    if not data.get("total"):
         return {}
     rec = data["data"][0]
     email = _pick_email(rec.get("emails"))

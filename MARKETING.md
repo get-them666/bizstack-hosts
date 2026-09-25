@@ -4,7 +4,7 @@ All landing-page CTAs point to `https://bizstackperks.com?src=linkedin` (or `?sr
 
 Business: short-term rental turnover cleaning + co-hosting (Airbnb/Vrbo/Booking.com).
 Guests fund the cleanliness through a small, transparent operational fee — hosts pay nothing.
-24/7 AI voice + SMS assistant. Phone: +1 (757) 846-9275.
+24/7 AI voice + SMS assistant. Phone: +1 (757) 908-7121.
 
 ---
 
@@ -65,7 +65,7 @@ I'd like to send you a batch of funding-ready leads each week (they reach out to
 Worth a 20-minute call this week?
 
 Best,
-Shaun · Broom Service · (757) 846-9275 · bizstackperks.com?src=email
+Shaun · Broom Service · (757) 908-7121 · bizstackperks.com?src=email
 
 **Follow-up (day 4):**
 > Hi [Name] — quick bump on this. We now have N funding-ready STR owners queued for Q[quarter]. Happy to share the anonymized intake sheet if you'd like to see the quality. — Shaun
@@ -83,7 +83,7 @@ I saw [Listing/Property] on [Airbnb/Vrbo]. We handle turnover cleaning and guest
 
 If your off-weeks between back-to-back bookings feel like a second job, let's fix it. Free listing audit, no obligation.
 
-Shaun · Broom Service · (757) 846-9275 · bizstackperks.com
+Shaun · Broom Service · (757) 908-7121 · bizstackperks.com
 
 **SMS (text-to-owner after an inquiry or referral):**
 > Hey [Host] — Shaun from Broom Service. We'll handle your next turnover free + answer guest messages 24/7. Guests fund it, you pay $0. Want me to walk your listing? bizstackperks.com?src=sms
@@ -92,13 +92,13 @@ Shaun · Broom Service · (757) 846-9275 · bizstackperks.com
 
 ## 6. Nextdoor Post (both businesses — approved copy)
 
-> Local & family-run: two businesses, one number — (757) 846-9275
+> Local & family-run: two businesses, one number — (757) 908-7121
 >
 > **Broom Service** — 5-star short-term rental turnover cleaning & co-hosting for Airbnb/Vrbo hosts across Hampton Roads & Currituck County. Guests fund the cleaning at booking, so hosts pay $0 out of pocket. Every clean photo-verified, time-stamped, and location-checked. **Book a clean at bizstackperks.com** — one-time or recurring (weekly, bi-weekly, monthly, priced by home size).
 >
 > **BizStack Construction** — your local crew for framing, drywall, roofing, tile, painting, concrete, and full builds. Crew verified, work tracked, photos on every job. Call or text for a quote — construction.bizstackperks.com
 >
-> Call or text anytime: **+1 (757) 846-9275**
+> Call or text anytime: **+1 (757) 908-7121**
 
 > ⚠️ Note: the recurring-cleaning booking feature is not live on the site yet — post when implemented, or adjust the "Book a clean" line to one-time only.
 

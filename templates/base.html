@@ -19,266 +19,145 @@
     <style>
         body { font-family: 'Inter', sans-serif; }
 
+        header.dash-nav {
+            background: #0f172a;
+            backdrop-filter: none;
+            -webkit-backdrop-filter: none;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+            box-shadow: 0 10px 32px -12px rgba(2, 6, 23, 0.55);
+        }
+
         .nav-link {
             display: inline-flex;
             align-items: center;
+            gap: 0.375rem;
             padding: 0.5rem 0.75rem;
             font-size: 0.875rem;
             font-weight: 500;
             color: #475569;
-            border-radius: 0.5rem;
+            border-radius: 0.625rem;
             white-space: nowrap;
-            transition: color 0.15s ease, background-color 0.15s ease;
+            transition: color 0.18s ease, background-color 0.18s ease;
         }
-        .nav-link:hover { color: #4f46e5; background-color: #f1f5f9; }
+        header.dash-nav .nav-link { color: #cbd5e1; }
+        header.dash-nav .nav-link:hover { color: #fff; background-color: rgba(255, 255, 255, 0.08); }
+        header.dash-nav .nav-link.nav-active {
+            color: #fff;
+            background-color: rgba(99, 102, 241, 0.28);
+            box-shadow: inset 0 0 0 1px rgba(129, 140, 248, 0.4);
+            font-weight: 600;
+        }
 
         .nav-dropdown { position: relative; }
         .nav-dropdown-trigger { cursor: pointer; background: none; border: none; font: inherit; }
+        .nav-dropdown-trigger .dd-chevron { transition: transform 0.2s ease; }
+        .nav-dropdown:hover .dd-chevron,
+        .nav-dropdown:focus-within .dd-chevron { transform: rotate(180deg); }
         .nav-dropdown-menu {
             position: absolute;
             top: 100%;
             left: 0;
             margin-top: 0.5rem;
-            min-width: 12rem;
-            background: #fff;
+            min-width: 13rem;
+            background: rgba(255, 255, 255, 0.92);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
             border: 1px solid #e2e8f0;
-            border-radius: 0.75rem;
-            box-shadow: 0 10px 30px -10px rgba(15, 23, 42, 0.2);
-            padding: 0.375rem;
+            border-radius: 0.9rem;
+            box-shadow: 0 18px 40px -12px rgba(15, 23, 42, 0.25);
+            padding: 0.4rem;
             opacity: 0;
             visibility: hidden;
-            transform: translateY(-4px);
-            transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+            transform: translateY(-6px) scale(0.98);
+            transform-origin: top left;
+            transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s;
             z-index: 60;
+        }
+        header.dash-nav .nav-dropdown-menu {
+            background: #1e293b;
+            border-color: rgba(255, 255, 255, 0.1);
+            backdrop-filter: none;
+            -webkit-backdrop-filter: none;
+            margin-top: 0.625rem;
+            box-shadow: 0 22px 48px -12px rgba(2, 6, 23, 0.7);
         }
         .nav-dropdown:hover .nav-dropdown-menu,
         .nav-dropdown:focus-within .nav-dropdown-menu {
             opacity: 1;
             visibility: visible;
-            transform: translateY(0);
+            transform: translateY(0) scale(1);
         }
         .nav-dropdown-item {
-            display: block;
-            padding: 0.5rem 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 0.7rem;
             font-size: 0.875rem;
             font-weight: 500;
             color: #475569;
-            border-radius: 0.5rem;
+            border-radius: 0.6rem;
             white-space: nowrap;
+            transition: color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
+        }
+        header.dash-nav .nav-dropdown-item { color: #cbd5e1; }
+        header.dash-nav .nav-dropdown-item:hover { color: #fff; background-color: rgba(255, 255, 255, 0.08); transform: translateX(2px); }
+        header.dash-nav .nav-dropdown-item.nav-active { color: #fff; background-color: rgba(99, 102, 241, 0.28); font-weight: 600; }
+
+        .mobile-link {
+            display: flex;
+            align-items: center;
+            padding: 0.6rem 0.85rem;
+            font-size: 0.95rem;
+            font-weight: 500;
+            color: #475569;
+            border-radius: 0.6rem;
             transition: color 0.15s ease, background-color 0.15s ease;
         }
-        .nav-dropdown-item:hover { color: #4f46e5; background-color: #f1f5f9; }
+        header.dash-nav .mobile-link { color: #cbd5e1; }
+        header.dash-nav .mobile-link:hover { color: #fff; background-color: rgba(255, 255, 255, 0.08); }
+        header.dash-nav .mobile-link.nav-active { color: #fff; background-color: rgba(99, 102, 241, 0.28); font-weight: 600; }
+        .mobile-section-label {
+            padding: 1rem 0.85rem 0.25rem;
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #94a3b8;
+        }
+        header.dash-nav .mobile-section-label { color: #64748b; }
+        #mobile-menu {
+            max-height: calc(100vh - 4rem);
+            overflow-y: auto;
+        }
+        header.dash-nav #mobile-menu {
+            border-top-color: rgba(255, 255, 255, 0.08);
+            background: #0f172a;
+            backdrop-filter: none;
+            -webkit-backdrop-filter: none;
+        }
+        header.dash-nav #mobile-menu-btn {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(255, 255, 255, 0.14);
+            color: #e2e8f0;
+        }
+
+        @media (min-width: 1024px) and (max-width: 1279px) {
+            header.dash-nav .nav-link { padding: 0.4rem 0.5rem; font-size: 0.8125rem; }
+            header.dash-nav .nav-dropdown-trigger { padding: 0.4rem 0.5rem; }
+            header.dash-nav .flex.gap-2\.5 { gap: 0.6rem !important; }
+        }
+        header.dash-nav #alert-menu.nav-dropdown-menu {
+            background: #fff;
+            border-color: #e2e8f0;
+            box-shadow: 0 18px 40px -12px rgba(15, 23, 42, 0.25);
+        }
     </style>
     {{ site_theme_state().css | safe }}
 </head>
 <body class="bg-slate-50 text-slate-900 antialiased selection:bg-indigo-500 selection:text-white">
     {% set actor_role = (current_actor(request).role if current_actor(request) else none) %}
 
-    <!-- Header Navigation -->
-    <header class="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex items-center justify-between h-20">
-                <!-- Logo -->
-                <a href="/" class="flex items-center gap-2">
-                    <span class="text-2xl">⚡</span>
-                    <span class="text-xl font-bold tracking-tight text-slate-900">Broom <span class="text-indigo-600">Service</span></span>
-                    <span class="ml-2 px-2 py-0.5 text-xs font-semibold bg-indigo-50 text-indigo-700 rounded-full border border-indigo-100">STR Ops</span>
-                </a>
-
-                <!-- Desktop Navigation Links -->
-                <nav class="hidden lg:flex items-center gap-1">
-                    {% if actor_role == 'admin' or user %}
-                    <a href="/dashboard" class="nav-link">Dashboard</a>
-                    <a href="/hosts" class="nav-link">Hosts</a>
-                    <a href="/crew" class="nav-link">Team</a>
-                    <!-- Comms dropdown -->
-                    <div class="nav-dropdown" tabindex="0">
-                        <button class="nav-link nav-dropdown-trigger">
-                            Comms
-                            <svg class="w-3 h-3 ml-0.5 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
-                        </button>
-                        <div class="nav-dropdown-menu">
-                            <a href="/comms" class="nav-dropdown-item">Messaging</a>
-                            <a href="/messages" class="nav-dropdown-item">Messages</a>
-                            <a href="/photos" class="nav-dropdown-item">Photos</a>
-                        </div>
-                    </div>
-                    <!-- Ops dropdown -->
-                    <div class="nav-dropdown" tabindex="0">
-                        <button class="nav-link nav-dropdown-trigger">
-                            Ops
-                            <svg class="w-3 h-3 ml-0.5 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
-                        </button>
-                        <div class="nav-dropdown-menu">
-                            <a href="/docs" class="nav-dropdown-item">Docs</a>
-                            <a href="/accounting" class="nav-dropdown-item">Accounting</a>
-                            <a href="/backlog" class="nav-dropdown-item">Back-log</a>
-                            <a href="/partners" class="nav-dropdown-item">Partners</a>
-                            <a href="/labor" class="nav-dropdown-item">Labor</a>
-                            <a href="/radar" class="nav-dropdown-item">Lead Radar</a>
-                            <a href="/devices" class="nav-dropdown-item">Devices</a>
-                        </div>
-                    </div>
-                    <!-- Tools dropdown -->
-                    <div class="nav-dropdown" tabindex="0">
-                        <button class="nav-link nav-dropdown-trigger">
-                            Tools
-                            <svg class="w-3 h-3 ml-0.5 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
-                        </button>
-                        <div class="nav-dropdown-menu">
-                            <a href="/copilot" class="nav-dropdown-item">Copilot</a>
-                            <a href="/training" class="nav-dropdown-item">Training</a>
-                            <a href="/access" class="nav-dropdown-item">Access</a>
-                            <a href="/radar" class="nav-dropdown-item">Lead Radar</a>
-                            <a href="/acquisition" class="nav-dropdown-item">Acquisition</a>
-                            <a href="/appearance" class="nav-dropdown-item">Appearance &amp; Promos</a>
-                            <a href="/settings" class="nav-dropdown-item">Settings</a>
-                        </div>
-                    </div>
-                    {% elif actor_role == 'host' or host %}
-                    <a href="/host" class="nav-link text-emerald-600 hover:text-emerald-700">My Bookings</a>
-                    <a href="/photos" class="nav-link text-emerald-600 hover:text-emerald-700">Photos</a>
-                    <a href="/devices" class="nav-link text-emerald-600 hover:text-emerald-700">Devices</a>
-                    <a href="/messages" class="nav-link text-emerald-600 hover:text-emerald-700">Messages</a>
-                    <a href="/host-login" class="nav-link text-emerald-600 hover:text-emerald-700">Help</a>
-                    {% elif actor_role == 'worker' %}
-                    <a href="/worker" class="nav-link">My Jobs</a>
-                    {% if current_features(request).get('pay') %}
-                    <a href="/worker" class="nav-link">Pay</a>
-                    {% endif %}
-                    {% if current_features(request).get('devices') %}
-                    <a href="/devices" class="nav-link">Devices</a>
-                    {% endif %}
-                    {% if current_features(request).get('photos') %}
-                    <a href="/photos" class="nav-link">Photos</a>
-                    {% endif %}
-                    {% if current_features(request).get('messages') %}
-                    <a href="/messages" class="nav-link">Messages</a>
-                    {% endif %}
-                    <a href="/app" class="nav-link">App</a>
-                    {% else %}
-                    <a href="/#how-it-works" class="nav-link">How It Works</a>
-                    <a href="/#services" class="nav-link">Services</a>
-                    <a href="/#pricing" class="nav-link">Pricing</a>
-                    <a href="/#faq" class="nav-link">FAQ</a>
-                    <a href="/finance" class="nav-link">Financing</a>
-                    {% endif %}
-                </nav>
-
-                <!-- Action Buttons -->
-                <div class="hidden lg:flex items-center gap-3 pl-2 shrink-0">
-                    {% if actor_role == 'admin' or user %}
-                    <div class="nav-dropdown" id="security-alerts" tabindex="0">
-                        <button class="nav-link nav-dropdown-trigger relative" aria-label="Security alerts">
-                            🔔
-                            <span id="alert-count" class="hidden absolute -top-1 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">0</span>
-                        </button>
-                        <div class="nav-dropdown-menu" id="alert-menu" style="min-width: 340px; max-height: 420px; overflow: auto;">
-                            <div class="px-3 py-2 text-xs font-bold text-slate-800 uppercase tracking-wider border-b border-slate-100 flex items-center justify-between">
-                                <span>Security alerts</span>
-                                <button id="mark-alerts-read" type="button" class="text-indigo-600 hover:text-indigo-800 font-semibold normal-case">Mark all read</button>
-                            </div>
-                            <div id="alert-list" class="py-1"><p class="px-3 py-3 text-sm text-slate-400">Loading…</p></div>
-                        </div>
-                    </div>
-                    <span class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-sm font-semibold text-slate-700 max-w-[220px] truncate" title="{{ user.email if user else current_actor(request).email }}">
-                        <span class="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center shrink-0">{{ (user.email if user else current_actor(request).email)[0] | upper }}</span>
-                        <span class="truncate">{{ user.email if user else current_actor(request).email }}</span>
-                    </span>
-                    <a href="/api/auth/logout" class="inline-flex items-center justify-center px-4 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-xl transition-all shadow-sm shadow-indigo-200 whitespace-nowrap">
-                        Log Out
-                    </a>
-                    {% elif actor_role == 'host' or host %}
-                    <span class="text-sm font-medium text-slate-500">{{ host.name if host else current_actor(request).name }}</span>
-                    <a href="/api/auth/logout" class="inline-flex items-center justify-center px-4 py-2.5 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 rounded-xl transition-all shadow-sm shadow-emerald-200 whitespace-nowrap">
-                        Log Out
-                    </a>
-                    {% elif actor_role == 'worker' %}
-                    <span class="text-sm font-medium text-slate-500">{{ current_actor(request).name }}</span>
-                    <a href="/api/auth/logout" class="inline-flex items-center justify-center px-4 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-xl transition-all shadow-sm shadow-indigo-200 whitespace-nowrap">
-                        Log Out
-                    </a>
-                    {% else %}
-                    <a href="/host-login" class="text-sm font-medium text-slate-600 hover:text-indigo-600 transition-colors">Host Portal</a>
-                    <a href="/#analysis-form" class="inline-flex items-center justify-center px-4 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 rounded-xl transition-all shadow-sm shadow-indigo-200">
-                        Start Checkout
-                    </a>
-                    {% endif %}
-                </div>
-
-                <!-- Mobile Menu Button -->
-                <div class="flex md:hidden">
-                    <button id="mobile-menu-btn" type="button" class="text-slate-600 hover:text-slate-900 focus:outline-none" aria-label="Toggle menu">
-                        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path id="menu-icon" stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-                        </svg>
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Mobile Dynamic Navigation Drawer -->
-        <div id="mobile-menu" class="hidden md:hidden border-t border-slate-200 bg-white px-4 py-6 space-y-4">
-            {% if actor_role == 'admin' or user %}
-            <a href="/dashboard" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Dashboard</a>
-            <a href="/hosts" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Hosts</a>
-            <a href="/crew" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Team</a>
-            <a href="/comms" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Messaging</a>
-            <a href="/messages" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Messages</a>
-            <a href="/photos" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Photos</a>
-            <a href="/docs" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Docs</a>
-            <a href="/accounting" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Accounting</a>
-            <a href="/backlog" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Back-log</a>
-            <a href="/copilot" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Copilot</a>
-            <a href="/training" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Training</a>
-            <a href="/partners" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Partners</a>
-            <a href="/labor" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Labor</a>
-            <a href="/devices" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Devices</a>
-            <a href="/access" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Access</a>
-            <a href="/appearance" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Appearance &amp; Promos</a>
-            <a href="/settings" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Settings</a>
-            <div class="pt-4 border-t border-slate-100 flex flex-col gap-3">
-                <a href="/api/auth/logout" class="text-center px-4 py-3 text-base font-semibold text-white bg-indigo-600 rounded-xl shadow-sm">Log Out</a>
-            </div>
-            {% elif actor_role == 'host' or host %}
-            <a href="/host" class="block text-base font-medium text-slate-600 hover:text-emerald-600">My Bookings</a>
-            <a href="/photos" class="block text-base font-medium text-slate-600 hover:text-emerald-600">Cleaning Photos</a>
-            <a href="/devices" class="block text-base font-medium text-slate-600 hover:text-emerald-600">Devices</a>
-            <a href="/messages" class="block text-base font-medium text-slate-600 hover:text-emerald-600">Messages</a>
-            <div class="pt-4 border-t border-slate-100 flex flex-col gap-3">
-                <a href="/api/auth/logout" class="text-center px-4 py-3 text-base font-semibold text-white bg-emerald-600 rounded-xl shadow-sm">Log Out</a>
-            </div>
-            {% elif actor_role == 'worker' %}
-            <a href="/worker" class="block text-base font-medium text-slate-600 hover:text-indigo-600">My Jobs</a>
-            {% if current_features(request).get('pay') %}
-            <a href="/worker" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Pay</a>
-            {% endif %}
-            {% if current_features(request).get('devices') %}
-            <a href="/devices" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Devices</a>
-            {% endif %}
-            {% if current_features(request).get('photos') %}
-            <a href="/photos" class="block text-base font-medium text-slate-600 hover:text-indigo-600">My Photos</a>
-            {% endif %}
-            {% if current_features(request).get('messages') %}
-            <a href="/messages" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Messages</a>
-            {% endif %}
-            <a href="/app" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Install App</a>
-            <div class="pt-4 border-t border-slate-100 flex flex-col gap-3">
-                <a href="/api/auth/logout" class="text-center px-4 py-3 text-base font-semibold text-white bg-indigo-600 rounded-xl shadow-sm">Log Out</a>
-            </div>
-            {% else %}
-            <a href="/#how-it-works" class="block text-base font-medium text-slate-600 hover:text-indigo-600">How It Works</a>
-            <a href="/#services" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Services</a>
-            <a href="/#pricing" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Pricing</a>
-            <a href="/#faq" class="block text-base font-medium text-slate-600 hover:text-indigo-600">FAQ</a>
-            <a href="/finance" class="block text-base font-medium text-slate-600 hover:text-indigo-600">Financing</a>
-            <div class="pt-4 border-t border-slate-100 flex flex-col gap-3">
-                <a href="/host-login" class="text-center text-base font-medium text-slate-600 hover:text-indigo-600">Host Portal</a>
-                <a href="/#analysis-form" class="text-center px-4 py-3 text-base font-semibold text-white bg-indigo-600 rounded-xl shadow-sm">Start Checkout</a>
-            </div>
-            {% endif %}
-        </div>
-    </header>
+    {% include "_header.html" %}
 
     <main>
         {% block content %}{% endblock %}
@@ -301,9 +180,21 @@
         document.addEventListener('DOMContentLoaded', function() {
             const mobileMenuBtn = document.getElementById('mobile-menu-btn');
             const mobileMenu = document.getElementById('mobile-menu');
+            const iconOpen = document.getElementById('menu-icon-open');
+            const iconClose = document.getElementById('menu-icon-close');
             if (mobileMenuBtn && mobileMenu) {
                 mobileMenuBtn.addEventListener('click', function() {
+                    const isOpen = !mobileMenu.classList.contains('hidden');
                     mobileMenu.classList.toggle('hidden');
+                    mobileMenuBtn.setAttribute('aria-expanded', String(!isOpen));
+                    if (iconOpen && iconClose) { iconOpen.classList.toggle('hidden', !isOpen); iconClose.classList.toggle('hidden', isOpen); }
+                });
+                mobileMenu.querySelectorAll('a').forEach(function(link) {
+                    link.addEventListener('click', function() {
+                        mobileMenu.classList.add('hidden');
+                        mobileMenuBtn.setAttribute('aria-expanded', 'false');
+                        if (iconOpen && iconClose) { iconOpen.classList.remove('hidden'); iconClose.classList.add('hidden'); }
+                    });
                 });
             }
 

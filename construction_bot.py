@@ -29,8 +29,8 @@ STATUS_LABELS = {
 def company() -> dict:
     return {
         "name": os.getenv("COMPANY_NAME", "Buildstack Construction Co."),
-        "phone": os.getenv("COMPANY_PHONE", "+1 (757) 846-9275"),
-        "phone_e164": os.getenv("SIGNALWIRE_PHONE", "+17578469275"),
+        "phone": os.getenv("COMPANY_PHONE", "+1 (757) 908-7121"),
+        "phone_e164": os.getenv("VAPI_PHONE", "+17579087121"),
         "email": os.getenv("COMPANY_EMAIL", "hello@bizstackperks.com"),
         "domain": os.getenv("COMPANY_DOMAIN", "construction.bizstackperks.com"),
         "license": os.getenv("CONTRACTOR_LICENSE", ""),
@@ -336,6 +336,9 @@ def build_tool_handlers(db, stripe_svc):
             return {"ok": False, "sku": sku, "error": "Sku not found in price book."}
         return {"ok": True, "sku": sku, "price_cents": int(cents), "price_dollars": round(cents / 100, 2)}
 
+    def search_materials(category="", brand="", query="", store="", limit=8):
+        return materials_service.search_materials(category=category, brand=brand, query=query, store=store, limit=limit)
+
     def sister_business_summary():
         with db.cursor() as cur:
             cur.execute("SELECT COUNT(*) AS c FROM leads WHERE company = 'broom';")
@@ -441,6 +444,7 @@ def build_tool_handlers(db, stripe_svc):
         "get_accounting_summary": get_accounting_summary,
         "estimate_materials": estimate_materials,
         "get_material_price": get_material_price,
+        "search_materials": search_materials,
         "sister_business_summary": sister_business_summary,
         "run_site_health_check": run_site_health_check,
         "generate_training_deck": generate_training_deck,

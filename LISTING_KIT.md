@@ -4,7 +4,7 @@
 | Field | Value |
 |---|---|
 | Business name | **Broom Service** |
-| Phone | **+1 (757) 846-9275** |
+| Phone | **+1 (757) 908-7121** |
 | Website | **https://bizstackperks.com** |
 | Service area | Williamsburg–Hampton Roads, VA · Currituck County & Elizabeth City, NC (Virginia Beach · Norfolk · Chesapeake · Newport News · Portsmouth · Suffolk · Hampton · Williamsburg) |
 | Category | Cleaning Service / Short-Term Rental Cleaning / Property Management |
@@ -21,7 +21,7 @@
 > Broom Service — 5-star short-term rental turnover cleaning and co-hosting across Hampton Roads, VA. Turnover fees are paid by your guests at booking, so hosts get flawless cleanings with zero out-of-pocket cost.
 
 ### Standard — 60 words (recommended default)
-> Professional short-term rental turnover cleaning, deep cleans, linen restock, and premium co-hosting for Airbnb & Vrbo hosts across Hampton Roads, VA. Every clean is photo-verified, time-stamped, and geofence-checked by our crew. Turnover fees are guest-funded at booking — zero out-of-pocket, no contracts, no financing. Call or text our AI assistant anytime: (757) 846-9275.
+> Professional short-term rental turnover cleaning, deep cleans, linen restock, and premium co-hosting for Airbnb & Vrbo hosts across Hampton Roads, VA. Every clean is photo-verified, time-stamped, and geofence-checked by our crew. Turnover fees are guest-funded at booking — zero out-of-pocket, no contracts, no financing. Call or text our AI assistant anytime: (757) 908-7121.
 
 ### Stellar — long description (Google / Yelp / Facebook / BBB)
 > Broom Service keeps short-term rental operators in the Hampton Roads area at 5-star service levels with professional turnover cleaning, deep cleaning, linen restock, and digital co-hosting — all built on an automated operations layer that dispatches and tracks your crew in real time.
@@ -32,7 +32,7 @@
 > - **True co-hosting, not lock-in.** Pick standalone turnovers, digital co-hosting (10–15% of gross), or full-service management (20–30%). No all-or-nothing contracts — unbundle exactly what you need and keep control of your listing.
 > - **24/7 AI phone coverage.** Guests and owners can call or text anytime; our AI assistant answers questions, handles early check-outs, and can send secure check-in links mid-call.
 >
-> Serving Airbnb, Vrbo, and direct-booking hosts across Williamsburg–Hampton Roads, VA (Virginia Beach, Norfolk, Chesapeake, Newport News), plus Currituck County and Elizabeth City, NC. Call or text us today: (757) 846-9275, or start at bizstackperks.com.
+> Serving Airbnb, Vrbo, and direct-booking hosts across Williamsburg–Hampton Roads, VA (Virginia Beach, Norfolk, Chesapeake, Newport News), plus Currituck County and Elizabeth City, NC. Call or text us today: (757) 908-7121, or start at bizstackperks.com.
 
 ### 1-line taglines (footer blurbs / short fields)
 - "5-star STR turnover cleaning, guest-funded."

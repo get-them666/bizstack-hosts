@@ -1,0 +1,231 @@
+{% set path = request.path %}
+{% macro act(t) %}{% if path == t or (t != '/' and path.startswith(t ~ '/')) %}nav-active{% endif %}{% endmacro %}
+{% set comms_on = path == '/comms' or path == '/messages' or path == '/photos' or path.startswith('/comms/') or path.startswith('/messages/') or path.startswith('/photos/') %}
+{% set ops_on = path in ['/docs', '/accounting', '/backlog', '/partners', '/labor', '/radar', '/devices', '/inventory'] or path.startswith('/docs/') or path.startswith('/accounting/') or path.startswith('/backlog/') or path.startswith('/partners/') or path.startswith('/labor/') or path.startswith('/radar/') or path.startswith('/devices/') or path.startswith('/inventory/') %}
+{% set tools_on = path in ['/copilot', '/training', '/access', '/acquisition', '/appearance', '/settings'] or path.startswith('/copilot/') or path.startswith('/training/') or path.startswith('/access/') or path.startswith('/acquisition/') or path.startswith('/appearance/') or path.startswith('/settings/') %}
+<header class="dash-nav sticky top-0 z-50 border-b border-white/10 shadow-lg shadow-slate-900/[0.12]" data-theme="dark">
+    <div class="w-full px-4 sm:px-6 lg:px-10 xl:px-14">
+        <div class="flex items-center justify-between h-16 gap-2">
+            <a href="/" class="flex items-center gap-2.5 group shrink-0">
+                <span class="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-lg shadow-md shadow-indigo-500/30 ring-1 ring-white/40 transition-transform duration-200 group-hover:scale-105">⚡</span>
+                <span class="leading-tight min-w-0">
+                    <span class="block whitespace-nowrap text-[15px] leading-none font-extrabold tracking-tight text-white">Broom&nbsp;<span class="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent">Service</span></span>
+                    <span class="hidden sm:block text-[10px] font-semibold uppercase tracking-widest text-slate-400">Short-term rental ops</span>
+                </span>
+                <span class="ml-0.5 hidden md:inline-flex px-2 py-0.5 text-[10px] font-bold bg-gradient-to-r from-indigo-600 to-violet-600 text-white rounded-full shadow-sm">STR Ops</span>
+            </a>
+
+            <nav class="hidden lg:flex items-center gap-0.5 flex-1 min-w-0 justify-center">
+                {% if actor_role == 'admin' or user %}
+                <a href="/dashboard" class="nav-link {{ act('/dashboard') }}">Dashboard</a>
+                <a href="/hosts" class="nav-link {{ act('/hosts') }}">Hosts</a>
+                <a href="/crew" class="nav-link {{ act('/crew') }}">Team</a>
+                <div class="nav-dropdown" tabindex="0">
+                    <button class="nav-link nav-dropdown-trigger {{ 'nav-active' if comms_on else '' }}">
+                        Comms
+                        <svg class="dd-chevron w-3 h-3 ml-0.5 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <div class="nav-dropdown-menu">
+                        <a href="/comms" class="nav-dropdown-item {{ act('/comms') }}">Messaging</a>
+                        <a href="/messages" class="nav-dropdown-item {{ act('/messages') }}">Messages</a>
+                        <a href="/photos" class="nav-dropdown-item {{ act('/photos') }}">Photos</a>
+                    </div>
+                </div>
+                <div class="nav-dropdown" tabindex="0">
+                    <button class="nav-link nav-dropdown-trigger {{ 'nav-active' if ops_on else '' }}">
+                        Ops
+                        <svg class="dd-chevron w-3 h-3 ml-0.5 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <div class="nav-dropdown-menu">
+                        <a href="/docs" class="nav-dropdown-item {{ act('/docs') }}">Docs</a>
+                        <a href="/accounting" class="nav-dropdown-item {{ act('/accounting') }}">Accounting</a>
+                        <a href="/backlog" class="nav-dropdown-item {{ act('/backlog') }}">Back-log</a>
+                        <a href="/partners" class="nav-dropdown-item {{ act('/partners') }}">Partners</a>
+                        <a href="/labor" class="nav-dropdown-item {{ act('/labor') }}">Labor</a>
+                        <a href="/radar" class="nav-dropdown-item {{ act('/radar') }}">Lead Radar</a>
+                        <a href="/devices" class="nav-dropdown-item {{ act('/devices') }}">Devices</a>
+                        <a href="/inventory" class="nav-dropdown-item {{ act('/inventory') }}">Supplies</a>
+                    </div>
+                </div>
+                <div class="nav-dropdown" tabindex="0">
+                    <button class="nav-link nav-dropdown-trigger {{ 'nav-active' if tools_on else '' }}">
+                        Tools
+                        <svg class="dd-chevron w-3 h-3 ml-0.5 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <div class="nav-dropdown-menu">
+                        <a href="/copilot" class="nav-dropdown-item {{ act('/copilot') }}">Copilot</a>
+                        <a href="/training" class="nav-dropdown-item {{ act('/training') }}">Training</a>
+                        <a href="/access" class="nav-dropdown-item {{ act('/access') }}">Access</a>
+                        <a href="/radar" class="nav-dropdown-item {{ act('/radar') }}">Lead Radar</a>
+                        <a href="/acquisition" class="nav-dropdown-item {{ act('/acquisition') }}">Acquisition</a>
+                        <a href="/appearance" class="nav-dropdown-item {{ act('/appearance') }}">Appearance &amp; Promos</a>
+                        <a href="/settings" class="nav-dropdown-item {{ act('/settings') }}">Settings</a>
+                    </div>
+                </div>
+                {% elif actor_role == 'host' or host %}
+                <a href="/host" class="nav-link text-emerald-300 hover:text-emerald-200 hover:bg-emerald-500/10 {{ act('/host') }}">My Bookings</a>
+                <a href="/photos" class="nav-link text-emerald-300 hover:text-emerald-200 hover:bg-emerald-500/10 {{ act('/photos') }}">Photos</a>
+                <a href="/devices" class="nav-link text-emerald-300 hover:text-emerald-200 hover:bg-emerald-500/10 {{ act('/devices') }}">Devices</a>
+                <a href="/messages" class="nav-link text-emerald-300 hover:text-emerald-200 hover:bg-emerald-500/10 {{ act('/messages') }}">Messages</a>
+                <a href="/host-login" class="nav-link {{ act('/host-login') }}">Help</a>
+                {% elif actor_role == 'worker' %}
+                <a href="/worker" class="nav-link {{ act('/worker') }}">My Jobs</a>
+                {% if current_features(request).get('pay') %}
+                <a href="/worker" class="nav-link">Pay</a>
+                {% endif %}
+                {% if current_features(request).get('devices') %}
+                <a href="/devices" class="nav-link {{ act('/devices') }}">Devices</a>
+                {% endif %}
+                {% if current_features(request).get('photos') %}
+                <a href="/photos" class="nav-link {{ act('/photos') }}">Photos</a>
+                {% endif %}
+                {% if current_features(request).get('messages') %}
+                <a href="/messages" class="nav-link {{ act('/messages') }}">Messages</a>
+                {% endif %}
+                <a href="/app" class="nav-link {{ act('/app') }}">App</a>
+                {% else %}
+                <a href="/#how-it-works" class="nav-link">How It Works</a>
+                <a href="/#services" class="nav-link">Services</a>
+                <a href="/#pricing" class="nav-link">Pricing</a>
+                <a href="/#faq" class="nav-link">FAQ</a>
+                <a href="/finance" class="nav-link {{ act('/finance') }}">Financing</a>
+                {% endif %}
+            </nav>
+
+            <div class="hidden lg:flex items-center gap-2.5 shrink-0">
+                {% if actor_role == 'admin' or user %}
+                <div class="nav-dropdown" id="security-alerts" tabindex="0">
+                    <button class="nav-link nav-dropdown-trigger relative" aria-label="Security alerts">
+                        🔔
+                        <span id="alert-count" class="hidden absolute -top-1 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">0</span>
+                    </button>
+                    <div class="nav-dropdown-menu" id="alert-menu" style="min-width: 340px; max-height: 420px; overflow: auto;">
+                        <div class="px-3 py-2 text-xs font-bold text-slate-800 uppercase tracking-wider border-b border-slate-100 flex items-center justify-between">
+                            <span>Security alerts</span>
+                            <button id="mark-alerts-read" type="button" class="text-indigo-600 hover:text-indigo-800 font-semibold normal-case">Mark all read</button>
+                        </div>
+                        <div id="alert-list" class="py-1"><p class="px-3 py-3 text-sm text-slate-400">Loading…</p></div>
+                    </div>
+                </div>
+                <span class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/10 border border-white/10 text-sm font-semibold text-slate-200 max-w-[200px] truncate shadow-sm" title="{{ user.email if user else current_actor(request).email }}">
+                    <span class="w-6 h-6 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 text-white text-xs flex items-center justify-center shrink-0">{{ (user.email if user else current_actor(request).email)[0] | upper }}</span>
+                    <span class="truncate">{{ user.email if user else current_actor(request).email }}</span>
+                </span>
+                <a href="/api/auth/logout" class="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 rounded-xl transition-all shadow-md shadow-indigo-500/20 whitespace-nowrap">
+                    Log Out
+                </a>
+                {% elif actor_role == 'host' or host %}
+                <span class="text-sm font-medium text-slate-300">{{ host.name if host else current_actor(request).name }}</span>
+                <a href="/api/auth/logout" class="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 rounded-xl transition-all shadow-md shadow-emerald-500/20 whitespace-nowrap">
+                    Log Out
+                </a>
+                {% elif actor_role == 'worker' %}
+                <span class="text-sm font-medium text-slate-300">{{ current_actor(request).name }}</span>
+                <a href="/api/auth/logout" class="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 rounded-xl transition-all shadow-md shadow-indigo-500/20 whitespace-nowrap">
+                    Log Out
+                </a>
+                {% else %}
+                <a href="/host-login" class="text-sm font-semibold text-slate-300 hover:text-indigo-300 transition-colors">Host Portal</a>
+                <a href="/#analysis-form" class="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 rounded-xl transition-all shadow-md shadow-indigo-500/20">
+                    Start Checkout
+                </a>
+                {% endif %}
+            </div>
+
+            <div class="flex lg:hidden">
+                <button id="mobile-menu-btn" type="button" aria-label="Toggle menu" aria-expanded="false" class="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white/70 text-slate-600 shadow-sm transition hover:bg-white hover:text-slate-900">
+                    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path id="menu-icon-open" stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/>
+                        <path id="menu-icon-close" class="hidden" stroke-linecap="round" stroke-linejoin="round" d="M6 6l12 12M18 6L6 18"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="mobile-menu" class="hidden lg:hidden border-t border-white/10 bg-slate-900/95 px-4 py-4">
+        {% if actor_role == 'admin' or user %}
+        <p class="mobile-section-label">Overview</p>
+        <div class="grid gap-0.5">
+            <a href="/dashboard" class="mobile-link {{ act('/dashboard') }}">Dashboard</a>
+            <a href="/hosts" class="mobile-link {{ act('/hosts') }}">Hosts</a>
+            <a href="/crew" class="mobile-link {{ act('/crew') }}">Team</a>
+        </div>
+        <p class="mobile-section-label">Comms</p>
+        <div class="grid gap-0.5">
+            <a href="/comms" class="mobile-link {{ act('/comms') }}">Messaging</a>
+            <a href="/messages" class="mobile-link {{ act('/messages') }}">Messages</a>
+            <a href="/photos" class="mobile-link {{ act('/photos') }}">Photos</a>
+        </div>
+        <p class="mobile-section-label">Operations</p>
+        <div class="grid gap-0.5">
+            <a href="/docs" class="mobile-link {{ act('/docs') }}">Docs</a>
+            <a href="/accounting" class="mobile-link {{ act('/accounting') }}">Accounting</a>
+            <a href="/backlog" class="mobile-link {{ act('/backlog') }}">Back-log</a>
+            <a href="/partners" class="mobile-link {{ act('/partners') }}">Partners</a>
+            <a href="/labor" class="mobile-link {{ act('/labor') }}">Labor</a>
+            <a href="/radar" class="mobile-link {{ act('/radar') }}">Lead Radar</a>
+            <a href="/devices" class="mobile-link {{ act('/devices') }}">Devices</a>
+            <a href="/inventory" class="mobile-link {{ act('/inventory') }}">Supplies</a>
+        </div>
+        <p class="mobile-section-label">Tools</p>
+        <div class="grid gap-0.5">
+            <a href="/copilot" class="mobile-link {{ act('/copilot') }}">Copilot</a>
+            <a href="/training" class="mobile-link {{ act('/training') }}">Training</a>
+            <a href="/access" class="mobile-link {{ act('/access') }}">Access</a>
+            <a href="/acquisition" class="mobile-link {{ act('/acquisition') }}">Acquisition</a>
+            <a href="/appearance" class="mobile-link {{ act('/appearance') }}">Appearance &amp; Promos</a>
+            <a href="/settings" class="mobile-link {{ act('/settings') }}">Settings</a>
+        </div>
+        <div class="mt-4 pt-4 border-t border-white/10 flex flex-col gap-3">
+            <a href="/api/auth/logout" class="text-center px-4 py-3 text-sm font-semibold text-white bg-gradient-to-r from-indigo-600 to-violet-600 rounded-xl shadow-md shadow-indigo-500/20">Log Out</a>
+        </div>
+        {% elif actor_role == 'host' or host %}
+        <p class="mobile-section-label">Menu</p>
+        <div class="grid gap-0.5">
+            <a href="/host" class="mobile-link text-emerald-300 {{ act('/host') }}">My Bookings</a>
+            <a href="/photos" class="mobile-link text-emerald-300 {{ act('/photos') }}">Cleaning Photos</a>
+            <a href="/devices" class="mobile-link text-emerald-300 {{ act('/devices') }}">Devices</a>
+            <a href="/messages" class="mobile-link text-emerald-300 {{ act('/messages') }}">Messages</a>
+            <a href="/host-login" class="mobile-link {{ act('/host-login') }}">Help</a>
+        </div>
+        <div class="mt-4 pt-4 border-t border-white/10 flex flex-col gap-3">
+            <a href="/api/auth/logout" class="text-center px-4 py-3 text-sm font-semibold text-white bg-gradient-to-r from-emerald-600 to-teal-600 rounded-xl shadow-md shadow-emerald-500/20">Log Out</a>
+        </div>
+        {% elif actor_role == 'worker' %}
+        <p class="mobile-section-label">Menu</p>
+        <div class="grid gap-0.5">
+            <a href="/worker" class="mobile-link {{ act('/worker') }}">My Jobs</a>
+            {% if current_features(request).get('pay') %}
+            <a href="/worker" class="mobile-link">Pay</a>
+            {% endif %}
+            {% if current_features(request).get('devices') %}
+            <a href="/devices" class="mobile-link {{ act('/devices') }}">Devices</a>
+            {% endif %}
+            {% if current_features(request).get('photos') %}
+            <a href="/photos" class="mobile-link {{ act('/photos') }}">My Photos</a>
+            {% endif %}
+            {% if current_features(request).get('messages') %}
+            <a href="/messages" class="mobile-link {{ act('/messages') }}">Messages</a>
+            {% endif %}
+            <a href="/app" class="mobile-link {{ act('/app') }}">Install App</a>
+        </div>
+        <div class="mt-4 pt-4 border-t border-white/10 flex flex-col gap-3">
+            <a href="/api/auth/logout" class="text-center px-4 py-3 text-sm font-semibold text-white bg-gradient-to-r from-indigo-600 to-violet-600 rounded-xl shadow-md shadow-indigo-500/20">Log Out</a>
+        </div>
+        {% else %}
+        <p class="mobile-section-label">Menu</p>
+        <div class="grid gap-0.5">
+            <a href="/#how-it-works" class="mobile-link">How It Works</a>
+            <a href="/#services" class="mobile-link">Services</a>
+            <a href="/#pricing" class="mobile-link">Pricing</a>
+            <a href="/#faq" class="mobile-link">FAQ</a>
+            <a href="/finance" class="mobile-link {{ act('/finance') }}">Financing</a>
+        </div>
+        <div class="mt-4 pt-4 border-t border-white/10 flex flex-col gap-3">
+            <a href="/host-login" class="text-center text-sm font-semibold text-slate-300 hover:text-indigo-300">Host Portal</a>
+            <a href="/#analysis-form" class="text-center px-4 py-3 text-sm font-semibold text-white bg-gradient-to-r from-indigo-600 to-violet-600 rounded-xl shadow-md shadow-indigo-500/20">Start Checkout</a>
+        </div>
+        {% endif %}
+    </div>
+</header>
