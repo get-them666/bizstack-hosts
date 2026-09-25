@@ -8,8 +8,7 @@
 | Website | **https://bizstackperks.com** |
 | Service area | Williamsburg–Hampton Roads, VA · Currituck County & Elizabeth City, NC (Virginia Beach · Norfolk · Chesapeake · Newport News · Portsmouth · Suffolk · Hampton · Williamsburg) |
 | Category | Cleaning Service / Short-Term Rental Cleaning / Property Management |
-| Hours | Confirm customer-facing hours; AI phone assistant is available 24/7 |
-| Public street address | Confirm; use service-area-only listings if there is no customer-facing location |
+| Hours | Open 24 hours (AI phone assistant 24/7) |
 | Founded | 2026 |
 
 > Rule: never change name/phone/spelling between sites — that's what gets you ranked & verified.
@@ -19,24 +18,24 @@
 ## Blurb Bank (copy-paste per site)
 
 ### Short — 30 words
-> Broom Service — short-term rental turnover cleaning and co-hosting across Hampton Roads, VA. Turnover fees are paid by your guests at booking, so hosts get professional cleanings with zero out-of-pocket cost.
+> Broom Service — 5-star short-term rental turnover cleaning and co-hosting across Hampton Roads, VA. Turnover fees are paid by your guests at booking, so hosts get flawless cleanings with zero out-of-pocket cost.
 
 ### Standard — 60 words (recommended default)
-> Professional short-term rental turnover cleaning, deep cleans, linen restock, and co-hosting for Airbnb & Vrbo hosts across Hampton Roads, VA. Every clean is photo-verified, time-stamped, and geofence-checked by our crew. Turnover fees are guest-funded at booking — zero out-of-pocket, no contracts, no financing. Call or text our AI assistant anytime: (757) 908-7121.
+> Professional short-term rental turnover cleaning, deep cleans, linen restock, and premium co-hosting for Airbnb & Vrbo hosts across Hampton Roads, VA. Every clean is photo-verified, time-stamped, and geofence-checked by our crew. Turnover fees are guest-funded at booking — zero out-of-pocket, no contracts, no financing. Call or text our AI assistant anytime: (757) 908-7121.
 
 ### Stellar — long description (Google / Yelp / Facebook / BBB)
-> Broom Service provides short-term rental turnover cleaning, deep cleaning, linen restock, and digital co-hosting across the Hampton Roads area — supported by an operations layer that dispatches and tracks your crew in real time.
+> Broom Service keeps short-term rental operators in the Hampton Roads area at 5-star service levels with professional turnover cleaning, deep cleaning, linen restock, and digital co-hosting — all built on an automated operations layer that dispatches and tracks your crew in real time.
 >
 > Here's what separates us from a typical cleaning service:
 > - **Guest-funded turnovers.** The cleaning fee is integrated into the guest's booking check-out — hosts never pay out-of-pocket and never take on loans or financing for cleaning operations.
 > - **Verified every time.** Crew members check in via location-verified app, submit time-stamped room-by-room photos, and pass our staged-hygiene inspection before the stay is released.
-> - **True co-hosting, not lock-in.** Choose standalone turnovers, digital co-hosting, or full-service management. Ask for current options and pricing before booking.
+> - **True co-hosting, not lock-in.** Pick standalone turnovers, digital co-hosting (10–15% of gross), or full-service management (20–30%). No all-or-nothing contracts — unbundle exactly what you need and keep control of your listing.
 > - **24/7 AI phone coverage.** Guests and owners can call or text anytime; our AI assistant answers questions, handles early check-outs, and can send secure check-in links mid-call.
 >
 > Serving Airbnb, Vrbo, and direct-booking hosts across Williamsburg–Hampton Roads, VA (Virginia Beach, Norfolk, Chesapeake, Newport News), plus Currituck County and Elizabeth City, NC. Call or text us today: (757) 908-7121, or start at bizstackperks.com.
 
 ### 1-line taglines (footer blurbs / short fields)
-- "STR turnover cleaning, guest-funded."
+- "5-star STR turnover cleaning, guest-funded."
 - "Co-hosting + turnover ops, without the 25% lock-in."
 - "Flawless turnovers. Zero out-of-pocket. Hampton Roads."
 
@@ -47,7 +46,7 @@
 **Do hosts pay upfront?** No. Turnover fees are funded by guests at booking checkout — zero out-of-pocket cost.
 **What areas?** All of Hampton Roads, VA (Virginia Beach, Norfolk, Chesapeake, Newport News, etc.).
 **What services?** Turnover cleaning, deep clean, linen restock, inspections, and full co-hosting.
-**What are the current prices?** Confirm the live booking configuration before publishing a price; do not copy a static amount from this kit.
+**What are the current prices?** Turnover $160 · Deep $275 · Linen $70 · Inspection $95.
 **Do you clean Airbnbs/Vrbos?** Yes — we clean STRs only, and sync with Airbnb, Vrbo, Turno, and Hospitable.
 
 ---
@@ -56,10 +55,10 @@
 
 ### 1. Google Business Profile — business.google.com *(highest priority by far)*
 - Create → "Add a business" → Cleaner (Short-Term Rental) → your existing info.
-- Use a service-area business if there is no customer-facing street address; confirm the service-area regions before publishing.
+- Use service-area model, don't need/storefront address → select Hampton Roads region.
 - Add photos (turnover before/after), categories: "House Cleaning Service".
 - Respond to every review; post once/week.
-- **Verify** using the normal Google process and record the verification method and date.
+- **Verify**: video call or postcard to your address.
 
 ### 2. Apple Business Connect — businessconnect.apple.com *(free, shows in Maps/Siri)*
 - Add your location (service-area + city). Bing/Google sync won't cover this.
@@ -68,7 +67,7 @@
 - Add location → it will carry over links to some Microsoft properties.
 
 ### 4. Facebook Business Page — facebook.com/business
-- Category "Cleaning Service", then "Home Improvement". Add confirmed service areas and the Call button; publish prices only after verifying the live configuration.
+- Category "Cleaning Service", then "Home Improvement". Add Service menu items w/ prices + Call button.
 - Post weekly photos; link bizstackperks.com.
 
 ### 5. Yelp — biz.yelp.com
@@ -93,7 +92,7 @@
 - Adds trust badge & backlink.
 
 ### 11. Angi (Angie's List) — angi.com/setup
-- Free profile + receive leads. Add the 4 services with prices confirmed against the live booking configuration.
+- Free profile + receive leads. Add the 4 services with your real prices.
 
 ### 12. Thumbtack — thumbtack.com
 - Free profile for house cleaning / property management lead-gen.
@@ -102,10 +101,6 @@
 - Hotfrog (hotfrog.com), MerchantCircle, Houzz Pro free tier, Trustpilot (review page), LinkedIn company page.
 
 ---
-
-## Before publishing
-- [ ] Confirm any ratings, guarantees, percentages, or insurance claims
-- [ ] Confirm current prices, co-hosting options, hours, address, and service area
 
 ## After you list
 1. **Get 5–10 Google reviews** fast (text a link to each host you've cleaned). Reviews = ranking.

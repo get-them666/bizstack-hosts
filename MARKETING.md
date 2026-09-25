@@ -86,7 +86,7 @@ If your off-weeks between back-to-back bookings feel like a second job, let's fi
 Shaun · Broom Service · (757) 908-7121 · bizstackperks.com
 
 **SMS (text-to-owner after an inquiry or referral):**
-> Hey [Host] — Shaun from Broom Service. We can handle your next turnover and answer guest messages 24/7. Guests fund the cleaning at booking, so there is no cleaning outlay for the host. Want me to walk your listing? bizstackperks.com?src=sms
+> Hey [Host] — Shaun from Broom Service. We'll handle your next turnover free + answer guest messages 24/7. Guests fund it, you pay $0. Want me to walk your listing? bizstackperks.com?src=sms
 
 ---
 
@@ -94,9 +94,9 @@ Shaun · Broom Service · (757) 908-7121 · bizstackperks.com
 
 > Local & family-run: two businesses, one number — (757) 908-7121
 >
-> **Broom Service** — short-term rental turnover cleaning & co-hosting for Airbnb/Vrbo hosts across Hampton Roads & Currituck County. Guests fund the cleaning at booking, so there is no cleaning outlay for the host. Every clean photo-verified, time-stamped, and location-checked. **Book a clean at bizstackperks.com?src=nextdoor&camp=both** — one-time or recurring (weekly, bi-weekly, monthly, priced by home size).
+> **Broom Service** — 5-star short-term rental turnover cleaning & co-hosting for Airbnb/Vrbo hosts across Hampton Roads & Currituck County. Guests fund the cleaning at booking, so hosts pay $0 out of pocket. Every clean photo-verified, time-stamped, and location-checked. **Book a clean at bizstackperks.com** — one-time or recurring (weekly, bi-weekly, monthly, priced by home size).
 >
-> **Buildstack Construction Co.** — your local project team for framing, drywall, roofing, tile, painting, concrete, and full builds. Ask for a free on-site estimate — construction.bizstackperks.com/quote?src=nextdoor&camp=both
+> **BizStack Construction** — your local crew for framing, drywall, roofing, tile, painting, concrete, and full builds. Crew verified, work tracked, photos on every job. Call or text for a quote — construction.bizstackperks.com
 >
 > Call or text anytime: **+1 (757) 908-7121**
 

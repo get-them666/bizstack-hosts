@@ -1027,16 +1027,12 @@ async def lifecycle(app: FastAPI):
                     payment_status VARCHAR(50) DEFAULT 'unpaid',
                     stripe_session_id VARCHAR(255),
                     amount_cents INTEGER,
-                    acquisition_source VARCHAR(100),
-                    acquisition_campaign VARCHAR(100),
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
                 """)
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'unpaid';")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS stripe_session_id VARCHAR(255);")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS amount_cents INTEGER;")
-                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS acquisition_source VARCHAR(100);")
-                cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS acquisition_campaign VARCHAR(100);")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS channel_source VARCHAR(20);")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS channel_booking_id VARCHAR(64);")
                 cur.execute("ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS channel_status VARCHAR(30);")
@@ -1883,7 +1879,7 @@ async def health_check():
     return {"status": "ok"}
 
 def _site_base(request: Request) -> str:
-    return (os.getenv("APP_BASE_URL", "").strip() or "https://bizstackperks.com").rstrip("/")
+    return os.getenv("APP_BASE_URL", "").rstrip("/") or str(request.base_url).rstrip("/")
 
 @app.get("/robots.txt", response_class=Response)
 async def robots_txt(request: Request):
@@ -1917,7 +1913,8 @@ async def sitemap_xml(request: Request):
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
         f"  <url><loc>{base}/</loc><lastmod>{today}</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>\n"
         f"  <url><loc>{base}/book</loc><lastmod>{today}</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>\n"
-        f"  <url><loc>{base}/legal</loc><lastmod>{today}</lastmod><changefreq>yearly</changefreq><priority>0.2</priority></url>\n"
+        f"  <url><loc>{base}/host-login</loc><lastmod>{today}</lastmod><changefreq>monthly</changefreq><priority>0.3</priority></url>\n"
+        f"  <url><loc>{base}/login</loc><lastmod>{today}</lastmod><changefreq>monthly</changefreq><priority>0.2</priority></url>\n"
         "</urlset>\n"
     )
     return Response(content=body, media_type="application/xml")
@@ -2169,9 +2166,9 @@ async def submit_lead(
     zip_code = result.get("zip", "")
     needed = funding_needed.lower() in ("on", "true", "1", "yes")
 
-    src = "".join(ch for ch in (source or "").lower() if ch.isalnum() or ch in "_-")[:100] or "website"
-    ref_code = "".join(ch for ch in (ref or "").lower() if ch.isalnum() or ch in "_-")[:100]
-    campaign_name = "".join(ch for ch in (campaign or "").lower() if ch.isalnum() or ch in "_-")[:100]
+    src = (source or "").strip().lower() or "website"
+    ref_code = (ref or "").strip().lower()
+    campaign_name = (campaign or "").strip().lower()[:100]
 
     partner_id = None
     with db.cursor() as cur:
@@ -2328,7 +2325,7 @@ async def view_analysis(lead_id: int, request: Request, db=Depends(get_db)):
         cur.execute("SELECT * FROM leads WHERE id = %s;", (lead_id,))
         lead = cur.fetchone()
     if not lead:
-        return templates.TemplateResponse(request=request, name="analysis.html", context={"lead": None, "data": None, "map_url": "", "service_prices": _public_service_prices()}, status_code=404)
+        return templates.TemplateResponse(request=request, name="analysis.html", context={"lead": None, "data": None, "map_url": ""}, status_code=404)
 
     try:
         analysis = json.loads(lead["analysis_json"]) if lead.get("analysis_json") else {}
@@ -2347,14 +2344,10 @@ async def view_analysis(lead_id: int, request: Request, db=Depends(get_db)):
             "map_url": map_url,
             "analysis_ok": bool(analysis.get("ok") and data),
             "error": analysis.get("error") if not analysis.get("ok") else "",
-            "service_prices": _public_service_prices(),
         },
     )
 
-def _public_service_prices() -> dict:
-    services = ("Turnover Cleaning", "Deep Cleaning", "Linen Restock", "Inspection")
-    return {service: f"${stripe_svc.get_price(service) / 100:,.2f}" for service in services}
-
+# --- PUBLIC BOOKING ---
 
 @app.get("/book", response_class=HTMLResponse)
 async def public_book_page(request: Request):
@@ -2372,9 +2365,6 @@ async def public_book_page(request: Request):
             "date": "",
             "time": "",
             "job_address": "",
-            "service_prices": _public_service_prices(),
-            "source": request.query_params.get("src", ""),
-            "campaign": request.query_params.get("camp", ""),
         },
     )
 
@@ -2388,12 +2378,8 @@ async def public_book_submit(
     date: str = Form(...),
     time: str = Form(...),
     job_address: str = Form(""),
-    source: str = Form(""),
-    campaign: str = Form(""),
     db=Depends(get_db),
 ):
-    src = "".join(ch for ch in (source or "").lower() if ch.isalnum() or ch in "_-")[:100] or "website"
-    campaign_name = "".join(ch for ch in (campaign or "").lower() if ch.isalnum() or ch in "_-")[:100]
     ctx = {
         "today": date.today().isoformat(),
         "error": "",
@@ -2405,10 +2391,7 @@ async def public_book_submit(
         "date": date,
         "time": time,
         "job_address": job_address,
-        "service_prices": _public_service_prices(),
         "service_name": service_type,
-        "source": src,
-        "campaign": campaign_name,
     }
     try:
         parsed_start = datetime.fromisoformat(f"{date}T{time}")
@@ -2430,9 +2413,9 @@ async def public_book_submit(
             ctx["error"] = "That time just got taken — pick another slot and try again."
             return templates.TemplateResponse(request=request, name="book.html", context=ctx)
         cur.execute(
-            "INSERT INTO calendar_events (customer_name, phone, start_time, end_time, service_type, job_address, acquisition_source, acquisition_campaign) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id;",
-            (customer_name.strip(), phone.strip(), parsed_start, parsed_end, service_type, job_address.strip() or None, src or None, campaign_name or None),
+            "INSERT INTO calendar_events (customer_name, phone, start_time, end_time, service_type, job_address) "
+            "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id;",
+            (customer_name.strip(), phone.strip(), parsed_start, parsed_end, service_type, job_address.strip() or None),
         )
         event_id = cur.fetchone()["id"]
         amount_cents = stripe_svc.get_price(service_type)
@@ -2857,7 +2840,7 @@ async def read_dashboard(request: Request, db=Depends(get_db)):
         cur.execute("SELECT COUNT(*) FROM leads")
         leads_count = cur.fetchone()['count']
 
-        cur.execute("SELECT id, customer_name, phone, start_time, end_time, service_type, payment_status, amount_cents, acquisition_source, acquisition_campaign FROM calendar_events WHERE start_time >= NOW() - INTERVAL '7 days' ORDER BY start_time DESC LIMIT 10")
+        cur.execute("SELECT id, customer_name, phone, start_time, end_time, service_type, payment_status, amount_cents FROM calendar_events WHERE start_time >= NOW() - INTERVAL '7 days' ORDER BY start_time DESC LIMIT 10")
         events = cur.fetchall()
 
         cur.execute("""
@@ -6596,7 +6579,6 @@ HOW TO QUOTE CONSTRUCTION WORK (real numbers, right on the call):
 6. If the caller wants to move forward on the spot, create the deposit payment link with create_deposit_link and text it to them mid-call with send_sms_message so they can lock in the project and the slot today.
 - The range from quote_project is a ballpark to qualify, never a firm bid — the written fixed price always comes from the free on-site walkthrough.
 - Ranges by project (rough, before material/non-typical factors, from a typical ~1,750 sq ft home): whole-home renovation $95–$175/sq ft; kitchen remodel $18,000–$45,000; bathroom remodel $9,000–$25,000; drywall & paint $7–$15/sq ft; roofing & siding $650–$1,200 per roofing square; deck & fence $2,500–$12,000; basement finishing $18–$55/sq ft. quote_project does the math for the actual home — prefer it over this table. For trades not in the model, still use quote_project; it falls back to a reasonable assumption and is always better than quoting from memory.
-- For product, brand, item-number, SKU, model-number, standard-material, or cheapest-material questions, search the material catalog before answering. For multiple materials, search every named category. Never invent product names or numbers, and never say item numbers are unavailable when catalog results contain them.
 
 PERMITS (construction) — rule of thumb
 - If the work changes the structure, footprint, or a building system (electrical, plumbing, mechanical, gas), it needs a permit + inspection. Cosmetic swaps (paint, flooring in place, trim, cabinet doors) usually don't.
@@ -7182,97 +7164,6 @@ def _voice_tool_dispatch(db, name: str, args: dict) -> str:
     return _swaig_tool_response_text(name, result)
 
 
-_CATALOG_REQUEST_TERMS = (
-    "brand",
-    "item number",
-    "item numbers",
-    "sku",
-    "model number",
-    "product number",
-    "product",
-    "specific material",
-    "standard material",
-    "cheapest",
-    "material option",
-    "catalog",
-    "what do you use",
-    "what do you carry",
-    "what do you sell",
-)
-_CATALOG_CONTEXT_TERMS = (
-    "buildstack",
-    "construction",
-    "remodel",
-    "renovation",
-    "kitchen",
-    "bath",
-    "cabinet",
-    "countertop",
-    "floor",
-    "tile",
-    "roof",
-    "shingle",
-    "drywall",
-    "material",
-    "marble",
-    "granite",
-    "quartz",
-    "lvp",
-    "faucet",
-    "sink",
-    "vanity",
-)
-_CATALOG_EXCLUSION_TERMS = ("cleaning", "cleaner", "turnover", "booking", "co-hosting", "cohosting", "linen")
-_CATALOG_CATEGORY_TERMS = (
-    ("cabinets", ("cabinet", "cupboard")),
-    ("countertops", ("countertop", "counter top", "marble", "granite", "quartz")),
-    ("flooring", ("flooring", "floor", "tile", "lvp", "laminate", "carpet")),
-    ("roofing", ("roofing", "roof", "shingle")),
-    ("fixtures", ("fixture", "faucet", "sink", "vanity", "toilet", "shower")),
-)
-_CATALOG_BRAND_CATEGORIES = {
-    "hampton bay": "cabinets",
-    "gaf": "roofing",
-    "trafficmaster": "flooring",
-    "shaw": "flooring",
-    "moen": "fixtures",
-    "delta": "fixtures",
-}
-
-
-def _vapi_catalog_search_plan(messages: list) -> list | None:
-    user_messages = [
-        str(message.get("content") or "")
-        for message in messages
-        if message.get("role") == "user" and message.get("content")
-    ]
-    if not user_messages:
-        return None
-    latest = user_messages[-1].lower()
-    if not any(term in latest for term in _CATALOG_REQUEST_TERMS):
-        return None
-    if any(term in latest for term in _CATALOG_EXCLUSION_TERMS):
-        return None
-    conversation = " ".join(
-        str(message.get("content") or "")
-        for message in messages
-        if message.get("role") in ("user", "assistant") and message.get("content")
-    ).lower()
-    user_conversation = " ".join(user_messages).lower()
-    has_context = any(term in conversation for term in _CATALOG_CONTEXT_TERMS)
-    has_brand = any(brand in user_conversation for brand in _CATALOG_BRAND_CATEGORIES)
-    if not has_context and not has_brand:
-        return None
-    categories = []
-    for category, terms in _CATALOG_CATEGORY_TERMS:
-        if any(term in conversation for term in terms) and category not in categories:
-            categories.append(category)
-    for brand, category in _CATALOG_BRAND_CATEGORIES.items():
-        if brand in user_conversation and category not in categories:
-            categories.append(category)
-    return categories
-
-
 def _vapi_messages_to_openai(payload: dict) -> list:
     """Convert Vapi customLLM messages into OpenAI-format messages with our voice prompt.
 
@@ -7307,24 +7198,20 @@ def _vapi_messages_to_openai(payload: dict) -> list:
     return conversation
 
 
-def _vapi_assistant_text(client, model, messages, tools, db, tool_choice=None, material_categories=None) -> str:
+def _vapi_assistant_text(client, model, messages, tools, db) -> str:
     """Run the voice conversation through OpenAI, executing allowed tools, and
     return the final assistant text. Mirrors the SWML tool loop."""
-    for iteration in range(6):
-        request = {
-            "model": model,
-            "messages": messages,
-            "tools": tools,
-            "temperature": 0.7,
-        }
-        if iteration == 0 and tool_choice:
-            request["tool_choice"] = tool_choice
-        resp = client.chat.completions.create(**request)
+    for _ in range(6):
+        resp = client.chat.completions.create(model=model, messages=messages, tools=tools, temperature=0.7)
         msg = resp.choices[0].message
         tool_calls = getattr(msg, "tool_calls", None)
         if not tool_calls:
             return (msg.content or "").strip() or "One moment — let me check that for you."
-        parsed_calls = []
+        calls = []
+        for tc in tool_calls:
+            calls.append({"id": tc.id, "type": "function",
+                          "function": {"name": tc.function.name, "arguments": tc.function.arguments}})
+        messages.append({"role": "assistant", "content": msg.content or "", "tool_calls": calls})
         for tc in tool_calls:
             try:
                 args = json.loads(tc.function.arguments or "{}")
@@ -7332,27 +7219,6 @@ def _vapi_assistant_text(client, model, messages, tools, db, tool_choice=None, m
                 args = {}
             if not isinstance(args, dict):
                 args = {}
-            if tc.function.name == "search_materials" and material_categories is not None:
-                args["category"] = " ".join(material_categories)
-                args["query"] = ""
-                args.pop("brand", None)
-                args.pop("store", None)
-                try:
-                    requested_limit = int(args.get("limit") or 0)
-                except (TypeError, ValueError):
-                    requested_limit = 0
-                args["limit"] = max(requested_limit, 8, len(material_categories) * 3)
-            parsed_calls.append((tc, args))
-        calls = [
-            {
-                "id": tc.id,
-                "type": "function",
-                "function": {"name": tc.function.name, "arguments": json.dumps(args)},
-            }
-            for tc, args in parsed_calls
-        ]
-        messages.append({"role": "assistant", "content": msg.content or "", "tool_calls": calls})
-        for tc, args in parsed_calls:
             try:
                 result = _voice_tool_dispatch(db, tc.function.name, args)
             except Exception as e:
@@ -7409,26 +7275,8 @@ async def vapi_llm(request: Request, db=Depends(get_db)):
     model = os.getenv("OPENAI_VOICE_MODEL", "gpt-4o-mini")
     messages = _vapi_messages_to_openai(payload)
     tools = _voice_openai_tools() or None
-    catalog_categories = _vapi_catalog_search_plan(messages)
-    has_search_materials = any(
-        isinstance(tool, dict) and (tool.get("function") or {}).get("name") == "search_materials"
-        for tool in (tools or [])
-    )
-    tool_choice = (
-        {"type": "function", "function": {"name": "search_materials"}}
-        if catalog_categories is not None and has_search_materials
-        else None
-    )
 
-    text = _vapi_assistant_text(
-        client,
-        model,
-        messages,
-        tools,
-        db,
-        tool_choice=tool_choice,
-        material_categories=catalog_categories,
-    )
+    text = _vapi_assistant_text(client, model, messages, tools, db)
     completion_id = "chatcmpl-" + str(uuid.uuid4()).replace("-", "")
     if payload.get("stream"):
         return _vapi_sse_response(text, model, completion_id)
@@ -7485,25 +7333,6 @@ VOICE_ALLOWED_TOOLS = {
 }
 
 
-def _voice_catalog_spoken_items(items: list, limit: int = 5) -> list:
-    categories = []
-    for item in items:
-        category = str(item.get("category") or "")
-        if category and category not in categories:
-            categories.append(category)
-    selected = []
-    if len(categories) > 1:
-        for category in categories:
-            selected.append(next(item for item in items if str(item.get("category") or "") == category))
-        return selected[:limit]
-    for item in items:
-        if item not in selected:
-            selected.append(item)
-        if len(selected) >= limit:
-            break
-    return selected[:limit]
-
-
 def _swaig_tool_response_text(name: str, result) -> str:
     if isinstance(result, dict) and result.get("ok") is False:
         return str(result.get("error") or result.get("message") or "That didn't work — the team will follow up by text.")
@@ -7557,10 +7386,8 @@ def _swaig_tool_response_text(name: str, result) -> str:
         items = result.get("items") or []
         if not items:
             return "I don't have that exact product in the catalog yet, but the builder gives exact brands and item numbers on the free in-person quote."
-        selected_items = _voice_catalog_spoken_items(items)
         spoken = []
-        for it in selected_items:
-            category = str(it.get("category") or "material").title()
+        for it in items[:5]:
             name = it.get("brand") or ""
             model = it.get("model") or ""
             color = it.get("color") or ""
@@ -7568,19 +7395,17 @@ def _swaig_tool_response_text(name: str, result) -> str:
             how = f" (item {sku})" if sku else f" (model {model})" if model else ""
             if it.get("unit") == "sqft":
                 if it.get("price_high_dollars"):
-                    spoken.append(f"{category} option: {name} {it.get('name', '')} {color} at roughly ${it.get('price_dollars'):.0f} to ${it.get('price_high_dollars'):.0f} per square foot{how}")
+                    spoken.append(f"{name} {it.get('name', '')} {color} at roughly ${it.get('price_dollars'):.0f} to ${it.get('price_high_dollars'):.0f} per square foot{how}")
                 else:
-                    spoken.append(f"{category} option: {name} {it.get('name', '')} {color} at about ${it.get('price_dollars'):.2f} per square foot{how}")
+                    spoken.append(f"{name} {it.get('name', '')} {color} at about ${it.get('price_dollars'):.2f} per square foot{how}")
             else:
                 if it.get("price_high_dollars"):
-                    spoken.append(f"{category} option: {name} {it.get('name', '')} {color} roughly ${it.get('price_dollars'):,.0f} to ${it.get('price_high_dollars'):,.0f} each{how}")
+                    spoken.append(f"{name} {it.get('name', '')} {color} roughly ${it.get('price_dollars'):,.0f} to ${it.get('price_high_dollars'):,.0f} each{how}")
                 else:
-                    spoken.append(f"{category} option: {name} {it.get('name', '')} {color} about ${it.get('price_dollars'):,.2f} each{how}")
-        stores = list(dict.fromkeys(str(it.get("store")) for it in selected_items if it.get("store")))
-        store_text = f" Catalog retailers: {', '.join(stores)}." if stores else ""
-        return "; next, ".join(spoken) + store_text + (
-            " Tell me the style or brand you want and I'll check more." if len(items) > len(selected_items) else ""
-        )
+                    spoken.append(f"{name} {it.get('name', '')} {color} about ${it.get('price_dollars'):,.2f} each{how}")
+        return "; next, ".join(spoken[:3]) + (
+            f". Available at {items[0].get('store')}." if items and items[0].get("store") else ""
+        ) + (" Tell me the style or brand you want and I'll check more." if len(items) > 3 else "")
     if name == "create_deposit_link":
         if result.get("ok"):
             return f"Deposit link ready: {result.get('url')}."
@@ -8257,7 +8082,7 @@ async def set_lead_funding(lead_id: int, request: Request, funding_needed: str =
 
 @app.get("/legal", response_class=HTMLResponse)
 async def legal_page(request: Request):
-    site = _site_base(request)
+    site = os.getenv("APP_BASE_URL", "").rstrip("/") or str(request.base_url).rstrip("/")
     return templates.TemplateResponse(request=request, name="legal.html", context={
         "site": site,
         "site_name": "Broom Service",
