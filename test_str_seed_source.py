@@ -43,6 +43,25 @@ class ParseSeedTests(unittest.TestCase):
         self.assertEqual(len(seeds), 2)
         self.assertEqual(skipped, 1)
 
+    def test_comments_and_blanks_are_not_counted_as_errors(self):
+        """A well-commented seed file must not report itself as broken."""
+        seeds, skipped = src.parse_seeds([
+            "# a comment", "", "   ", "# another",
+            str(MYRTLE_3BR), "  # indented comment",
+        ])
+        self.assertEqual(len(seeds), 1)
+        self.assertEqual(skipped, 0)
+
+    def test_the_bundled_seed_file_parses_cleanly(self):
+        import os
+        path = os.path.join(os.path.dirname(__file__), "str_seed_list.txt")
+        if not os.path.exists(path):
+            self.skipTest("seed list not present")
+        with open(path) as fh:
+            seeds, skipped = src.parse_seeds(fh.read().splitlines())
+        self.assertGreaterEqual(len(seeds), 4)
+        self.assertEqual(skipped, 0)
+
     def test_blank_input_is_safe(self):
         seeds, skipped = src.parse_seeds(None)
         self.assertEqual((seeds, skipped), ([], 0))

@@ -1,0 +1,31 @@
+# STR seed list — vacation-rental turnover-cleaning prospects
+#
+# One listing per line. Blank fields are fine; the more you fill, the further a row gets.
+#   <listing id or airbnb room url> | <host name> | <property address> | <market, City ST>
+#
+# host_name and address are optional and usually unknown up front — that is why rows stage
+# with a placeholder and promotion is a separate PDL step. Fill them when you happen to know
+# them: a known name or address is the only thing that makes a row contactable.
+#
+# How to get a listing id: open the Airbnb room page and copy the number after /rooms/.
+# The URL works too — the parser pulls the id out of it.
+#
+# Then:  python3 -c "import str_seed_source as s; print(s.process_seeds(open('str_seed_list.txt').read().splitlines(), min_score=0))"
+# Add commit=True to actually write the qualifying rows to `leads`.
+
+# --- Myrtle Beach / North Myrtle Beach -------------------------------------
+# Verified live against StayAPI 2026-09-25: 3BR/5bd/2BA sleeps 7, 4.87* (38 reviews),
+# Guest favorite, $284/night. Highest-scoring of the four.
+885003882744240148
+# 3BR/4bd/3BA sleeps 8, 4.55* (11 reviews), $156.67/night. Cheapest nightly of the set,
+# so the clean is a large share of one night's revenue — a harder sell, worth knowing.
+1334048487609899272
+# 4BR/5bd/3.5BA sleeps 10, zero reviews, no dated price. Scores well on bedrooms and
+# occupancy despite no reviews: new listing, no incumbent cleaner.
+1635558580321236737
+# 3BR, 4.73* (11 reviews), $479/night. Strongest nightly rate in the set.
+1592085093831227473
+
+# --- Hilton Head Island -----------------------------------------------------
+# Add listings here as you go. Keep the comment style so the next person knows what is
+# already been tried and why a listing was skipped.

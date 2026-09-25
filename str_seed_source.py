@@ -79,10 +79,19 @@ def parse_seed(raw):
 
 
 def parse_seeds(raw_lines):
-    """Parse a seed list, dropping unusable lines and de-duplicating by listing id."""
+    """Parse a seed list, de-duplicating by listing id.
+
+    Returns (seeds, skipped) where `skipped` counts only lines that look like they were
+    *meant* to be a listing but aren't parseable. Blank lines and `#` comments are
+    structure, not errors — counting them would make a well-commented seed file look
+    broken (the bundled str_seed_list.txt has 27 comment lines and 4 listings).
+    """
     seeds, seen, skipped = [], set(), 0
     for line in (raw_lines or []):
-        seed = parse_seed(line)
+        text = str(line).strip()
+        if not text or text.startswith("#"):
+            continue
+        seed = parse_seed(text)
         if not seed:
             skipped += 1
             continue
